@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import type {
   CuerpoCeleste,
   EstrellaCalculada,
@@ -371,20 +371,22 @@ export function SkyMap({
     mostrarMessier,
   ]);
 
-  const manejarMovimientoRaton = (e: MouseEvent<HTMLCanvasElement>) => {
+  const manejarInteraccionPuntero = (e: PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+
     const scaleX = 560 / rect.width;
     const scaleY = 560 / rect.height;
-    const mouseX = (e.clientX - rect.left) * scaleX;
-    const mouseY = (e.clientY - rect.top) * scaleY;
+    const posX = (e.clientX - rect.left) * scaleX;
+    const posY = (e.clientY - rect.top) * scaleY;
 
     let masCercano: ObjetoHover | null = null;
-    let distanciaMin = 18;
+    let distanciaMin = e.pointerType === 'touch' ? 28 : 18;
 
     for (const obj of puntosInteractivosRef.current) {
-      const dist = Math.hypot(obj.x - mouseX, obj.y - mouseY);
+      const dist = Math.hypot(obj.x - posX, obj.y - posY);
       if (dist < distanciaMin) {
         distanciaMin = dist;
         masCercano = obj;
@@ -397,8 +399,11 @@ export function SkyMap({
     <div className="relative flex flex-col items-center justify-center">
       <canvas
         ref={canvasRef}
-        onMouseMove={manejarMovimientoRaton}
-        onMouseLeave={() => setHoverInfo(null)}
+        role="img"
+        aria-label="Mapa celeste interactivo con estrellas, constelaciones, objetos Messier y planetas"
+        onPointerMove={manejarInteraccionPuntero}
+        onPointerDown={manejarInteraccionPuntero}
+        onPointerLeave={() => setHoverInfo(null)}
         className="w-full max-w-140 aspect-square rounded-2xl cursor-crosshair shadow-2xl"
       />
 

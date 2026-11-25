@@ -1,5 +1,12 @@
 import * as Astronomy from 'astronomy-engine';
-import type { CuerpoCeleste, EstrellaCalculada, MessierCalculado, Ubicacion } from '../types/astronomy';
+import type {
+  CuerpoCeleste,
+  EstadoCieloSolar,
+  EstrellaCalculada,
+  FaseCrepusculo,
+  MessierCalculado,
+  Ubicacion,
+} from '../types/astronomy';
 import { CATALOGO_MESSIER } from '../data/messierCatalog';
 import { ESTRELLAS_BRILLANTES } from '../data/brightStars';
 
@@ -19,6 +26,18 @@ const CUERPOS_A_CALCULAR: {
   { body: Astronomy.Body.Neptune, nombre: 'Neptuno', tipo: 'planeta', color: '#60a5fa' },
 ];
 
+export function esEntradaAstronomicaValida(fecha: Date, ubicacion: Ubicacion): boolean {
+  if (Number.isNaN(fecha.getTime())) return false;
+  if (!Number.isFinite(ubicacion.latitud) || ubicacion.latitud < -90 || ubicacion.latitud > 90) {
+    return false;
+  }
+  if (!Number.isFinite(ubicacion.longitud) || ubicacion.longitud < -180 || ubicacion.longitud > 180) {
+    return false;
+  }
+  if (!Number.isFinite(ubicacion.altitud)) return false;
+  return true;
+}
+
 function gradosADireccion(acimut: number): string {
   const puntos = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
   const indice = Math.round(acimut / 45) % 8;
@@ -36,7 +55,48 @@ function obtenerNombreFaseLunar(angulo: number): string {
   return 'Luna Menguante';
 }
 
+function clasificarFaseSolar(altitudSol: number): FaseCrepusculo {
+  if (altitudSol >= 0) return 'Día';
+  if (altitudSol >= -6) return 'Crepúsculo civil';
+  if (altitudSol >= -12) return 'Crepúsculo náutico';
+  if (altitudSol >= -18) return 'Crepúsculo astronómico';
+  return 'Noche astronómica';
+}
+
+function precesarJ2000AFecha(
+  raJ2000Horas: number,
+  decJ2000Grados: number,
+  fecha: Date,
+  rotacionEqjEqd: Astronomy.RotationMatrix
+): { ra: number; dec: number } {
+  const esferaJ2000 = new Astronomy.Spherical(decJ2000Grados, raJ2000Horas * 15, 1);
+  const vectorJ2000 = Astronomy.VectorFromSphere(esferaJ2000, fecha);
+  const vectorFecha = Astronomy.RotateVector(rotacionEqjEqd, vectorJ2000);
+  const ecuatorialFecha = Astronomy.EquatorFromVector(vectorFecha);
+  return { ra: ecuatorialFecha.ra, dec: ecuatorialFecha.dec };
+}
+
+export function calcularEstadoSolar(fecha: Date, ubicacion: Ubicacion): EstadoCieloSolar | null {
+  if (!esEntradaAstronomicaValida(fecha, ubicacion)) return null;
+
+  const observador = new Astronomy.Observer(
+    ubicacion.latitud,
+    ubicacion.longitud,
+    ubicacion.altitud
+  );
+  const ecuatorial = Astronomy.Equator(Astronomy.Body.Sun, fecha, observador, true, true);
+  const horizontal = Astronomy.Horizon(fecha, observador, ecuatorial.ra, ecuatorial.dec, 'normal');
+  const altitudSol = Number(horizontal.altitude.toFixed(1));
+
+  return {
+    altitudSol,
+    fase: clasificarFaseSolar(horizontal.altitude),
+  };
+}
+
 export function calcularCielo(fecha: Date, ubicacion: Ubicacion): CuerpoCeleste[] {
+  if (!esEntradaAstronomicaValida(fecha, ubicacion)) return [];
+
   const observador = new Astronomy.Observer(
     ubicacion.latitud,
     ubicacion.longitud,
@@ -64,21 +124,25 @@ export function calcularCielo(fecha: Date, ubicacion: Ubicacion): CuerpoCeleste[
       magnitud: Number(brillo.mag.toFixed(1)),
       iluminacion: Number((brillo.phase_fraction * 100).toFixed(0)),
       faseLunar,
-      visible: horizontal.altitude > 5,
+      visible: horizontal.altitude > 0,
       color,
     };
   }).sort((a, b) => b.altitud - a.altitud);
 }
 
 export function calcularEstrellas(fecha: Date, ubicacion: Ubicacion): EstrellaCalculada[] {
+  if (!esEntradaAstronomicaValida(fecha, ubicacion)) return [];
+
   const observador = new Astronomy.Observer(
     ubicacion.latitud,
     ubicacion.longitud,
     ubicacion.altitud
   );
+  const rotacion = Astronomy.Rotation_EQJ_EQD(fecha);
 
   return ESTRELLAS_BRILLANTES.map((estrella) => {
-    const horizontal = Astronomy.Horizon(fecha, observador, estrella.ra, estrella.dec, 'normal');
+    const { ra, dec } = precesarJ2000AFecha(estrella.ra, estrella.dec, fecha, rotacion);
+    const horizontal = Astronomy.Horizon(fecha, observador, ra, dec, 'normal');
     return {
       ...estrella,
       altitud: Number(horizontal.altitude.toFixed(1)),
@@ -86,17 +150,21 @@ export function calcularEstrellas(fecha: Date, ubicacion: Ubicacion): EstrellaCa
       visible: horizontal.altitude > 0,
     };
   });
-  
 }
+
 export function calcularMessier(fecha: Date, ubicacion: Ubicacion): MessierCalculado[] {
+  if (!esEntradaAstronomicaValida(fecha, ubicacion)) return [];
+
   const observador = new Astronomy.Observer(
     ubicacion.latitud,
     ubicacion.longitud,
     ubicacion.altitud
   );
+  const rotacion = Astronomy.Rotation_EQJ_EQD(fecha);
 
   return CATALOGO_MESSIER.map((obj) => {
-    const horizontal = Astronomy.Horizon(fecha, observador, obj.ra, obj.dec, 'normal');
+    const { ra, dec } = precesarJ2000AFecha(obj.ra, obj.dec, fecha, rotacion);
+    const horizontal = Astronomy.Horizon(fecha, observador, ra, dec, 'normal');
     return {
       ...obj,
       altitud: Number(horizontal.altitude.toFixed(1)),

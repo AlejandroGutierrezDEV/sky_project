@@ -80,3 +80,24 @@ export interface EventoCeleste {
   resumen: string;
   detalle: string;
 }
+
+export interface LluviaAnual {
+  id: string;
+  nombre: string;
+  mesPico: number; // 1-12
+  diaPico: number;
+  thz: number; // Meteoros por hora en condiciones ideales
+  radiante: string;
+}
+
+export type FaseCrepusculo =
+  | 'Día'
+  | 'Crepúsculo civil'
+  | 'Crepúsculo náutico'
+  | 'Crepúsculo astronómico'
+  | 'Noche astronómica';
+
+export interface EstadoCieloSolar {
+  altitudSol: number;
+  fase: FaseCrepusculo;
+}
