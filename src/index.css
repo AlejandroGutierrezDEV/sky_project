@@ -1,5 +1,41 @@
 @import "tailwindcss";
 
+/* Sistema tipográfico astronómico (fuentes locales vía @fontsource-variable) */
+@theme {
+  --font-display: 'Space Grotesk Variable', system-ui, sans-serif;
+  --font-sans: 'Inter Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  /* Filtro Rojo: ningún acento del navegador puede salir del espectro rojo */
+  .tema-rojo {
+    accent-color: #dc2626;
+  }
+
+  .tema-rojo *:focus-visible {
+    outline-color: #dc2626;
+  }
+
+  .tema-rojo ::selection {
+    background-color: #7f1d1d;
+    color: #f87171;
+  }
+}
+
 @layer utilities {
   .tarjeta-3d {
     transform-style: preserve-3d;
@@ -12,6 +48,130 @@
   .tarjeta-3d:hover {
     transform: perspective(900px) translateY(-2px) rotateX(1.2deg);
   }
+
+  /* ── Estética HUD de observatorio ─────────────────────────────── */
+  .hud-esquinas {
+    position: relative;
+  }
+
+  /* Esquinas técnicas discretas (marcas de retícula en las 4 esquinas) */
+  .hud-esquinas::before {
+    content: '';
+    position: absolute;
+    inset: 6px;
+    pointer-events: none;
+    border-radius: inherit;
+    --hud-l: 12px;
+    --hud-g: 1.5px;
+    background:
+      linear-gradient(var(--hud-color), var(--hud-color)) top left / var(--hud-l) var(--hud-g) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) top left / var(--hud-g) var(--hud-l) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) top right / var(--hud-l) var(--hud-g) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) top right / var(--hud-g) var(--hud-l) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) bottom left / var(--hud-l) var(--hud-g) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) bottom left / var(--hud-g) var(--hud-l) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) bottom right / var(--hud-l) var(--hud-g) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) bottom right / var(--hud-g) var(--hud-l) no-repeat;
+  }
+
+  /* Oscuro: brillo cian tenue */
+  .hud-oscuro {
+    --hud-color: rgb(34 211 238 / 0.45);
+    box-shadow:
+      0 0 0 1px rgb(34 211 238 / 0.04),
+      0 0 24px -12px rgb(34 211 238 / 0.35),
+      0 20px 25px -5px rgb(0 0 0 / 0.3);
+  }
+
+  /* Claro: acabado limpio de instrumento */
+  .hud-claro {
+    --hud-color: rgb(71 85 105 / 0.45);
+  }
+
+  /* Rojo: líneas finas rojo oscuro, sin brillo */
+  .hud-rojo {
+    --hud-color: rgb(153 27 27 / 0.9);
+  }
+
+  /* Rejilla técnica tenue para fondos de instrumentos */
+  .hud-rejilla {
+    background-image:
+      linear-gradient(to right, color-mix(in srgb, currentColor 7%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in srgb, currentColor 7%, transparent) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  /* Icono de brújula con oscilación sutil */
+  .brujula-icono-animada {
+    animation: brujula-oscilar 4.5s ease-in-out infinite;
+    transform-origin: center;
+  }
+
+  .alineacion-pulso {
+    animation: alineacion-pulso 1.6s ease-in-out infinite;
+  }
+
+  /* Deslizadores HUD: usan currentColor para respetar los 3 temas */
+  .rango-hud {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    height: 2.5rem;
+    background: transparent;
+    cursor: pointer;
+    touch-action: pan-y;
+  }
+
+  .rango-hud::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: color-mix(in srgb, currentColor 30%, transparent);
+  }
+
+  .rango-hud::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: color-mix(in srgb, currentColor 30%, transparent);
+  }
+
+  .rango-hud::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px;
+    height: 22px;
+    margin-top: -9px;
+    border-radius: 9999px;
+    background: currentColor;
+    border: 3px solid color-mix(in srgb, currentColor 35%, black);
+  }
+
+  .rango-hud::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 9999px;
+    background: currentColor;
+    border: 3px solid color-mix(in srgb, currentColor 35%, black);
+  }
+}
+
+@keyframes brujula-oscilar {
+  0%,
+  100% {
+    transform: rotate(-14deg);
+  }
+  50% {
+    transform: rotate(14deg);
+  }
+}
+
+@keyframes alineacion-pulso {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -19,5 +179,10 @@
   .tarjeta-3d:hover {
     transform: none;
     transition: none;
+  }
+
+  .brujula-icono-animada,
+  .alineacion-pulso {
+    animation: none;
   }
 }

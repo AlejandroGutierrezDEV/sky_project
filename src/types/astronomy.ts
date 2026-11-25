@@ -137,3 +137,39 @@ export interface EfemeridesTransito {
   puesta: Date | null;
   alturaMaxima: number | null;
 }
+
+/** Vistas principales de la aplicación (navegación sin router). */
+export type VistaActiva = 'observatorio' | 'guia';
+
+/** Resultado de la solicitud de permiso de sensores (Safari iOS 13+). */
+export type PermisoOrientacion = 'granted' | 'denied' | 'default';
+
+/** Evento de orientación con la extensión propietaria de Safari iOS. */
+export interface EventoOrientacionDispositivo extends DeviceOrientationEvent {
+  /** Rumbo magnético en grados (0 = Norte), solo en WebKit/iOS. */
+  readonly webkitCompassHeading?: number;
+  /** Precisión estimada del rumbo en grados, solo en WebKit/iOS. */
+  readonly webkitCompassAccuracy?: number;
+}
+
+/** Constructor de DeviceOrientationEvent con el método estático opcional de iOS. */
+export interface ConstructorOrientacionConPermiso {
+  requestPermission?: () => Promise<PermisoOrientacion>;
+}
+
+export type EstadoSensorBrujula =
+  | 'inactivo'
+  | 'solicitando'
+  | 'buscando'
+  | 'activo'
+  | 'denegado'
+  | 'no-disponible'
+  | 'inseguro'
+  | 'sin-lecturas';
+
+export interface OrientacionBrujula {
+  /** Rumbo en grados [0, 360). */
+  rumbo: number;
+  /** Cabeceo/inclinación del dispositivo en grados. */
+  inclinacion: number;
+}
