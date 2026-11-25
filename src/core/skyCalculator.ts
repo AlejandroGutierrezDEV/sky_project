@@ -1,10 +1,13 @@
 import * as Astronomy from 'astronomy-engine';
 import type {
+  AstroSeleccionado,
   CuerpoCeleste,
+  EfemeridesTransito,
   EstadoCieloSolar,
   EstrellaCalculada,
   FaseCrepusculo,
   MessierCalculado,
+  PuntoTrayectoria,
   Ubicacion,
 } from '../types/astronomy';
 import { CATALOGO_MESSIER } from '../data/messierCatalog';
@@ -174,4 +177,138 @@ export function calcularMessier(fecha: Date, ubicacion: Ubicacion): MessierCalcu
       visible: horizontal.altitude > 10,
     };
   });
+}
+
+function formatearHoraEtiqueta(fecha: Date): string {
+  const horas = String(fecha.getHours()).padStart(2, '0');
+  const minutos = String(fecha.getMinutes()).padStart(2, '0');
+  return `${horas}:${minutos}`;
+}
+
+export function calcularTrayectoriaAstro(
+  astro: AstroSeleccionado,
+  fecha: Date,
+  ubicacion: Ubicacion
+): PuntoTrayectoria[] {
+  if (!esEntradaAstronomicaValida(fecha, ubicacion)) return [];
+
+  const observador = new Astronomy.Observer(
+    ubicacion.latitud,
+    ubicacion.longitud,
+    ubicacion.altitud
+  );
+  const puntos: PuntoTrayectoria[] = [];
+  const pasoMs = 30 * 60_000;
+
+  if (astro.categoria === 'cuerpo') {
+    const cuerpoDef = CUERPOS_A_CALCULAR.find((c) => c.body.toString() === astro.id);
+    if (!cuerpoDef) return [];
+
+    for (let i = -12; i <= 12; i++) {
+      const fechaPaso = new Date(fecha.getTime() + i * pasoMs);
+      const ecuatorial = Astronomy.Equator(cuerpoDef.body, fechaPaso, observador, true, true);
+      const horizontal = Astronomy.Horizon(
+        fechaPaso,
+        observador,
+        ecuatorial.ra,
+        ecuatorial.dec,
+        'normal'
+      );
+      puntos.push({
+        altitud: Number(horizontal.altitude.toFixed(1)),
+        acimut: Number(horizontal.azimuth.toFixed(1)),
+        horaEtiqueta: formatearHoraEtiqueta(fechaPaso),
+      });
+    }
+    return puntos;
+  }
+
+  const catalogo =
+    astro.categoria === 'estrella'
+      ? ESTRELLAS_BRILLANTES.find((e) => e.id === astro.id)
+      : CATALOGO_MESSIER.find((m) => m.id === astro.id);
+
+  if (!catalogo) return [];
+
+  const rotacion = Astronomy.Rotation_EQJ_EQD(fecha);
+  const { ra, dec } = precesarJ2000AFecha(catalogo.ra, catalogo.dec, fecha, rotacion);
+
+  for (let i = -12; i <= 12; i++) {
+    const fechaPaso = new Date(fecha.getTime() + i * pasoMs);
+    const horizontal = Astronomy.Horizon(fechaPaso, observador, ra, dec, 'normal');
+    puntos.push({
+      altitud: Number(horizontal.altitude.toFixed(1)),
+      acimut: Number(horizontal.azimuth.toFixed(1)),
+      horaEtiqueta: formatearHoraEtiqueta(fechaPaso),
+    });
+  }
+
+  return puntos;
+}
+
+export function calcularTransitoCuerpo(
+  idCuerpo: string,
+  fecha: Date,
+  ubicacion: Ubicacion
+): EfemeridesTransito {
+  const vacio: EfemeridesTransito = {
+    salida: null,
+    culminacion: null,
+    puesta: null,
+    alturaMaxima: null,
+  };
+
+  if (!esEntradaAstronomicaValida(fecha, ubicacion)) return vacio;
+
+  const cuerpoDef = CUERPOS_A_CALCULAR.find((c) => c.body.toString() === idCuerpo);
+  if (!cuerpoDef) return vacio;
+
+  const observador = new Astronomy.Observer(
+    ubicacion.latitud,
+    ubicacion.longitud,
+    ubicacion.altitud
+  );
+
+  const inicioDia = new Date(fecha);
+  inicioDia.setHours(0, 0, 0, 0);
+
+  let salida: Date | null = null;
+  let puesta: Date | null = null;
+  let culminacion: Date | null = null;
+  let alturaMaxima: number | null = null;
+
+  try {
+    const eventoSalida = Astronomy.SearchRiseSet(cuerpoDef.body, observador, 1, inicioDia, 1);
+    if (eventoSalida) salida = eventoSalida.date;
+  } catch {
+    // Mantiene salida en null en latitudes o fechas sin orto
+  }
+
+  try {
+    const eventoPuesta = Astronomy.SearchRiseSet(cuerpoDef.body, observador, -1, inicioDia, 1);
+    if (eventoPuesta) puesta = eventoPuesta.date;
+  } catch {
+    // Mantiene puesta en null en latitudes o fechas sin ocaso
+  }
+
+  try {
+    const eventoCulminacion = Astronomy.SearchHourAngle(
+      cuerpoDef.body,
+      observador,
+      0,
+      inicioDia,
+      1
+    );
+    culminacion = eventoCulminacion.time.date;
+    alturaMaxima = Number(eventoCulminacion.hor.altitude.toFixed(1));
+  } catch {
+    // Mantiene culminación en null si no es resoluble
+  }
+
+  return {
+    salida,
+    culminacion,
+    puesta,
+    alturaMaxima,
+  };
 }

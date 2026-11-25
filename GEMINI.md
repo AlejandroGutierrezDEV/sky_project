@@ -30,3 +30,10 @@
 - **Solo lectura cuando se pida análisis:** No ejecutes comandos en la terminal ni modifiques archivos si únicamente se solicita revisar, auditar o explicar código.
 - **Cambios incrementales:** Evita reescribir archivos completos si solo cambian líneas concretas; entrega únicamente los bloques a modificar salvo que se pida explícitamente el archivo entero.
 - **Sin dependencias innecesarias:** Prioriza soluciones nativas o librerías gratuitas ya instaladas en el proyecto.
+
+## Reglas transversales obligatorias
+- TypeScript en modo estricto (prohibido `any`).
+- Compatibilidad total con los 3 temas (`oscuro`, `claro`, `rojo`) y `prefers-reduced-motion`.
+- Prohibido usar `alert()`, `confirm()` o `prompt()`.
+- Validar siempre `localStorage`, APIs y entradas de usuario con *type guards* y `try/catch`.
+- Ejecutar `npm run lint` y `npm run build` al finalizar cada tarea.
