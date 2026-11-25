@@ -1,6 +1,7 @@
 import * as Astronomy from 'astronomy-engine';
 import type { EventoCeleste, Ubicacion } from '../types/astronomy';
-import { LLUVIAS_ESTRELLAS } from '../data/messierCatalog';
+import { LLUVIAS_ESTRELLAS } from '../data/meteorShowers';
+import { esEntradaAstronomicaValida } from './skyCalculator';
 
 const NOMBRES_ECLIPSE: Record<string, string> = {
   Total: 'Total',
@@ -20,7 +21,7 @@ function obtenerProximasLluvias(fechaBase: Date): EventoCeleste[] {
 
   return LLUVIAS_ESTRELLAS.map((lluvia) => {
     let fechaPico = new Date(anioActual, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
-    if (calcularDiasRestantes(fechaBase, fechaPico) < -1) {
+    if (calcularDiasRestantes(fechaBase, fechaPico) < 0) {
       fechaPico = new Date(anioActual + 1, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
     }
 
@@ -44,12 +45,26 @@ function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoC
     ubicacion.altitud
   );
 
-  // 1. Próximos 2 eclipses lunares
+  // 1. Próximos 2 eclipses lunares con comprobación de visibilidad local
   let fechaBusqueda = new Date(fechaBase);
   for (let i = 0; i < 2; i++) {
     const lunar = Astronomy.SearchLunarEclipse(fechaBusqueda);
     const fechaPico = lunar.peak.date;
-    const tipoStr = NOMBRES_ECLIPSE[String(lunar.kind)] ?? 'Lunar';
+    const tipoClave = String(lunar.kind);
+    const tipoStr = NOMBRES_ECLIPSE[tipoClave] ?? 'Lunar';
+
+    const eqLuna = Astronomy.Equator(Astronomy.Body.Moon, fechaPico, observador, true, true);
+    const horLuna = Astronomy.Horizon(fechaPico, observador, eqLuna.ra, eqLuna.dec, 'normal');
+
+    const resumen =
+      tipoClave === 'Penumbra'
+        ? 'Eclipse penumbral (oscurecimiento sutil)'
+        : `Oscurecimiento: ${Math.round(lunar.obscuration * 100)}%`;
+
+    const detalle =
+      horLuna.altitude > 0
+        ? `Visible desde tu ubicación (Luna a ${horLuna.altitude.toFixed(1)}° en el máximo)`
+        : `No visible desde tu ubicación (Luna bajo el horizonte: ${horLuna.altitude.toFixed(1)}°)`;
 
     eventos.push({
       id: `eclipse-lunar-${fechaPico.getTime()}`,
@@ -57,8 +72,8 @@ function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoC
       tipo: 'eclipse',
       fechaPico,
       diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
-      resumen: `Oscurecimiento: ${Math.round(lunar.obscuration * 100)}%`,
-      detalle: 'Visible desde cualquier punto con Luna sobre el horizonte',
+      resumen,
+      detalle,
     });
 
     fechaBusqueda = new Date(fechaPico.getTime() + 15 * 24 * 60 * 60 * 1000);
@@ -95,6 +110,8 @@ function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoC
 }
 
 export function calcularProximosEventos(fechaBase: Date, ubicacion: Ubicacion): EventoCeleste[] {
+  if (!esEntradaAstronomicaValida(fechaBase, ubicacion)) return [];
+
   const lluvias = obtenerProximasLluvias(fechaBase);
   const eclipses = obtenerProximosEclipses(fechaBase, ubicacion);
 

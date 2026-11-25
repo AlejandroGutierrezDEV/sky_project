@@ -9,11 +9,23 @@ interface WeatherPanelProps {
   claseTarjeta: string;
 }
 
-const ESTILOS_VEREDICTO: Record<CondicionesMeteo['veredicto'], string> = {
+const ESTILOS_VEREDICTO_OSCURO: Record<CondicionesMeteo['veredicto'], string> = {
   Excelente: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400',
   Aceptable: 'border-amber-500/40 bg-amber-500/15 text-amber-400',
   Desfavorable: 'border-rose-500/40 bg-rose-500/15 text-rose-400',
 };
+
+const ESTILOS_VEREDICTO_CLARO: Record<CondicionesMeteo['veredicto'], string> = {
+  Excelente: 'border-emerald-600/40 bg-emerald-500/15 text-emerald-700',
+  Aceptable: 'border-amber-600/40 bg-amber-500/15 text-amber-700',
+  Desfavorable: 'border-rose-600/40 bg-rose-500/15 text-rose-700',
+};
+
+function obtenerEstiloVeredicto(tema: TemaVisual, veredicto: CondicionesMeteo['veredicto']): string {
+  if (tema === 'rojo') return 'border-red-600 bg-red-950/50 text-red-500';
+  if (tema === 'claro') return ESTILOS_VEREDICTO_CLARO[veredicto];
+  return ESTILOS_VEREDICTO_OSCURO[veredicto];
+}
 
 export function WeatherPanel({
   meteo,
@@ -22,7 +34,8 @@ export function WeatherPanel({
   tema,
   claseTarjeta,
 }: Readonly<WeatherPanelProps>) {
-  const colorBarra = tema === 'rojo' ? 'bg-red-600' : 'bg-sky-400';
+  const colorBarra =
+    tema === 'rojo' ? 'bg-red-600' : tema === 'claro' ? 'bg-sky-600' : 'bg-sky-400';
 
   return (
     <section className={`p-4 rounded-2xl border space-y-3 ${claseTarjeta}`}>
@@ -33,11 +46,10 @@ export function WeatherPanel({
 
         {meteo && (
           <span
-            className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
-              tema === 'rojo'
-                ? 'border-red-600 bg-red-950/50 text-red-500'
-                : ESTILOS_VEREDICTO[meteo.veredicto]
-            }`}
+            className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${obtenerEstiloVeredicto(
+              tema,
+              meteo.veredicto
+            )}`}
           >
             {meteo.veredicto}
           </span>
@@ -48,6 +60,15 @@ export function WeatherPanel({
 
       {!cargando && meteo && (
         <>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono opacity-75">
+            <span>Pronóstico: {meteo.horaPronostico}</span>
+            {meteo.esCache && (
+              <span className="px-2 py-0.5 rounded-full border border-current/25">
+                Desde caché
+              </span>
+            )}
+          </div>
+
           <div className="grid grid-cols-4 gap-2 text-center font-mono text-xs pt-1">
             <div className="p-2 rounded-xl border border-current/15 bg-current/5">
               <Cloud className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" />

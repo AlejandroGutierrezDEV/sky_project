@@ -9,9 +9,22 @@ interface EventsPanelProps {
 }
 
 function formatearBadgeDias(dias: number): string {
-  if (dias <= 0) return '¡Hoy!';
+  if (dias < 0) return 'Ayer';
+  if (dias === 0) return '¡Hoy!';
   if (dias === 1) return 'Mañana';
   return `En ${dias} días`;
+}
+
+function obtenerClaseIconoEvento(tema: TemaVisual, tipo: EventoCeleste['tipo']): string {
+  if (tema === 'rojo') return 'text-red-500';
+  if (tema === 'claro') return tipo === 'lluvia' ? 'text-amber-600' : 'text-sky-600';
+  return tipo === 'lluvia' ? 'text-amber-400' : 'text-sky-400';
+}
+
+function obtenerClaseBadgeDias(tema: TemaVisual): string {
+  if (tema === 'rojo') return 'border-red-600 text-red-500';
+  if (tema === 'claro') return 'border-sky-600/40 bg-sky-500/10 text-sky-700';
+  return 'border-sky-500/40 bg-sky-500/10 text-sky-400';
 }
 
 export function EventsPanel({
@@ -45,19 +58,17 @@ export function EventsPanel({
               <div className="flex items-start justify-between gap-2">
                 <span className="font-bold text-sm flex items-center gap-1.5">
                   {ev.tipo === 'lluvia' ? (
-                    <Sparkles className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                    <Sparkles className={`w-3.5 h-3.5 shrink-0 ${obtenerClaseIconoEvento(tema, 'lluvia')}`} />
                   ) : (
-                    <Eclipse className="w-3.5 h-3.5 shrink-0 text-sky-400" />
+                    <Eclipse className={`w-3.5 h-3.5 shrink-0 ${obtenerClaseIconoEvento(tema, 'eclipse')}`} />
                   )}
                   {ev.titulo}
                 </span>
 
                 <span
-                  className={`text-[11px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${
-                    tema === 'rojo'
-                      ? 'border-red-600 text-red-500'
-                      : 'border-sky-500/40 bg-sky-500/10 text-sky-400'
-                  }`}
+                  className={`text-[11px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${obtenerClaseBadgeDias(
+                    tema
+                  )}`}
                 >
                   {formatearBadgeDias(ev.diasRestantes)}
                 </span>

@@ -1,75 +1,49 @@
-# React + TypeScript + Vite
+# SkyProject
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Aplicación web *offline-first* de astronomía observacional que permite consultar la bóveda celeste en tiempo real, efemérides planetarias, próximos eventos astronómicos y condiciones meteorológicas para cualquier ubicación y fecha.
 
-Currently, two official plugins are available:
+## Funcionalidades principales
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Mapa celeste interactivo (`<canvas>`):** proyección polar del cielo con estrellas brillantes, líneas de constelaciones, catálogo Messier, Luna y planetas del Sistema Solar, con precesión desde época J2000 a la fecha de observación y soporte para ratón y pantalla táctil.
+- **Efemérides y estado solar:** cálculo local con `astronomy-engine` de altitud, acimut, magnitud, fase lunar, iluminación y fase del crepúsculo (día, civil, náutico, astronómico o noche astronómica).
+- **Próximos eventos celestes:** calendario dinámico de lluvias de estrellas y próximos eclipses lunares (con comprobación de visibilidad local) y solares.
+- **Condiciones meteorológicas astronómicas:** integración con la API de Open-Meteo sincronizada en UTC (nubosidad por capas, viento, humedad, temperatura y veredicto de observación) con caché local en `localStorage` para uso sin conexión.
+- **Tres temas visuales:** `Oscuro`, `Claro` y `Filtro Rojo` diseñado para preservar la adaptación ocular nocturna en el campo.
+- **Geolocalización y ubicaciones personalizadas:** detección mediante GPS del navegador o edición manual de latitud, longitud y altitud con validación defensiva.
 
-## React Compiler
+## Stack tecnológico
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Frontend:** React 19 + TypeScript (modo estricto) + Vite 8 + Tailwind CSS v4
+- **Cálculo astronómico:** `astronomy-engine` (100% local y *offline-first*)
+- **Meteorología:** Open-Meteo API + caché en `localStorage`
+- **Iconografía:** `lucide-react`
+- **Preparado para móvil:** Capacitor (`@capacitor/core`, `@capacitor/cli`)
 
-## Expanding the ESLint configuration
+## Instalación y puesta en marcha
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Requisitos: Node.js 20 o superior y npm.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+```bash
+# 1. Instalar dependencias
+npm install
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+# 2. Arrancar servidor de desarrollo
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+## Scripts disponibles
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- `npm run dev` — Inicia el servidor de desarrollo con Vite.
+- `npm run lint` — Ejecuta ESLint sobre todo el proyecto.
+- `npm run build` — Comprueba tipos con TypeScript (`tsc -b`) y genera el build de producción en `dist/`.
+- `npm run preview` — Previsualiza localmente el build de producción.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Estructura del proyecto
 
+```text
+src/
+├── components/   # SkyMap, WeatherPanel, EventsPanel
+├── core/         # skyCalculator, eventsCalculator, weatherService
+├── data/         # brightStars, messierCatalog, meteorShowers
+└── types/        # Interfaces y tipos centralizados (astronomy.ts)
 ```
