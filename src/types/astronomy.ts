@@ -17,6 +17,7 @@ export interface CuerpoCeleste {
   magnitud: number;
   iluminacion?: number;
   faseLunar?: string;
+  anguloFase?: number;
   visible: boolean;
   color: string;
 }

@@ -109,8 +109,9 @@ export function calcularCielo(fecha: Date, ubicacion: Ubicacion): CuerpoCeleste[
     const brillo = Astronomy.Illumination(body, fecha);
 
     let faseLunar: string | undefined;
+    let anguloFase: number | undefined;
     if (tipo === 'luna') {
-      const anguloFase = Astronomy.MoonPhase(fecha);
+      anguloFase = Astronomy.MoonPhase(fecha);
       faseLunar = obtenerNombreFaseLunar(anguloFase);
     }
 
@@ -124,6 +125,7 @@ export function calcularCielo(fecha: Date, ubicacion: Ubicacion): CuerpoCeleste[
       magnitud: Number(brillo.mag.toFixed(1)),
       iluminacion: Number((brillo.phase_fraction * 100).toFixed(0)),
       faseLunar,
+      anguloFase,
       visible: horizontal.altitude > 0,
       color,
     };

@@ -30,7 +30,7 @@ Antes de finalizar cualquier tarea, ejecuta y verifica que pasan sin errores:
 - **Autoría de commits:** Antes de realizar cualquier commit en Git, configura el autor local para que figure exclusivamente a nombre del propietario del repositorio:
   ```bash
   git config user.name "alejandrogutierrezdev"
-  git config user.email "TU_CORREO_DE_GITHUB@ejemplo.com"
+  git config user.email "gutierrezvillalba.dev@gmail.com"
   ```
 - **Cero atribución al agente:**
   - **No** añadas líneas `Co-authored-by:` ni firmas automáticas en los mensajes de commit.

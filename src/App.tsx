@@ -22,6 +22,8 @@ import { calcularProximosEventos } from './core/eventsCalculator';
 import { SkyMap } from './components/SkyMap';
 import { WeatherPanel } from './components/WeatherPanel';
 import { EventsPanel } from './components/EventsPanel';
+import { StarfieldBackground } from './components/StarfieldBackground';
+import { MoonPhase3D } from './components/MoonPhase3D';
 import type { CondicionesMeteo, CuerpoCeleste, TemaVisual, Ubicacion } from './types/astronomy';
 
 const CLAVE_UBICACION = 'skyproject_ubicacion';
@@ -35,15 +37,21 @@ const UBICACION_INICIAL: Ubicacion = {
 };
 
 const CLASES_CONTENEDOR: Record<TemaVisual, string> = {
-  oscuro: 'bg-slate-950 text-slate-100',
-  claro: 'bg-slate-100 text-slate-900',
-  rojo: 'bg-black text-red-500',
+  oscuro: 'bg-transparent text-slate-100',
+  claro: 'bg-transparent text-slate-900',
+  rojo: 'bg-transparent text-red-500',
 };
 
 const CLASES_TARJETA: Record<TemaVisual, string> = {
-  oscuro: 'bg-slate-900/70 border-slate-800',
-  claro: 'bg-white border-slate-200 shadow-sm',
-  rojo: 'bg-black border-red-900/60',
+  oscuro: 'bg-slate-900/55 backdrop-blur-md border-slate-700/50 shadow-xl shadow-black/30',
+  claro: 'bg-white/80 backdrop-blur-md border-slate-200/90 shadow-md shadow-slate-900/5',
+  rojo: 'bg-black/90 border-red-900/70',
+};
+
+const CLASES_HOVER_TARJETA: Record<TemaVisual, string> = {
+  oscuro: 'hover:border-sky-500/40',
+  claro: 'hover:border-slate-300 hover:shadow-lg',
+  rojo: 'hover:border-red-600/80',
 };
 
 interface FormularioUbicacion {
@@ -279,10 +287,13 @@ export function App() {
     [fechaSeleccionada, ubicacion]
   );
 
-  const eventos = useMemo(
-    () => calcularProximosEventos(fechaSeleccionada, ubicacion),
-    [fechaSeleccionada, ubicacion]
-  );
+  const diaSeleccionado = fechaStr.slice(0, 10);
+
+  const eventos = useMemo(() => {
+    const fechaDia = new Date(`${diaSeleccionado}T12:00:00`);
+    const baseValida = Number.isNaN(fechaDia.getTime()) ? new Date() : fechaDia;
+    return calcularProximosEventos(baseValida, ubicacion);
+  }, [diaSeleccionado, ubicacion]);
 
   const actualizarCampoUbicacion = (campo: keyof FormularioUbicacion, valor: string) => {
     const siguienteForm = { ...formUbicacion, [campo]: valor };
@@ -354,15 +365,19 @@ export function App() {
 
   const clasesContenedor = CLASES_CONTENEDOR[tema];
   const clasesTarjeta = CLASES_TARJETA[tema];
+  const claseHoverTarjeta = CLASES_HOVER_TARJETA[tema];
   const claseEsquemaInput = tema !== 'claro' ? '[color-scheme:dark]' : '';
   const claseIconoTitulo =
     tema === 'rojo' ? 'text-red-500' : tema === 'claro' ? 'text-sky-600' : 'text-sky-400';
 
   return (
-    <div className={`min-h-screen p-4 md:p-6 transition-colors duration-300 ${clasesContenedor}`}>
+    <div className={`relative min-h-screen p-4 md:p-6 transition-colors duration-300 ${clasesContenedor}`}>
+      <StarfieldBackground tema={tema} />
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Cabecera */}
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-current/15 pb-4">
+        <header
+          className={`flex flex-wrap items-center justify-between gap-4 p-4 md:px-5 rounded-2xl border ${clasesTarjeta}`}
+        >
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2 tracking-tight">
               <Sparkles className={`w-6 h-6 ${claseIconoTitulo}`} /> SkyProject
@@ -370,7 +385,7 @@ export function App() {
             <button
               onClick={() => setEditandoUbicacion(!editandoUbicacion)}
               aria-expanded={editandoUbicacion}
-              className="text-sm opacity-80 hover:opacity-100 flex items-center gap-1.5 mt-1 cursor-pointer underline decoration-dotted"
+              className="text-sm opacity-80 hover:opacity-100 flex items-center gap-1.5 mt-1 cursor-pointer underline decoration-dotted transition-opacity"
             >
               <MapPin className="w-3.5 h-3.5" />
               {ubicacion.nombre} ({ubicacion.latitud}°, {ubicacion.longitud}° · {ubicacion.altitud}m)
@@ -566,11 +581,10 @@ export function App() {
           {/* Columna Izquierda: Bóveda Celeste + Próximos Eventos */}
           <div className="lg:col-span-7 space-y-6">
             <div className={`p-4 md:p-6 rounded-2xl border ${clasesTarjeta}`}>
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                 <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75">
                   Bóveda Celeste en Tiempo Real
                 </h2>
-                <span className="text-xs opacity-60">Toca o pasa el cursor sobre un astro</span>
               </div>
               <SkyMap
                 cuerpos={cuerpos}
@@ -609,36 +623,52 @@ export function App() {
               </h2>
               {cuerpos.map((obj) => {
                 const visibilidad = obtenerEstadoVisibilidadCuerpo(obj);
+                const esLunaConFase =
+                  obj.tipo === 'luna' && obj.faseLunar !== undefined && obj.iluminacion !== undefined;
+
                 return (
                   <div
                     key={obj.id}
-                    className={`p-3.5 rounded-xl border transition-opacity ${clasesTarjeta} ${visibilidad.opacidad}`}
+                    className={`tarjeta-3d p-3.5 rounded-xl border ${clasesTarjeta} ${claseHoverTarjeta} ${visibilidad.opacidad}`}
                   >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="font-bold flex items-center gap-2">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full inline-block"
-                          style={{ backgroundColor: tema === 'rojo' ? '#ef4444' : obj.color }}
+                    <div className="flex items-center gap-3.5">
+                      {esLunaConFase && (
+                        <MoonPhase3D
+                          iluminacion={obj.iluminacion ?? 0}
+                          faseLunar={obj.faseLunar ?? ''}
+                          anguloFase={obj.anguloFase}
+                          tema={tema}
                         />
-                        {obj.nombre}
-                      </span>
-                      <span className="text-xs px-2 py-0.5 rounded-full border border-current/25">
-                        {visibilidad.etiqueta}
-                      </span>
-                    </div>
-
-                    <div className="text-xs flex flex-wrap items-center justify-between gap-2 opacity-85 font-mono">
-                      <span className="flex items-center gap-1">
-                        <Compass className="w-3.5 h-3.5" />
-                        {obj.direccion} ({obj.acimut}°)
-                      </span>
-                      <span>Alt: {obj.altitud}°</span>
-                      <span>Mag: {obj.magnitud}</span>
-                      {obj.faseLunar && (
-                        <span>
-                          {obj.faseLunar} ({obj.iluminacion}%)
-                        </span>
                       )}
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                          <span className="font-bold flex items-center gap-2">
+                            <span
+                              className="w-2.5 h-2.5 rounded-full inline-block shrink-0"
+                              style={{ backgroundColor: tema === 'rojo' ? '#ef4444' : obj.color }}
+                            />
+                            {obj.nombre}
+                          </span>
+                          <span className="text-xs px-2 py-0.5 rounded-full border border-current/25 shrink-0">
+                            {visibilidad.etiqueta}
+                          </span>
+                        </div>
+
+                        <div className="text-xs flex flex-wrap items-center justify-between gap-2 opacity-85 font-mono">
+                          <span className="flex items-center gap-1">
+                            <Compass className="w-3.5 h-3.5" />
+                            {obj.direccion} ({obj.acimut}°)
+                          </span>
+                          <span>Alt: {obj.altitud}°</span>
+                          <span>Mag: {obj.magnitud}</span>
+                          {obj.faseLunar && (
+                            <span>
+                              {obj.faseLunar} ({obj.iluminacion}%)
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );

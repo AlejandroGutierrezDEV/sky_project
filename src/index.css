@@ -1,1 +1,23 @@
 @import "tailwindcss";
+
+@layer utilities {
+  .tarjeta-3d {
+    transform-style: preserve-3d;
+    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 240ms ease,
+      border-color 240ms ease,
+      opacity 200ms ease;
+  }
+
+  .tarjeta-3d:hover {
+    transform: perspective(900px) translateY(-2px) rotateX(1.2deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tarjeta-3d,
+  .tarjeta-3d:hover {
+    transform: none;
+    transition: none;
+  }
+}
