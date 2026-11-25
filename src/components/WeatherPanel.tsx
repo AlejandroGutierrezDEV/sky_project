@@ -70,22 +70,22 @@ export function WeatherPanel({
           </div>
 
           <div className="grid grid-cols-4 gap-2 text-center font-mono text-xs pt-1">
-            <div className="p-2 rounded-xl border border-current/15 bg-current/5">
+            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
               <Cloud className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" />
               <div className="font-bold text-sm">{meteo.nubesTotal}%</div>
               <div className="text-[10px] opacity-65">Nubes</div>
             </div>
-            <div className="p-2 rounded-xl border border-current/15 bg-current/5">
+            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
               <Wind className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" />
               <div className="font-bold text-sm">{meteo.vientoKmh}</div>
               <div className="text-[10px] opacity-65">km/h</div>
             </div>
-            <div className="p-2 rounded-xl border border-current/15 bg-current/5">
+            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
               <Droplets className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" />
               <div className="font-bold text-sm">{meteo.humedad}%</div>
               <div className="text-[10px] opacity-65">Humedad</div>
             </div>
-            <div className="p-2 rounded-xl border border-current/15 bg-current/5">
+            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
               <Thermometer className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" />
               <div className="font-bold text-sm">{meteo.temperatura}°</div>
               <div className="text-[10px] opacity-65">Temp.</div>

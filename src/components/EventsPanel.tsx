@@ -50,10 +50,17 @@ export function EventsPanel({
             year: 'numeric',
           });
 
+          const claseHoverEvento =
+            tema === 'rojo'
+              ? 'hover:border-red-600/80'
+              : tema === 'claro'
+                ? 'hover:border-slate-300 hover:shadow-md'
+                : 'hover:border-sky-500/40';
+
           return (
             <div
               key={ev.id}
-              className="p-3 rounded-xl border border-current/15 bg-current/5 flex flex-col gap-1.5"
+              className={`tarjeta-3d p-3.5 rounded-xl border border-current/15 bg-current/5 flex flex-col gap-1.5 ${claseHoverEvento}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <span className="font-bold text-sm flex items-center gap-1.5">
