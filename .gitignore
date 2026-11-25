@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 # Archivos personales y temporales (no subir a GitHub)
 NOTAS.md
+MOVIL.md
+PORTFOLIO.md
+resumen_codigo.md
