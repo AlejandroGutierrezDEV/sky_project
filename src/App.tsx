@@ -10,12 +10,16 @@ import {
   Crosshair,
   Clock,
   Layers,
+  Play,
+  Pause,
 } from 'lucide-react';
 import {
   calcularCielo,
   calcularEstadoSolar,
   calcularEstrellas,
   calcularMessier,
+  calcularTransitoCuerpo,
+  calcularTrayectoriaAstro,
 } from './core/skyCalculator';
 import { obtenerCondicionesMeteo } from './core/weatherService';
 import { calcularProximosEventos } from './core/eventsCalculator';
@@ -24,7 +28,14 @@ import { WeatherPanel } from './components/WeatherPanel';
 import { EventsPanel } from './components/EventsPanel';
 import { StarfieldBackground } from './components/StarfieldBackground';
 import { MoonPhase3D } from './components/MoonPhase3D';
-import type { CondicionesMeteo, CuerpoCeleste, TemaVisual, Ubicacion } from './types/astronomy';
+import type {
+  AstroSeleccionado,
+  CondicionesMeteo,
+  CuerpoCeleste,
+  EfemeridesTransito,
+  TemaVisual,
+  Ubicacion,
+} from './types/astronomy';
 
 const CLAVE_UBICACION = 'skyproject_ubicacion';
 const CLAVE_TEMA = 'skyproject_tema';
@@ -191,6 +202,26 @@ function formatearFechaParaInput(fecha: Date): string {
   return copia.toISOString().slice(0, 16);
 }
 
+function formatearHoraLocal(fecha: Date | null): string {
+  if (!fecha || Number.isNaN(fecha.getTime())) return '—';
+  const horas = String(fecha.getHours()).padStart(2, '0');
+  const minutos = String(fecha.getMinutes()).padStart(2, '0');
+  return `${horas}:${minutos}`;
+}
+
+function obtenerClaseBotonControlActivo(tema: TemaVisual, activo: boolean): string {
+  if (!activo) return 'opacity-75 hover:opacity-100';
+  if (tema === 'rojo') return 'bg-red-950 text-red-500 border border-red-600';
+  if (tema === 'claro') return 'bg-slate-800 text-white';
+  return 'bg-sky-600 text-white';
+}
+
+function obtenerClaseTarjetaSeleccionada(tema: TemaVisual): string {
+  if (tema === 'rojo') return 'border-red-500 ring-1 ring-red-500/50';
+  if (tema === 'claro') return 'border-sky-600 ring-1 ring-sky-600/30';
+  return 'border-sky-400/80 ring-1 ring-sky-400/40';
+}
+
 export function App() {
   const [ubicacion, setUbicacion] = useState<Ubicacion>(leerUbicacionGuardada);
   const [formUbicacion, setFormUbicacion] = useState<FormularioUbicacion>(() => ({
@@ -205,6 +236,9 @@ export function App() {
   const [errorGPS, setErrorGPS] = useState<string | null>(null);
 
   const [fechaStr, setFechaStr] = useState<string>(() => formatearFechaParaInput(new Date()));
+  const [reproduciendo, setReproduciendo] = useState(false);
+  const [velocidadMinPorSeg, setVelocidadMinPorSeg] = useState<15 | 60>(15);
+  const [astroSeleccionado, setAstroSeleccionado] = useState<AstroSeleccionado | null>(null);
 
   const [tema, setTema] = useState<TemaVisual>(leerTemaGuardado);
   const [mostrarConstelaciones, setMostrarConstelaciones] = useState(true);
@@ -236,6 +270,22 @@ export function App() {
   useEffect(() => {
     guardarEnStorage(CLAVE_TEMA, tema);
   }, [tema]);
+
+  useEffect(() => {
+    if (!reproduciendo) return;
+    const intervalo = window.setInterval(() => {
+      setFechaStr((prev) => {
+        const actual = new Date(prev);
+        const base = Number.isNaN(actual.getTime()) ? new Date() : actual;
+        const siguiente = new Date(base.getTime() + velocidadMinPorSeg * 60_000);
+        return formatearFechaParaInput(siguiente);
+      });
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalo);
+    };
+  }, [reproduciendo, velocidadMinPorSeg]);
 
   const fechaSeleccionada = useMemo(() => {
     const fecha = new Date(fechaStr);
@@ -287,6 +337,22 @@ export function App() {
     [fechaSeleccionada, ubicacion]
   );
 
+  const trayectoriaAstro = useMemo(
+    () =>
+      astroSeleccionado
+        ? calcularTrayectoriaAstro(astroSeleccionado, fechaSeleccionada, ubicacion)
+        : [],
+    [astroSeleccionado, fechaSeleccionada, ubicacion]
+  );
+
+  const transitoSeleccionado: EfemeridesTransito | null = useMemo(
+    () =>
+      astroSeleccionado && astroSeleccionado.categoria === 'cuerpo'
+        ? calcularTransitoCuerpo(astroSeleccionado.id, fechaSeleccionada, ubicacion)
+        : null,
+    [astroSeleccionado, fechaSeleccionada, ubicacion]
+  );
+
   const diaSeleccionado = fechaStr.slice(0, 10);
 
   const eventos = useMemo(() => {
@@ -310,6 +376,7 @@ export function App() {
     if (!nuevoValor) return;
     const fecha = new Date(nuevoValor);
     if (Number.isNaN(fecha.getTime())) return;
+    setReproduciendo(false);
     setFechaStr(nuevoValor);
   };
 
@@ -354,6 +421,7 @@ export function App() {
   };
 
   const ajustarTiempo = (modo: 'ahora' | 'noche' | 'mas1h') => {
+    setReproduciendo(false);
     const base = modo === 'mas1h' ? new Date(fechaSeleccionada) : new Date();
     if (modo === 'noche') {
       base.setHours(23, 30, 0, 0);
@@ -532,6 +600,43 @@ export function App() {
                 <Clock className="w-3 h-3" /> +1h
               </button>
             </div>
+            {/* Control de Time-Lapse */}
+            <div className="flex items-center gap-1 p-1 rounded-xl border border-current/20 bg-current/5 text-xs">
+              <button
+                type="button"
+                onClick={() => setReproduciendo((prev) => !prev)}
+                aria-pressed={reproduciendo}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                  tema,
+                  reproduciendo
+                )}`}
+              >
+                {reproduciendo ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                {reproduciendo ? 'Pausa' : 'Play'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setVelocidadMinPorSeg(15)}
+                aria-pressed={velocidadMinPorSeg === 15}
+                className={`px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                  tema,
+                  velocidadMinPorSeg === 15
+                )}`}
+              >
+                +15 min/s
+              </button>
+              <button
+                type="button"
+                onClick={() => setVelocidadMinPorSeg(60)}
+                aria-pressed={velocidadMinPorSeg === 60}
+                className={`px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                  tema,
+                  velocidadMinPorSeg === 60
+                )}`}
+              >
+                +1 h/s
+              </button>
+            </div>
             {estadoSolar && (
               <span className="text-xs font-mono px-2.5 py-1 rounded-full border border-current/20 bg-current/5 flex items-center gap-1.5">
                 {estadoSolar.altitudSol >= 0 ? (
@@ -594,6 +699,9 @@ export function App() {
                 mostrarConstelaciones={mostrarConstelaciones}
                 mostrarEtiquetasEstrellas={mostrarEtiquetasEstrellas}
                 mostrarMessier={mostrarMessier}
+                astroSeleccionado={astroSeleccionado}
+                trayectoria={trayectoriaAstro}
+                onSeleccionarAstro={setAstroSeleccionado}
               />
             </div>
 
@@ -601,9 +709,10 @@ export function App() {
               eventos={eventos}
               tema={tema}
               claseTarjeta={clasesTarjeta}
-              onSeleccionarFecha={(fechaEvento) =>
-                setFechaStr(formatearFechaParaInput(fechaEvento))
-              }
+              onSeleccionarFecha={(fechaEvento) => {
+                setReproduciendo(false);
+                setFechaStr(formatearFechaParaInput(fechaEvento));
+              }}
             />
           </div>
 
@@ -625,11 +734,25 @@ export function App() {
                 const visibilidad = obtenerEstadoVisibilidadCuerpo(obj);
                 const esLunaConFase =
                   obj.tipo === 'luna' && obj.faseLunar !== undefined && obj.iluminacion !== undefined;
+                const estaSeleccionado =
+                  astroSeleccionado?.categoria === 'cuerpo' && astroSeleccionado.id === obj.id;
+                const claseSeleccion = estaSeleccionado ? obtenerClaseTarjetaSeleccionada(tema) : '';
 
                 return (
-                  <div
+                  <button
                     key={obj.id}
-                    className={`tarjeta-3d p-3.5 rounded-xl border ${clasesTarjeta} ${claseHoverTarjeta} ${visibilidad.opacidad}`}
+                    type="button"
+                    aria-pressed={estaSeleccionado}
+                    onClick={() =>
+                      setAstroSeleccionado((prev) =>
+                        prev?.categoria === 'cuerpo' && prev.id === obj.id
+                          ? null
+                          : { id: obj.id, nombre: obj.nombre, categoria: 'cuerpo' }
+                      )
+                    }
+                    className={`w-full text-left cursor-pointer tarjeta-3d p-3.5 rounded-xl border ${clasesTarjeta} ${claseHoverTarjeta} ${claseSeleccion} ${
+                      estaSeleccionado ? 'opacity-100' : visibilidad.opacidad
+                    }`}
                   >
                     <div className="flex items-center gap-3.5">
                       {esLunaConFase && (
@@ -670,7 +793,20 @@ export function App() {
                         </div>
                       </div>
                     </div>
-                  </div>
+
+                    {estaSeleccionado && transitoSeleccionado && (
+                      <div className="mt-2.5 pt-2 border-t border-current/15 text-xs font-mono flex flex-wrap items-center justify-between gap-2 opacity-90">
+                        <span>Salida: {formatearHoraLocal(transitoSeleccionado.salida)}</span>
+                        <span>
+                          Culminación: {formatearHoraLocal(transitoSeleccionado.culminacion)}
+                          {transitoSeleccionado.alturaMaxima !== null
+                            ? ` (${transitoSeleccionado.alturaMaxima}°)`
+                            : ''}
+                        </span>
+                        <span>Puesta: {formatearHoraLocal(transitoSeleccionado.puesta)}</span>
+                      </div>
+                    )}
+                  </button>
                 );
               })}
             </div>

@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
-import { Globe, Compass, RotateCcw } from 'lucide-react';
+import { Globe, Compass, RotateCcw, X } from 'lucide-react';
 import type {
+  AstroSeleccionado,
+  CategoriaAstro,
   CuerpoCeleste,
   EstrellaCalculada,
   MessierCalculado,
+  PuntoTrayectoria,
   TemaVisual,
 } from '../types/astronomy';
 import { LINEAS_CONSTELACIONES } from '../data/brightStars';
@@ -16,6 +19,9 @@ interface SkyMapProps {
   mostrarConstelaciones: boolean;
   mostrarEtiquetasEstrellas: boolean;
   mostrarMessier: boolean;
+  astroSeleccionado: AstroSeleccionado | null;
+  trayectoria: PuntoTrayectoria[];
+  onSeleccionarAstro: (astro: AstroSeleccionado | null) => void;
 }
 
 type ModoVista = '2d' | '3d';
@@ -33,6 +39,9 @@ interface PuntoProyectado {
 }
 
 interface ObjetoHover {
+  id: string;
+  categoria: CategoriaAstro;
+  nombreCorto: string;
   nombre: string;
   subtitulo: string;
   altitud: number;
@@ -389,6 +398,9 @@ function dibujarEstrellas(
     }
 
     interactivos.push({
+      id: data.id,
+      categoria: 'estrella',
+      nombreCorto: data.nombre,
       nombre: data.nombre,
       subtitulo: `Estrella · Const. ${data.constelacion}`,
       altitud: data.altitud,
@@ -429,6 +441,9 @@ function dibujarMessier(
     ctx.fillText(obj.id, pos.x + r + 3, pos.y + 3);
 
     interactivos.push({
+      id: obj.id,
+      categoria: 'messier',
+      nombreCorto: `${obj.id} · ${obj.nombre}`,
       nombre: `${obj.id} · ${obj.nombre}`,
       subtitulo: `${obj.tipo.toUpperCase()} (${obj.dificultad}) · ${obj.constelacion}`,
       altitud: obj.altitud,
@@ -487,6 +502,9 @@ function dibujarCuerpos(
     ctx.fillText(cuerpo.nombre, pos.x + rCuerpo + (esSaturno ? 10 : 6), pos.y + 4);
 
     interactivos.push({
+      id: cuerpo.id,
+      categoria: 'cuerpo',
+      nombreCorto: cuerpo.nombre,
       nombre: cuerpo.nombre,
       subtitulo: cuerpo.faseLunar ? `${cuerpo.faseLunar} (${cuerpo.iluminacion}%)` : 'Planeta',
       altitud: cuerpo.altitud,
@@ -498,6 +516,120 @@ function dibujarCuerpos(
   }
 }
 
+function dibujarTrayectoria(
+  ctx: CanvasRenderingContext2D,
+  trayectoria: PuntoTrayectoria[],
+  tema: TemaVisual,
+  proyectarFn: (alt: number, az: number) => PuntoProyectado
+) {
+  if (trayectoria.length === 0) return;
+
+  const colorLinea = tema === 'rojo' ? 'rgba(239, 68, 68, 0.8)' : 'rgba(56, 189, 248, 0.78)';
+  const colorPunto = tema === 'rojo' ? '#ff3b3b' : '#7dd3fc';
+  const colorTexto = tema === 'rojo' ? 'rgba(252, 165, 165, 0.88)' : 'rgba(186, 230, 253, 0.9)';
+
+  ctx.save();
+  ctx.strokeStyle = colorLinea;
+  ctx.lineWidth = 1.6;
+  ctx.setLineDash([5, 5]);
+  ctx.beginPath();
+
+  let enTrazo = false;
+  const puntosVisibles: { pos: PuntoProyectado; horaEtiqueta: string; indice: number }[] = [];
+
+  for (let i = 0; i < trayectoria.length; i++) {
+    const punto = trayectoria[i];
+    if (punto.altitud > 0) {
+      const pos = proyectarFn(punto.altitud, punto.acimut);
+      if (!enTrazo) {
+        ctx.moveTo(pos.x, pos.y);
+        enTrazo = true;
+      } else {
+        ctx.lineTo(pos.x, pos.y);
+      }
+      puntosVisibles.push({ pos, horaEtiqueta: punto.horaEtiqueta, indice: i });
+    } else {
+      enTrazo = false;
+    }
+  }
+
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.font = '9px ui-monospace, SFMono-Regular, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+
+  for (const { pos, horaEtiqueta, indice } of puntosVisibles) {
+    // Mostrar marcadores horarios discretos cada hora (índices pares)
+    if (indice % 2 !== 0) continue;
+
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, 2.3, 0, Math.PI * 2);
+    ctx.fillStyle = colorPunto;
+    ctx.fill();
+
+    ctx.fillStyle = colorTexto;
+    ctx.fillText(horaEtiqueta, pos.x, pos.y - 5);
+  }
+
+  ctx.restore();
+}
+
+function dibujarReticulaSeleccion(
+  ctx: CanvasRenderingContext2D,
+  astroSeleccionado: AstroSeleccionado | null,
+  interactivos: ObjetoHover[],
+  tema: TemaVisual,
+  fasePulso: number
+) {
+  if (!astroSeleccionado) return;
+
+  const objetivo = interactivos.find(
+    (item) => item.id === astroSeleccionado.id && item.categoria === astroSeleccionado.categoria
+  );
+  if (!objetivo) return;
+
+  const colorPrincipal = tema === 'rojo' ? '#ff3b3b' : '#38bdf8';
+  const radioBase = objetivo.categoria === 'cuerpo' ? 14 : 11;
+  const radioPulso = radioBase + fasePulso * 4.5;
+
+  ctx.save();
+
+  // Anillo exterior pulsante
+  ctx.beginPath();
+  ctx.arc(objetivo.x, objetivo.y, radioPulso, 0, Math.PI * 2);
+  ctx.strokeStyle = colorPrincipal;
+  ctx.globalAlpha = 0.85 - fasePulso * 0.45;
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+
+  // Anillo interior y marcas de retícula
+  ctx.globalAlpha = 0.95;
+  ctx.beginPath();
+  ctx.arc(objetivo.x, objetivo.y, radioBase - 1, 0, Math.PI * 2);
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([3, 3]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const tamMarca = 4.5;
+  const inicio = radioBase + 1;
+  ctx.beginPath();
+  ctx.moveTo(objetivo.x - inicio - tamMarca, objetivo.y);
+  ctx.lineTo(objetivo.x - inicio, objetivo.y);
+  ctx.moveTo(objetivo.x + inicio, objetivo.y);
+  ctx.lineTo(objetivo.x + inicio + tamMarca, objetivo.y);
+  ctx.moveTo(objetivo.x, objetivo.y - inicio - tamMarca);
+  ctx.lineTo(objetivo.x, objetivo.y - inicio);
+  ctx.moveTo(objetivo.x, objetivo.y + inicio);
+  ctx.lineTo(objetivo.x, objetivo.y + inicio + tamMarca);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
 export function SkyMap({
   cuerpos,
   estrellas,
@@ -506,6 +638,9 @@ export function SkyMap({
   mostrarConstelaciones,
   mostrarEtiquetasEstrellas,
   mostrarMessier,
+  astroSeleccionado,
+  trayectoria,
+  onSeleccionarAstro,
 }: Readonly<SkyMapProps>) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [modoVista, setModoVista] = useState<ModoVista>('2d');
@@ -531,49 +666,75 @@ export function SkyMap({
     const size = 560;
     canvas.width = size * dpr;
     canvas.height = size * dpr;
-    ctx.scale(dpr, dpr);
 
     const cx = size / 2;
     const cy = size / 2;
     const radio = size / 2 - 36;
     const paleta = PALETAS[tema];
-    const interactivos: ObjetoHover[] = [];
 
     const proyectarFn =
       modoVista === '2d'
         ? (alt: number, az: number) => proyectar2D(alt, az, cx, cy, radio)
         : (alt: number, az: number) => proyectar3D(alt, az, cx, cy, size, camara);
 
-    if (modoVista === '2d') {
-      dibujarBaseMapa2D(ctx, size, cx, cy, radio, paleta);
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(cx, cy, radio, 0, Math.PI * 2);
-      ctx.clip();
-    } else {
-      dibujarBaseMapa3D(ctx, size, cx, cy, camara, paleta, tema);
-      ctx.save();
+    const dibujarEscena = (fasePulso: number) => {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const interactivos: ObjetoHover[] = [];
+
+      if (modoVista === '2d') {
+        dibujarBaseMapa2D(ctx, size, cx, cy, radio, paleta);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, radio, 0, Math.PI * 2);
+        ctx.clip();
+      } else {
+        dibujarBaseMapa3D(ctx, size, cx, cy, camara, paleta, tema);
+        ctx.save();
+      }
+
+      dibujarEstrellas(
+        ctx,
+        estrellas,
+        mostrarConstelaciones,
+        mostrarEtiquetasEstrellas,
+        proyectarFn,
+        paleta,
+        tema,
+        interactivos
+      );
+
+      if (mostrarMessier) {
+        dibujarMessier(ctx, messier, tema, proyectarFn, interactivos);
+      }
+
+      dibujarTrayectoria(ctx, trayectoria, tema, proyectarFn);
+      dibujarCuerpos(ctx, cuerpos, tema, proyectarFn, interactivos);
+      dibujarReticulaSeleccion(ctx, astroSeleccionado, interactivos, tema, fasePulso);
+
+      ctx.restore();
+      puntosInteractivosRef.current = interactivos;
+    };
+
+    const prefiereMovimientoReducido =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (!astroSeleccionado || prefiereMovimientoReducido) {
+      dibujarEscena(0.5);
+      return;
     }
 
-    dibujarEstrellas(
-      ctx,
-      estrellas,
-      mostrarConstelaciones,
-      mostrarEtiquetasEstrellas,
-      proyectarFn,
-      paleta,
-      tema,
-      interactivos
-    );
+    let animacionId = 0;
+    const animar = (tiempo: number) => {
+      const fase = (Math.sin(tiempo / 320) + 1) / 2;
+      dibujarEscena(fase);
+      animacionId = window.requestAnimationFrame(animar);
+    };
+    animacionId = window.requestAnimationFrame(animar);
 
-    if (mostrarMessier) {
-      dibujarMessier(ctx, messier, tema, proyectarFn, interactivos);
-    }
-
-    dibujarCuerpos(ctx, cuerpos, tema, proyectarFn, interactivos);
-
-    ctx.restore();
-    puntosInteractivosRef.current = interactivos;
+    return () => {
+      window.cancelAnimationFrame(animacionId);
+    };
   }, [
     cuerpos,
     estrellas,
@@ -584,13 +745,15 @@ export function SkyMap({
     mostrarConstelaciones,
     mostrarEtiquetasEstrellas,
     mostrarMessier,
+    astroSeleccionado,
+    trayectoria,
   ]);
 
-  const inspeccionarPuntero = (e: PointerEvent<HTMLCanvasElement>) => {
+  const buscarAstroEnPuntero = (e: PointerEvent<HTMLCanvasElement>): ObjetoHover | null => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
+    if (rect.width === 0 || rect.height === 0) return null;
 
     const scaleX = 560 / rect.width;
     const scaleY = 560 / rect.height;
@@ -607,7 +770,11 @@ export function SkyMap({
         masCercano = obj;
       }
     }
-    setHoverInfo(masCercano);
+    return masCercano;
+  };
+
+  const inspeccionarPuntero = (e: PointerEvent<HTMLCanvasElement>) => {
+    setHoverInfo(buscarAstroEnPuntero(e));
   };
 
   const manejarPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
@@ -646,6 +813,39 @@ export function SkyMap({
   };
 
   const manejarPointerUp = (e: PointerEvent<HTMLCanvasElement>) => {
+    const arrastre = arrastreRef.current;
+    const fueArrastre = Boolean(arrastre && arrastre.pointerId === e.pointerId && arrastre.movido);
+
+    if (arrastre && arrastre.pointerId === e.pointerId) {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+      arrastreRef.current = null;
+    }
+
+    if (fueArrastre) return;
+
+    const encontrado = buscarAstroEnPuntero(e);
+    if (encontrado) {
+      if (
+        astroSeleccionado &&
+        astroSeleccionado.id === encontrado.id &&
+        astroSeleccionado.categoria === encontrado.categoria
+      ) {
+        onSeleccionarAstro(null);
+      } else {
+        onSeleccionarAstro({
+          id: encontrado.id,
+          nombre: encontrado.nombreCorto,
+          categoria: encontrado.categoria,
+        });
+      }
+    } else if (astroSeleccionado) {
+      onSeleccionarAstro(null);
+    }
+  };
+
+  const manejarPointerCancel = (e: PointerEvent<HTMLCanvasElement>) => {
     const arrastre = arrastreRef.current;
     if (arrastre && arrastre.pointerId === e.pointerId) {
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
@@ -716,7 +916,7 @@ export function SkyMap({
         onPointerDown={manejarPointerDown}
         onPointerMove={manejarPointerMove}
         onPointerUp={manejarPointerUp}
-        onPointerCancel={manejarPointerUp}
+        onPointerCancel={manejarPointerCancel}
         onPointerLeave={() => {
           if (!arrastreRef.current?.activo) setHoverInfo(null);
         }}
@@ -724,6 +924,22 @@ export function SkyMap({
           modoVista === '3d' ? 'cursor-grab active:cursor-grabbing touch-none' : 'cursor-crosshair'
         }`}
       />
+
+      {astroSeleccionado && (
+        <div
+          className={`px-3.5 py-1.5 rounded-xl border text-xs flex flex-wrap items-center gap-3 ${CLASES_TOOLTIP[tema]}`}
+        >
+          <span className="font-semibold">Trayectoria ±6h: {astroSeleccionado.nombre}</span>
+          <button
+            type="button"
+            onClick={() => onSeleccionarAstro(null)}
+            aria-label="Quitar selección de astro"
+            className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-current/25 hover:bg-current/10 cursor-pointer transition-colors"
+          >
+            <X className="w-3 h-3" /> Limpiar
+          </button>
+        </div>
+      )}
 
       {hoverInfo && (
         <div

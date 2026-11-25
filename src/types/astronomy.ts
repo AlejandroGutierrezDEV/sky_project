@@ -102,3 +102,24 @@ export interface EstadoCieloSolar {
   altitudSol: number;
   fase: FaseCrepusculo;
 }
+
+export type CategoriaAstro = 'cuerpo' | 'estrella' | 'messier';
+
+export interface AstroSeleccionado {
+  id: string;
+  nombre: string;
+  categoria: CategoriaAstro;
+}
+
+export interface PuntoTrayectoria {
+  altitud: number;
+  acimut: number;
+  horaEtiqueta: string;
+}
+
+export interface EfemeridesTransito {
+  salida: Date | null;
+  culminacion: Date | null;
+  puesta: Date | null;
+  alturaMaxima: number | null;
+}
