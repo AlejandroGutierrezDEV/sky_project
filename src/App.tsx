@@ -1,11 +1,9 @@
-import { useState, useMemo, useEffect, useRef, type KeyboardEvent } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent } from 'react';
 import {
   Compass,
-  Eye,
   Moon,
   Sun,
   Calendar,
-  Sparkles,
   MapPin,
   Crosshair,
   Clock,
@@ -31,6 +29,9 @@ import { WeatherPanel } from './components/WeatherPanel';
 import { EventsPanel } from './components/EventsPanel';
 import { StarfieldBackground } from './components/StarfieldBackground';
 import { MoonPhase3D } from './components/MoonPhase3D';
+import { Navbar } from './components/Navbar';
+import { AstronomyGuide } from './components/AstronomyGuide';
+import { Compass3DModal } from './components/Compass3DModal';
 import type {
   AstroSeleccionado,
   CategoriaAstro,
@@ -40,6 +41,7 @@ import type {
   TemaVisual,
   Ubicacion,
   UbicacionFavorita,
+  VistaActiva,
 } from './types/astronomy';
 
 const CLAVE_UBICACION = 'skyproject_ubicacion';
@@ -63,9 +65,10 @@ const CLASES_CONTENEDOR: Record<TemaVisual, string> = {
 };
 
 const CLASES_TARJETA: Record<TemaVisual, string> = {
-  oscuro: 'bg-slate-900/55 backdrop-blur-md border-slate-700/50 shadow-xl shadow-black/30',
-  claro: 'bg-white/80 backdrop-blur-md border-slate-200/90 shadow-md shadow-slate-900/5',
-  rojo: 'bg-black/90 border-red-900/70',
+  oscuro:
+    'hud-esquinas hud-oscuro bg-slate-900/55 backdrop-blur-md border-cyan-400/15',
+  claro: 'hud-esquinas hud-claro bg-white/80 backdrop-blur-md border-slate-200/90 shadow-md shadow-slate-900/5',
+  rojo: 'hud-esquinas hud-rojo bg-black/90 border-red-900/70',
 };
 
 const CLASES_HOVER_TARJETA: Record<TemaVisual, string> = {
@@ -237,13 +240,6 @@ function validarFormularioUbicacion(form: FormularioUbicacion): {
   };
 }
 
-function obtenerClaseBotonTema(temaActual: TemaVisual, boton: TemaVisual): string {
-  if (temaActual !== boton) return 'opacity-70 hover:opacity-100';
-  if (boton === 'oscuro') return 'bg-sky-600 text-white';
-  if (boton === 'claro') return 'bg-slate-800 text-white';
-  return 'bg-red-950 text-red-500 border border-red-600';
-}
-
 function obtenerClaseErrorInline(tema: TemaVisual): string {
   if (tema === 'rojo') return 'border-red-600 bg-red-950/40 text-red-400';
   if (tema === 'claro') return 'border-rose-300 bg-rose-50 text-rose-700';
@@ -344,6 +340,8 @@ export function App() {
   const buscadorRef = useRef<HTMLDivElement | null>(null);
 
   const [tema, setTema] = useState<TemaVisual>(leerTemaGuardado);
+  const [vistaActiva, setVistaActiva] = useState<VistaActiva>('observatorio');
+  const [brujulaAbierta, setBrujulaAbierta] = useState(false);
   const [mostrarConstelaciones, setMostrarConstelaciones] = useState(true);
   const [mostrarEtiquetasEstrellas, setMostrarEtiquetasEstrellas] = useState(true);
   const [mostrarMessier, setMostrarMessier] = useState(true);
@@ -723,58 +721,46 @@ export function App() {
     setFechaStr(formatearFechaParaInput(base));
   };
 
+  const cambiarVista = (vista: VistaActiva) => {
+    setVistaActiva(vista);
+    const reducido =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: 0, behavior: reducido ? 'auto' : 'smooth' });
+  };
+
+  const abrirBrujula = () => setBrujulaAbierta(true);
+  const cerrarBrujula = useCallback(() => setBrujulaAbierta(false), []);
+
   const clasesContenedor = CLASES_CONTENEDOR[tema];
   const clasesTarjeta = CLASES_TARJETA[tema];
   const claseHoverTarjeta = CLASES_HOVER_TARJETA[tema];
   const claseEsquemaInput = tema !== 'claro' ? '[color-scheme:dark]' : '';
-  const claseIconoTitulo =
-    tema === 'rojo' ? 'text-red-500' : tema === 'claro' ? 'text-sky-600' : 'text-sky-400';
 
   return (
-    <div className={`relative min-h-screen p-4 md:p-6 transition-colors duration-300 ${clasesContenedor}`}>
+    <div className={`tema-${tema} relative min-h-screen transition-colors duration-300 ${clasesContenedor}`}>
       <StarfieldBackground tema={tema} />
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* Cabecera */}
-        <header
-          className={`flex flex-wrap items-center justify-between gap-4 p-4 md:px-5 rounded-2xl border ${clasesTarjeta}`}
-        >
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2 tracking-tight">
-              <Sparkles className={`w-6 h-6 ${claseIconoTitulo}`} /> SkyProject
-            </h1>
-            <button
-              onClick={() => setEditandoUbicacion(!editandoUbicacion)}
-              aria-expanded={editandoUbicacion}
-              className="text-sm opacity-80 hover:opacity-100 flex items-center gap-1.5 mt-1 cursor-pointer underline decoration-dotted transition-opacity"
-            >
-              <MapPin className="w-3.5 h-3.5" />
-              {ubicacion.nombre} ({ubicacion.latitud}°, {ubicacion.longitud}° · {ubicacion.altitud}m)
-            </button>
-          </div>
-
-          {/* Selector de Tema */}
-          <div className="flex items-center gap-1.5 p-1 rounded-xl border border-current/20 bg-current/5">
-            <button
-              onClick={() => setTema('oscuro')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer ${obtenerClaseBotonTema(tema, 'oscuro')}`}
-            >
-              <Moon className="w-3.5 h-3.5" /> Oscuro
-            </button>
-            <button
-              onClick={() => setTema('claro')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer ${obtenerClaseBotonTema(tema, 'claro')}`}
-            >
-              <Sun className="w-3.5 h-3.5" /> Claro
-            </button>
-            <button
-              onClick={() => setTema('rojo')}
-              title="Protege tu adaptación ocular en el campo"
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer ${obtenerClaseBotonTema(tema, 'rojo')}`}
-            >
-              <Eye className="w-3.5 h-3.5" /> Filtro Rojo
-            </button>
-          </div>
-        </header>
+      <Navbar
+        tema={tema}
+        onCambiarTema={setTema}
+        vistaActiva={vistaActiva}
+        onCambiarVista={cambiarVista}
+        onAbrirBrujula={abrirBrujula}
+        ubicacion={ubicacion}
+        panelUbicacionAbierto={editandoUbicacion}
+        onAlternarUbicacion={() => setEditandoUbicacion((prev) => !prev)}
+        onDetectarGPS={detectarGPS}
+        cargandoGPS={cargandoGPS}
+      />
+      <div className="max-w-7xl mx-auto space-y-6 p-4 md:p-6">
+        {errorGPS && !editandoUbicacion && (
+          <p
+            role="alert"
+            className={`text-xs px-3 py-2 rounded-lg border ${obtenerClaseErrorInline(tema)}`}
+          >
+            {errorGPS}
+          </p>
+        )}
 
         {/* Panel desplegable de Ubicación */}
         {editandoUbicacion && (
@@ -929,359 +915,386 @@ export function App() {
           </section>
         )}
 
-        {/* Barra de Tiempo y Capas */}
-        <section
-          className={`p-4 rounded-2xl border ${clasesTarjeta} flex flex-wrap items-center justify-between gap-4`}
-        >
-          <div className="flex flex-wrap items-center gap-3">
-            <Calendar className="w-5 h-5 opacity-75" />
-            <input
-              type="datetime-local"
-              value={fechaStr}
-              onChange={(e) => manejarCambioFecha(e.target.value)}
-              className={`px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono text-sm ${claseEsquemaInput}`}
-            />
-            <div className="flex items-center gap-1.5 text-xs">
-              <button
-                onClick={() => ajustarTiempo('ahora')}
-                className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
-              >
-                Ahora
-              </button>
-              <button
-                onClick={() => ajustarTiempo('noche')}
-                className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
-              >
-                Esta noche 23:30
-              </button>
-              <button
-                onClick={() => ajustarTiempo('mas1h')}
-                className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 flex items-center gap-1 cursor-pointer"
-              >
-                <Clock className="w-3 h-3" /> +1h
-              </button>
-            </div>
-            {/* Control de Time-Lapse */}
-            <div className="flex items-center gap-1 p-1 rounded-xl border border-current/20 bg-current/5 text-xs">
-              <button
-                type="button"
-                onClick={() => setReproduciendo((prev) => !prev)}
-                aria-pressed={reproduciendo}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
-                  tema,
-                  reproduciendo
-                )}`}
-              >
-                {reproduciendo ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                {reproduciendo ? 'Pausa' : 'Play'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setVelocidadMinPorSeg(15)}
-                aria-pressed={velocidadMinPorSeg === 15}
-                className={`px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
-                  tema,
-                  velocidadMinPorSeg === 15
-                )}`}
-              >
-                +15 min/s
-              </button>
-              <button
-                type="button"
-                onClick={() => setVelocidadMinPorSeg(60)}
-                aria-pressed={velocidadMinPorSeg === 60}
-                className={`px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
-                  tema,
-                  velocidadMinPorSeg === 60
-                )}`}
-              >
-                +1 h/s
-              </button>
-            </div>
-            {estadoSolar && (
-              <span className="text-xs font-mono px-2.5 py-1 rounded-full border border-current/20 bg-current/5 flex items-center gap-1.5">
-                {estadoSolar.altitudSol >= 0 ? (
-                  <Sun className="w-3.5 h-3.5" />
-                ) : (
-                  <Moon className="w-3.5 h-3.5" />
-                )}
-                {estadoSolar.fase} (Sol {estadoSolar.altitudSol}°)
-              </span>
-            )}
-          </div>
-
-          {/* Capas del Mapa */}
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            <span className="opacity-70 flex items-center gap-1">
-              <Layers className="w-3.5 h-3.5" /> Capas:
-            </span>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={mostrarConstelaciones}
-                onChange={(e) => setMostrarConstelaciones(e.target.checked)}
-              />
-              <span>Constelaciones</span>
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={mostrarEtiquetasEstrellas}
-                onChange={(e) => setMostrarEtiquetasEstrellas(e.target.checked)}
-              />
-              <span>Estrellas</span>
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={mostrarMessier}
-                onChange={(e) => setMostrarMessier(e.target.checked)}
-              />
-              <span>Messier</span>
-            </label>
-          </div>
-        </section>
-
-        {/* Contenido Principal: Mapa Celeste + Eventos / Meteo y Efemérides */}
-        <main className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Columna Izquierda: Bóveda Celeste + Próximos Eventos */}
-          <div className="lg:col-span-7 space-y-6">
-            <div className={`p-4 md:p-6 rounded-2xl border ${clasesTarjeta}`}>
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75">
-                  Bóveda Celeste en Tiempo Real
-                </h2>
-
-                {/* Buscador global de astros */}
-                <div ref={buscadorRef} className="relative w-full sm:w-72">
-                  <div className="relative flex items-center">
-                    <Search className="w-3.5 h-3.5 opacity-60 absolute left-2.5 pointer-events-none" />
-                    <input
-                      type="text"
-                      role="combobox"
-                      aria-label="Buscar astro en el catálogo"
-                      aria-expanded={buscadorAbierto && busquedaAstro.trim().length > 0}
-                      aria-controls="lista-resultados-astros"
-                      aria-autocomplete="list"
-                      aria-activedescendant={
-                        buscadorAbierto && resultadosBusqueda[indiceResultadoActivo]
-                          ? `opcion-astro-${resultadosBusqueda[indiceResultadoActivo].categoria}-${resultadosBusqueda[indiceResultadoActivo].id}`
-                          : undefined
-                      }
-                      value={busquedaAstro}
-                      onFocus={() => {
-                        if (busquedaAstro.trim().length > 0) setBuscadorAbierto(true);
-                      }}
-                      onChange={(e) => {
-                        setBusquedaAstro(e.target.value);
-                        setBuscadorAbierto(e.target.value.trim().length > 0);
-                        setIndiceResultadoActivo(0);
-                      }}
-                      onKeyDown={manejarTeclaBuscador}
-                      placeholder="Buscar planeta, estrella, M31, Orión..."
-                      className={`w-full pl-8 pr-7 py-1.5 rounded-xl border border-current/25 bg-transparent text-xs focus:outline-none focus:border-current/60 ${claseEsquemaInput}`}
-                    />
-                    {busquedaAstro && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setBusquedaAstro('');
-                          setBuscadorAbierto(false);
-                          setIndiceResultadoActivo(0);
-                        }}
-                        aria-label="Limpiar búsqueda de astros"
-                        className="absolute right-2 opacity-60 hover:opacity-100 cursor-pointer"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
+        {vistaActiva === 'guia' ? (
+          <AstronomyGuide
+            tema={tema}
+            claseTarjeta={clasesTarjeta}
+            onVolver={() => cambiarVista('observatorio')}
+            onAbrirBrujula={abrirBrujula}
+          />
+        ) : (
+          <>
+            <h1 className="sr-only">SkyProject · Observatorio</h1>
+            {/* Barra de Tiempo y Capas */}
+            <section
+              className={`p-4 rounded-2xl border ${clasesTarjeta} flex flex-wrap items-center justify-between gap-4`}
+            >
+              <div className="flex flex-wrap items-center gap-3">
+                <Calendar className="w-5 h-5 opacity-75" />
+                <input
+                  type="datetime-local"
+                  value={fechaStr}
+                  onChange={(e) => manejarCambioFecha(e.target.value)}
+                  className={`px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono text-sm ${claseEsquemaInput}`}
+                />
+                <div className="flex items-center gap-1.5 text-xs">
+                  <button
+                    onClick={() => ajustarTiempo('ahora')}
+                    className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
+                  >
+                    Ahora
+                  </button>
+                  <button
+                    onClick={() => ajustarTiempo('noche')}
+                    className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
+                  >
+                    Esta noche 23:30
+                  </button>
+                  <button
+                    onClick={() => ajustarTiempo('mas1h')}
+                    className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Clock className="w-3 h-3" /> +1h
+                  </button>
+                </div>
+                {/* Control de Time-Lapse */}
+                <div className="flex items-center gap-1 p-1 rounded-xl border border-current/20 bg-current/5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setReproduciendo((prev) => !prev)}
+                    aria-pressed={reproduciendo}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                      tema,
+                      reproduciendo
+                    )}`}
+                  >
+                    {reproduciendo ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    {reproduciendo ? 'Pausa' : 'Play'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVelocidadMinPorSeg(15)}
+                    aria-pressed={velocidadMinPorSeg === 15}
+                    className={`px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                      tema,
+                      velocidadMinPorSeg === 15
+                    )}`}
+                  >
+                    +15 min/s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVelocidadMinPorSeg(60)}
+                    aria-pressed={velocidadMinPorSeg === 60}
+                    className={`px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                      tema,
+                      velocidadMinPorSeg === 60
+                    )}`}
+                  >
+                    +1 h/s
+                  </button>
+                </div>
+                {estadoSolar && (
+                  <span className="text-xs font-mono px-2.5 py-1 rounded-full border border-current/20 bg-current/5 flex items-center gap-1.5">
+                    {estadoSolar.altitudSol >= 0 ? (
+                      <Sun className="w-3.5 h-3.5" />
+                    ) : (
+                      <Moon className="w-3.5 h-3.5" />
                     )}
-                  </div>
+                    {estadoSolar.fase} (Sol {estadoSolar.altitudSol}°)
+                  </span>
+                )}
+              </div>
 
-                  {buscadorAbierto && busquedaAstro.trim().length > 0 && (
-                    <ul
-                      id="lista-resultados-astros"
-                      role="listbox"
-                      aria-label="Resultados de búsqueda de astros"
-                      className={`absolute z-30 mt-1.5 w-full rounded-xl border overflow-hidden ${obtenerClaseDesplegableBusqueda(
-                        tema
-                      )}`}
-                    >
-                      {resultadosBusqueda.length === 0 ? (
-                        <li className="px-3 py-2.5 text-xs opacity-70">
-                          Sin coincidencias en el catálogo.
-                        </li>
-                      ) : (
-                        resultadosBusqueda.map((item, indice) => {
-                          const activo = indice === indiceResultadoActivo;
-                          return (
-                            <li
-                              key={`${item.categoria}-${item.id}`}
-                              id={`opcion-astro-${item.categoria}-${item.id}`}
-                              role="option"
-                              aria-selected={activo}
-                            >
-                              <button
-                                type="button"
-                                onMouseEnter={() => setIndiceResultadoActivo(indice)}
-                                onClick={() => seleccionarResultadoBusqueda(item)}
-                                className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 cursor-pointer transition-colors ${obtenerClaseItemBusqueda(
-                                  tema,
-                                  activo
-                                )}`}
-                              >
-                                <span className="min-w-0">
-                                  <span className="block text-xs font-semibold truncate">
-                                    {item.titulo}
-                                  </span>
-                                  <span className="block text-[11px] opacity-70 truncate">
-                                    {item.subtitulo}
-                                  </span>
-                                </span>
-                                <span
-                                  className={`text-[10px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${obtenerClaseInsigniaHorizonte(
-                                    tema,
-                                    item.sobreHorizonte
-                                  )}`}
-                                >
-                                  {item.sobreHorizonte ? 'Sobre' : 'Bajo'} · Alt {item.altitud}°
-                                </span>
-                              </button>
+              {/* Capas del Mapa */}
+              <div className="flex flex-wrap items-center gap-3 text-xs">
+                <span className="opacity-70 flex items-center gap-1">
+                  <Layers className="w-3.5 h-3.5" /> Capas:
+                </span>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={mostrarConstelaciones}
+                    onChange={(e) => setMostrarConstelaciones(e.target.checked)}
+                  />
+                  <span>Constelaciones</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={mostrarEtiquetasEstrellas}
+                    onChange={(e) => setMostrarEtiquetasEstrellas(e.target.checked)}
+                  />
+                  <span>Estrellas</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={mostrarMessier}
+                    onChange={(e) => setMostrarMessier(e.target.checked)}
+                  />
+                  <span>Messier</span>
+                </label>
+              </div>
+            </section>
+
+            {/* Contenido Principal: Mapa Celeste + Eventos / Meteo y Efemérides */}
+            <main className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Columna Izquierda: Bóveda Celeste + Próximos Eventos */}
+              <div className="lg:col-span-7 space-y-6">
+                <div className={`p-4 md:p-6 rounded-2xl border ${clasesTarjeta}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                    <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75">
+                      Bóveda Celeste en Tiempo Real
+                    </h2>
+
+                    {/* Buscador global de astros */}
+                    <div ref={buscadorRef} className="relative w-full sm:w-72">
+                      <div className="relative flex items-center">
+                        <Search className="w-3.5 h-3.5 opacity-60 absolute left-2.5 pointer-events-none" />
+                        <input
+                          type="text"
+                          role="combobox"
+                          aria-label="Buscar astro en el catálogo"
+                          aria-expanded={buscadorAbierto && busquedaAstro.trim().length > 0}
+                          aria-controls="lista-resultados-astros"
+                          aria-autocomplete="list"
+                          aria-activedescendant={
+                            buscadorAbierto && resultadosBusqueda[indiceResultadoActivo]
+                              ? `opcion-astro-${resultadosBusqueda[indiceResultadoActivo].categoria}-${resultadosBusqueda[indiceResultadoActivo].id}`
+                              : undefined
+                          }
+                          value={busquedaAstro}
+                          onFocus={() => {
+                            if (busquedaAstro.trim().length > 0) setBuscadorAbierto(true);
+                          }}
+                          onChange={(e) => {
+                            setBusquedaAstro(e.target.value);
+                            setBuscadorAbierto(e.target.value.trim().length > 0);
+                            setIndiceResultadoActivo(0);
+                          }}
+                          onKeyDown={manejarTeclaBuscador}
+                          placeholder="Buscar planeta, estrella, M31, Orión..."
+                          className={`w-full pl-8 pr-7 py-1.5 rounded-xl border border-current/25 bg-transparent text-xs focus:outline-none focus:border-current/60 ${claseEsquemaInput}`}
+                        />
+                        {busquedaAstro && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setBusquedaAstro('');
+                              setBuscadorAbierto(false);
+                              setIndiceResultadoActivo(0);
+                            }}
+                            aria-label="Limpiar búsqueda de astros"
+                            className="absolute right-2 opacity-60 hover:opacity-100 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {buscadorAbierto && busquedaAstro.trim().length > 0 && (
+                        <ul
+                          id="lista-resultados-astros"
+                          role="listbox"
+                          aria-label="Resultados de búsqueda de astros"
+                          className={`absolute z-30 mt-1.5 w-full rounded-xl border overflow-hidden ${obtenerClaseDesplegableBusqueda(
+                            tema
+                          )}`}
+                        >
+                          {resultadosBusqueda.length === 0 ? (
+                            <li className="px-3 py-2.5 text-xs opacity-70">
+                              Sin coincidencias en el catálogo.
                             </li>
-                          );
-                        })
+                          ) : (
+                            resultadosBusqueda.map((item, indice) => {
+                              const activo = indice === indiceResultadoActivo;
+                              return (
+                                <li
+                                  key={`${item.categoria}-${item.id}`}
+                                  id={`opcion-astro-${item.categoria}-${item.id}`}
+                                  role="option"
+                                  aria-selected={activo}
+                                >
+                                  <button
+                                    type="button"
+                                    onMouseEnter={() => setIndiceResultadoActivo(indice)}
+                                    onClick={() => seleccionarResultadoBusqueda(item)}
+                                    className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 cursor-pointer transition-colors ${obtenerClaseItemBusqueda(
+                                      tema,
+                                      activo
+                                    )}`}
+                                  >
+                                    <span className="min-w-0">
+                                      <span className="block text-xs font-semibold truncate">
+                                        {item.titulo}
+                                      </span>
+                                      <span className="block text-[11px] opacity-70 truncate">
+                                        {item.subtitulo}
+                                      </span>
+                                    </span>
+                                    <span
+                                      className={`text-[10px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${obtenerClaseInsigniaHorizonte(
+                                        tema,
+                                        item.sobreHorizonte
+                                      )}`}
+                                    >
+                                      {item.sobreHorizonte ? 'Sobre' : 'Bajo'} · Alt {item.altitud}°
+                                    </span>
+                                  </button>
+                                </li>
+                              );
+                            })
+                          )}
+                        </ul>
                       )}
-                    </ul>
-                  )}
+                    </div>
+                  </div>
+                  <SkyMap
+                    cuerpos={cuerpos}
+                    estrellas={estrellas}
+                    messier={messier}
+                    tema={tema}
+                    mostrarConstelaciones={mostrarConstelaciones}
+                    mostrarEtiquetasEstrellas={mostrarEtiquetasEstrellas}
+                    mostrarMessier={mostrarMessier}
+                    astroSeleccionado={astroSeleccionado}
+                    trayectoria={trayectoriaAstro}
+                    onSeleccionarAstro={setAstroSeleccionado}
+                    contadorFoco={contadorFoco}
+                  />
+                </div>
+
+                <EventsPanel
+                  eventos={eventos}
+                  tema={tema}
+                  claseTarjeta={clasesTarjeta}
+                  onSeleccionarFecha={(fechaEvento) => {
+                    setReproduciendo(false);
+                    setFechaStr(formatearFechaParaInput(fechaEvento));
+                  }}
+                />
+              </div>
+
+              {/* Columna Derecha: Meteorología + Sistema Solar */}
+              <div className="lg:col-span-5 space-y-4">
+                <WeatherPanel
+                  meteo={estadoMeteo.datos}
+                  cargando={cargandoMeteo}
+                  aviso={estadoMeteo.aviso}
+                  tema={tema}
+                  claseTarjeta={clasesTarjeta}
+                  onSeleccionarHora={(fechaHora) => {
+                    if (Number.isNaN(fechaHora.getTime())) return;
+                    setReproduciendo(false);
+                    setFechaStr(formatearFechaParaInput(fechaHora));
+                  }}
+                />
+
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 px-1">
+                    <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75">
+                      Sistema Solar y Luna
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={abrirBrujula}
+                      aria-haspopup="dialog"
+                      className="inline-flex items-center gap-1.5 px-3 min-h-10 rounded-lg border border-current/25 hover:bg-current/10 text-xs font-medium cursor-pointer transition-colors"
+                    >
+                      <Compass className="w-3.5 h-3.5 brujula-icono-animada" aria-hidden="true" />
+                      Apuntar con la brújula
+                    </button>
+                  </div>
+                  {cuerpos.map((obj) => {
+                    const visibilidad = obtenerEstadoVisibilidadCuerpo(obj);
+                    const esLunaConFase =
+                      obj.tipo === 'luna' && obj.faseLunar !== undefined && obj.iluminacion !== undefined;
+                    const estaSeleccionado =
+                      astroSeleccionado?.categoria === 'cuerpo' && astroSeleccionado.id === obj.id;
+                    const claseSeleccion = estaSeleccionado ? obtenerClaseTarjetaSeleccionada(tema) : '';
+
+                    return (
+                      <button
+                        key={obj.id}
+                        type="button"
+                        aria-pressed={estaSeleccionado}
+                        onClick={() =>
+                          setAstroSeleccionado((prev) =>
+                            prev?.categoria === 'cuerpo' && prev.id === obj.id
+                              ? null
+                              : { id: obj.id, nombre: obj.nombre, categoria: 'cuerpo' }
+                          )
+                        }
+                        className={`w-full text-left cursor-pointer tarjeta-3d p-3.5 rounded-xl border ${clasesTarjeta} ${claseHoverTarjeta} ${claseSeleccion} ${
+                          estaSeleccionado ? 'opacity-100' : visibilidad.opacidad
+                        }`}
+                      >
+                        <div className="flex items-center gap-3.5">
+                          {esLunaConFase && (
+                            <MoonPhase3D
+                              iluminacion={obj.iluminacion ?? 0}
+                              faseLunar={obj.faseLunar ?? ''}
+                              anguloFase={obj.anguloFase}
+                              tema={tema}
+                            />
+                          )}
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2 mb-1.5">
+                              <span className="font-bold flex items-center gap-2">
+                                <span
+                                  className="w-2.5 h-2.5 rounded-full inline-block shrink-0"
+                                  style={{ backgroundColor: tema === 'rojo' ? '#ef4444' : obj.color }}
+                                />
+                                {obj.nombre}
+                              </span>
+                              <span className="text-xs px-2 py-0.5 rounded-full border border-current/25 shrink-0">
+                                {visibilidad.etiqueta}
+                              </span>
+                            </div>
+
+                            <div className="text-xs flex flex-wrap items-center justify-between gap-2 opacity-85 font-mono">
+                              <span className="flex items-center gap-1">
+                                <Compass className="w-3.5 h-3.5" />
+                                {obj.direccion} ({obj.acimut}°)
+                              </span>
+                              <span>Alt: {obj.altitud}°</span>
+                              <span>Mag: {obj.magnitud}</span>
+                              {obj.faseLunar && (
+                                <span>
+                                  {obj.faseLunar} ({obj.iluminacion}%)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {estaSeleccionado && transitoSeleccionado && (
+                          <div className="mt-2.5 pt-2 border-t border-current/15 text-xs font-mono flex flex-wrap items-center justify-between gap-2 opacity-90">
+                            <span>Salida: {formatearHoraLocal(transitoSeleccionado.salida)}</span>
+                            <span>
+                              Culminación: {formatearHoraLocal(transitoSeleccionado.culminacion)}
+                              {transitoSeleccionado.alturaMaxima !== null
+                                ? ` (${transitoSeleccionado.alturaMaxima}°)`
+                                : ''}
+                            </span>
+                            <span>Puesta: {formatearHoraLocal(transitoSeleccionado.puesta)}</span>
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-              <SkyMap
-                cuerpos={cuerpos}
-                estrellas={estrellas}
-                messier={messier}
-                tema={tema}
-                mostrarConstelaciones={mostrarConstelaciones}
-                mostrarEtiquetasEstrellas={mostrarEtiquetasEstrellas}
-                mostrarMessier={mostrarMessier}
-                astroSeleccionado={astroSeleccionado}
-                trayectoria={trayectoriaAstro}
-                onSeleccionarAstro={setAstroSeleccionado}
-                contadorFoco={contadorFoco}
-              />
-            </div>
-
-            <EventsPanel
-              eventos={eventos}
-              tema={tema}
-              claseTarjeta={clasesTarjeta}
-              onSeleccionarFecha={(fechaEvento) => {
-                setReproduciendo(false);
-                setFechaStr(formatearFechaParaInput(fechaEvento));
-              }}
-            />
-          </div>
-
-          {/* Columna Derecha: Meteorología + Sistema Solar */}
-          <div className="lg:col-span-5 space-y-4">
-            <WeatherPanel
-              meteo={estadoMeteo.datos}
-              cargando={cargandoMeteo}
-              aviso={estadoMeteo.aviso}
-              tema={tema}
-              claseTarjeta={clasesTarjeta}
-              onSeleccionarHora={(fechaHora) => {
-                if (Number.isNaN(fechaHora.getTime())) return;
-                setReproduciendo(false);
-                setFechaStr(formatearFechaParaInput(fechaHora));
-              }}
-            />
-
-            <div className="space-y-2.5">
-              <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75 px-1">
-                Sistema Solar y Luna
-              </h2>
-              {cuerpos.map((obj) => {
-                const visibilidad = obtenerEstadoVisibilidadCuerpo(obj);
-                const esLunaConFase =
-                  obj.tipo === 'luna' && obj.faseLunar !== undefined && obj.iluminacion !== undefined;
-                const estaSeleccionado =
-                  astroSeleccionado?.categoria === 'cuerpo' && astroSeleccionado.id === obj.id;
-                const claseSeleccion = estaSeleccionado ? obtenerClaseTarjetaSeleccionada(tema) : '';
-
-                return (
-                  <button
-                    key={obj.id}
-                    type="button"
-                    aria-pressed={estaSeleccionado}
-                    onClick={() =>
-                      setAstroSeleccionado((prev) =>
-                        prev?.categoria === 'cuerpo' && prev.id === obj.id
-                          ? null
-                          : { id: obj.id, nombre: obj.nombre, categoria: 'cuerpo' }
-                      )
-                    }
-                    className={`w-full text-left cursor-pointer tarjeta-3d p-3.5 rounded-xl border ${clasesTarjeta} ${claseHoverTarjeta} ${claseSeleccion} ${
-                      estaSeleccionado ? 'opacity-100' : visibilidad.opacidad
-                    }`}
-                  >
-                    <div className="flex items-center gap-3.5">
-                      {esLunaConFase && (
-                        <MoonPhase3D
-                          iluminacion={obj.iluminacion ?? 0}
-                          faseLunar={obj.faseLunar ?? ''}
-                          anguloFase={obj.anguloFase}
-                          tema={tema}
-                        />
-                      )}
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2 mb-1.5">
-                          <span className="font-bold flex items-center gap-2">
-                            <span
-                              className="w-2.5 h-2.5 rounded-full inline-block shrink-0"
-                              style={{ backgroundColor: tema === 'rojo' ? '#ef4444' : obj.color }}
-                            />
-                            {obj.nombre}
-                          </span>
-                          <span className="text-xs px-2 py-0.5 rounded-full border border-current/25 shrink-0">
-                            {visibilidad.etiqueta}
-                          </span>
-                        </div>
-
-                        <div className="text-xs flex flex-wrap items-center justify-between gap-2 opacity-85 font-mono">
-                          <span className="flex items-center gap-1">
-                            <Compass className="w-3.5 h-3.5" />
-                            {obj.direccion} ({obj.acimut}°)
-                          </span>
-                          <span>Alt: {obj.altitud}°</span>
-                          <span>Mag: {obj.magnitud}</span>
-                          {obj.faseLunar && (
-                            <span>
-                              {obj.faseLunar} ({obj.iluminacion}%)
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {estaSeleccionado && transitoSeleccionado && (
-                      <div className="mt-2.5 pt-2 border-t border-current/15 text-xs font-mono flex flex-wrap items-center justify-between gap-2 opacity-90">
-                        <span>Salida: {formatearHoraLocal(transitoSeleccionado.salida)}</span>
-                        <span>
-                          Culminación: {formatearHoraLocal(transitoSeleccionado.culminacion)}
-                          {transitoSeleccionado.alturaMaxima !== null
-                            ? ` (${transitoSeleccionado.alturaMaxima}°)`
-                            : ''}
-                        </span>
-                        <span>Puesta: {formatearHoraLocal(transitoSeleccionado.puesta)}</span>
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </main>
+            </main>
+          </>
+        )}
       </div>
+
+      {brujulaAbierta && (
+        <Compass3DModal tema={tema} cuerpos={cuerpos} onCerrar={cerrarBrujula} />
+      )}
     </div>
   );
 }
