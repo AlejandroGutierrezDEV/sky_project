@@ -22,6 +22,7 @@ interface SkyMapProps {
   astroSeleccionado: AstroSeleccionado | null;
   trayectoria: PuntoTrayectoria[];
   onSeleccionarAstro: (astro: AstroSeleccionado | null) => void;
+  contadorFoco?: number;
 }
 
 type ModoVista = '2d' | '3d';
@@ -64,6 +65,41 @@ interface PaletaMapa {
 }
 
 const CAMARA_INICIAL: Camara3D = { rotAz: 0, tilt: 32 };
+const DURACION_TRANSICION_CAMARA_MS = 480;
+
+function normalizarAcimut(grados: number): number {
+  return ((grados % 360) + 360) % 360;
+}
+
+function diferenciaAngularCorta(origen: number, destino: number): number {
+  return ((destino - origen + 540) % 360) - 180;
+}
+
+function calcularTiltParaAltitud(altitud: number): number {
+  return Math.max(12, Math.min(85, 16 + altitud * 0.72));
+}
+
+function buscarPosicionAstroVisible(
+  astro: AstroSeleccionado,
+  cuerpos: CuerpoCeleste[],
+  estrellas: EstrellaCalculada[],
+  messier: MessierCalculado[]
+): { altitud: number; acimut: number } | null {
+  if (astro.categoria === 'cuerpo') {
+    const cuerpo = cuerpos.find((c) => c.id === astro.id);
+    return cuerpo && cuerpo.altitud > 0 ? { altitud: cuerpo.altitud, acimut: cuerpo.acimut } : null;
+  }
+  if (astro.categoria === 'estrella') {
+    const estrella = estrellas.find((e) => e.id === astro.id);
+    return estrella && estrella.visible
+      ? { altitud: estrella.altitud, acimut: estrella.acimut }
+      : null;
+  }
+  const objMessier = messier.find((m) => m.id === astro.id);
+  return objMessier && objMessier.visible
+    ? { altitud: objMessier.altitud, acimut: objMessier.acimut }
+    : null;
+}
 
 const PALETAS: Record<TemaVisual, PaletaMapa> = {
   oscuro: {
@@ -641,12 +677,16 @@ export function SkyMap({
   astroSeleccionado,
   trayectoria,
   onSeleccionarAstro,
+  contadorFoco = 0,
 }: Readonly<SkyMapProps>) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [modoVista, setModoVista] = useState<ModoVista>('2d');
   const [camara, setCamara] = useState<Camara3D>(CAMARA_INICIAL);
   const [hoverInfo, setHoverInfo] = useState<ObjetoHover | null>(null);
 
+  const camaraRef = useRef<Camara3D>(CAMARA_INICIAL);
+  const animacionCamaraRef = useRef<number>(0);
+  const datosAstrosRef = useRef({ cuerpos, estrellas, messier });
   const puntosInteractivosRef = useRef<ObjetoHover[]>([]);
   const arrastreRef = useRef<{
     activo: boolean;
@@ -655,6 +695,97 @@ export function SkyMap({
     ultimoY: number;
     movido: boolean;
   } | null>(null);
+
+  useEffect(() => {
+    camaraRef.current = camara;
+  }, [camara]);
+
+  useEffect(() => {
+    datosAstrosRef.current = { cuerpos, estrellas, messier };
+  }, [cuerpos, estrellas, messier]);
+
+  const cancelarAnimacionCamara = () => {
+    if (animacionCamaraRef.current !== 0) {
+      window.cancelAnimationFrame(animacionCamaraRef.current);
+      animacionCamaraRef.current = 0;
+    }
+  };
+
+  useEffect(() => {
+    if (modoVista !== '3d' || !astroSeleccionado) return;
+
+    const { cuerpos: listaCuerpos, estrellas: listaEstrellas, messier: listaMessier } =
+      datosAstrosRef.current;
+    const posicion = buscarPosicionAstroVisible(
+      astroSeleccionado,
+      listaCuerpos,
+      listaEstrellas,
+      listaMessier
+    );
+    if (!posicion) return;
+
+    const destino: Camara3D = {
+      rotAz: normalizarAcimut(posicion.acimut),
+      tilt: calcularTiltParaAltitud(posicion.altitud),
+    };
+
+    const prefiereMovimientoReducido =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (animacionCamaraRef.current !== 0) {
+      window.cancelAnimationFrame(animacionCamaraRef.current);
+      animacionCamaraRef.current = 0;
+    }
+
+    if (prefiereMovimientoReducido) {
+      animacionCamaraRef.current = window.requestAnimationFrame(() => {
+        animacionCamaraRef.current = 0;
+        camaraRef.current = destino;
+        setCamara(destino);
+      });
+      return () => {
+        if (animacionCamaraRef.current !== 0) {
+          window.cancelAnimationFrame(animacionCamaraRef.current);
+          animacionCamaraRef.current = 0;
+        }
+      };
+    }
+
+    const origen = camaraRef.current;
+    const deltaAz = diferenciaAngularCorta(origen.rotAz, destino.rotAz);
+    const deltaTilt = destino.tilt - origen.tilt;
+
+    if (Math.abs(deltaAz) < 0.2 && Math.abs(deltaTilt) < 0.2) return;
+
+    let inicio = 0;
+    const paso = (tiempo: number) => {
+      if (inicio === 0) inicio = tiempo;
+      const progreso = Math.min(1, (tiempo - inicio) / DURACION_TRANSICION_CAMARA_MS);
+      const suavizado = 1 - Math.pow(1 - progreso, 3);
+      const siguiente: Camara3D = {
+        rotAz: normalizarAcimut(origen.rotAz + deltaAz * suavizado),
+        tilt: origen.tilt + deltaTilt * suavizado,
+      };
+      camaraRef.current = siguiente;
+      setCamara(siguiente);
+
+      if (progreso < 1) {
+        animacionCamaraRef.current = window.requestAnimationFrame(paso);
+      } else {
+        animacionCamaraRef.current = 0;
+      }
+    };
+
+    animacionCamaraRef.current = window.requestAnimationFrame(paso);
+
+    return () => {
+      if (animacionCamaraRef.current !== 0) {
+        window.cancelAnimationFrame(animacionCamaraRef.current);
+        animacionCamaraRef.current = 0;
+      }
+    };
+  }, [astroSeleccionado, modoVista, contadorFoco]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -779,6 +910,7 @@ export function SkyMap({
 
   const manejarPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
     if (modoVista === '3d') {
+      cancelarAnimacionCamara();
       e.currentTarget.setPointerCapture(e.pointerId);
       arrastreRef.current = {
         activo: true,
@@ -893,7 +1025,10 @@ export function SkyMap({
               <span className="opacity-65 hidden sm:inline">Arrastra para rotar el cielo</span>
               <button
                 type="button"
-                onClick={() => setCamara(CAMARA_INICIAL)}
+                onClick={() => {
+                  cancelarAnimacionCamara();
+                  setCamara(CAMARA_INICIAL);
+                }}
                 className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer transition-colors"
               >
                 <RotateCcw className="w-3 h-3" /> Centrar
