@@ -7,6 +7,10 @@ export interface Ubicacion {
   nombre: string;
 }
 
+export interface UbicacionFavorita extends Ubicacion {
+  id: string;
+}
+
 export interface CuerpoCeleste {
   id: string;
   nombre: string;

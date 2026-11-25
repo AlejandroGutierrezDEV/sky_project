@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef, type KeyboardEvent } from 'react';
 import {
   Compass,
   Eye,
@@ -12,6 +12,9 @@ import {
   Layers,
   Play,
   Pause,
+  Search,
+  Star,
+  X,
 } from 'lucide-react';
 import {
   calcularCielo,
@@ -30,15 +33,21 @@ import { StarfieldBackground } from './components/StarfieldBackground';
 import { MoonPhase3D } from './components/MoonPhase3D';
 import type {
   AstroSeleccionado,
+  CategoriaAstro,
   CondicionesMeteo,
   CuerpoCeleste,
   EfemeridesTransito,
   TemaVisual,
   Ubicacion,
+  UbicacionFavorita,
 } from './types/astronomy';
 
 const CLAVE_UBICACION = 'skyproject_ubicacion';
 const CLAVE_TEMA = 'skyproject_tema';
+const CLAVE_FAVORITOS = 'skyproject_favoritos_v1';
+const MAX_FAVORITOS = 8;
+const MAX_RESULTADOS_BUSQUEDA = 6;
+const UMBRAL_COORD_DUPLICADA = 0.01;
 
 const UBICACION_INICIAL: Ubicacion = {
   latitud: 39.47,
@@ -78,6 +87,26 @@ interface ErroresUbicacion {
   altitud?: string;
 }
 
+interface ResultadoBusquedaAstro {
+  id: string;
+  categoria: CategoriaAstro;
+  nombreSeleccion: string;
+  titulo: string;
+  subtitulo: string;
+  altitud: number;
+  sobreHorizonte: boolean;
+  textoBusqueda: string;
+  prioridadInicio: boolean;
+}
+
+function normalizarTextoBusqueda(texto: string): string {
+  return texto
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
 function esUbicacionValida(valor: unknown): valor is Ubicacion {
   if (typeof valor !== 'object' || valor === null) return false;
   const obj = valor as Record<string, unknown>;
@@ -98,6 +127,16 @@ function esUbicacionValida(valor: unknown): valor is Ubicacion {
   );
 }
 
+function esUbicacionFavoritaValida(valor: unknown): valor is UbicacionFavorita {
+  if (typeof valor !== 'object' || valor === null) return false;
+  const obj = valor as Record<string, unknown>;
+  return (
+    typeof obj.id === 'string' &&
+    obj.id.trim().length > 0 &&
+    esUbicacionValida(valor)
+  );
+}
+
 function leerUbicacionGuardada(): Ubicacion {
   try {
     const guardada = localStorage.getItem(CLAVE_UBICACION);
@@ -107,6 +146,35 @@ function leerUbicacionGuardada(): Ubicacion {
   } catch {
     return UBICACION_INICIAL;
   }
+}
+
+function leerFavoritosGuardados(): UbicacionFavorita[] {
+  try {
+    const guardado = localStorage.getItem(CLAVE_FAVORITOS);
+    if (!guardado) return [];
+    const parsed: unknown = JSON.parse(guardado);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(esUbicacionFavoritaValida).slice(0, MAX_FAVORITOS);
+  } catch {
+    return [];
+  }
+}
+
+function generarIdFavorito(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `fav-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function esUbicacionDuplicada(a: Ubicacion, b: Ubicacion): boolean {
+  const mismoNombre =
+    normalizarTextoBusqueda(a.nombre) !== '' &&
+    normalizarTextoBusqueda(a.nombre) === normalizarTextoBusqueda(b.nombre);
+  const coordenadasCercanas =
+    Math.abs(a.latitud - b.latitud) < UMBRAL_COORD_DUPLICADA &&
+    Math.abs(a.longitud - b.longitud) < UMBRAL_COORD_DUPLICADA;
+  return mismoNombre || coordenadasCercanas;
 }
 
 function leerTemaGuardado(): TemaVisual {
@@ -222,6 +290,33 @@ function obtenerClaseTarjetaSeleccionada(tema: TemaVisual): string {
   return 'border-sky-400/80 ring-1 ring-sky-400/40';
 }
 
+function obtenerClaseDesplegableBusqueda(tema: TemaVisual): string {
+  if (tema === 'rojo') return 'bg-black border-red-700 text-red-500 shadow-lg shadow-black/80';
+  if (tema === 'claro') return 'bg-white border-slate-300 text-slate-900 shadow-lg shadow-slate-900/10';
+  return 'bg-slate-950/95 border-slate-700 text-slate-100 shadow-xl shadow-black/60 backdrop-blur-md';
+}
+
+function obtenerClaseItemBusqueda(tema: TemaVisual, activo: boolean): string {
+  if (!activo) return 'hover:bg-current/10';
+  if (tema === 'rojo') return 'bg-red-950/80 text-red-400';
+  if (tema === 'claro') return 'bg-sky-50 text-sky-900';
+  return 'bg-sky-500/20 text-sky-100';
+}
+
+function obtenerClaseInsigniaHorizonte(tema: TemaVisual, sobreHorizonte: boolean): string {
+  if (!sobreHorizonte) return 'border-current/20 opacity-65';
+  if (tema === 'rojo') return 'border-red-600/80 bg-red-950/50 text-red-400';
+  if (tema === 'claro') return 'border-emerald-300 bg-emerald-50 text-emerald-700';
+  return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300';
+}
+
+function obtenerClaseChipFavorito(tema: TemaVisual, activo: boolean): string {
+  if (!activo) return 'border-current/25 hover:border-current/45';
+  if (tema === 'rojo') return 'border-red-500 bg-red-950/60 text-red-400';
+  if (tema === 'claro') return 'border-sky-600 bg-sky-50 text-sky-900';
+  return 'border-sky-400/70 bg-sky-500/15 text-sky-200';
+}
+
 export function App() {
   const [ubicacion, setUbicacion] = useState<Ubicacion>(leerUbicacionGuardada);
   const [formUbicacion, setFormUbicacion] = useState<FormularioUbicacion>(() => ({
@@ -232,6 +327,8 @@ export function App() {
   }));
 
   const [editandoUbicacion, setEditandoUbicacion] = useState(false);
+  const [favoritos, setFavoritos] = useState<UbicacionFavorita[]>(leerFavoritosGuardados);
+  const [avisoFavorito, setAvisoFavorito] = useState<string | null>(null);
   const [cargandoGPS, setCargandoGPS] = useState(false);
   const [errorGPS, setErrorGPS] = useState<string | null>(null);
 
@@ -239,6 +336,12 @@ export function App() {
   const [reproduciendo, setReproduciendo] = useState(false);
   const [velocidadMinPorSeg, setVelocidadMinPorSeg] = useState<15 | 60>(15);
   const [astroSeleccionado, setAstroSeleccionado] = useState<AstroSeleccionado | null>(null);
+  const [contadorFoco, setContadorFoco] = useState(0);
+
+  const [busquedaAstro, setBusquedaAstro] = useState('');
+  const [buscadorAbierto, setBuscadorAbierto] = useState(false);
+  const [indiceResultadoActivo, setIndiceResultadoActivo] = useState(0);
+  const buscadorRef = useRef<HTMLDivElement | null>(null);
 
   const [tema, setTema] = useState<TemaVisual>(leerTemaGuardado);
   const [mostrarConstelaciones, setMostrarConstelaciones] = useState(true);
@@ -270,6 +373,23 @@ export function App() {
   useEffect(() => {
     guardarEnStorage(CLAVE_TEMA, tema);
   }, [tema]);
+
+  useEffect(() => {
+    guardarEnStorage(CLAVE_FAVORITOS, JSON.stringify(favoritos));
+  }, [favoritos]);
+
+  useEffect(() => {
+    if (!buscadorAbierto) return;
+    const manejarClickExterior = (evento: globalThis.PointerEvent) => {
+      if (buscadorRef.current && !buscadorRef.current.contains(evento.target as Node)) {
+        setBuscadorAbierto(false);
+      }
+    };
+    document.addEventListener('pointerdown', manejarClickExterior);
+    return () => {
+      document.removeEventListener('pointerdown', manejarClickExterior);
+    };
+  }, [buscadorAbierto]);
 
   useEffect(() => {
     if (!reproduciendo) return;
@@ -337,6 +457,80 @@ export function App() {
     [fechaSeleccionada, ubicacion]
   );
 
+  const resultadosBusqueda = useMemo<ResultadoBusquedaAstro[]>(() => {
+    const consulta = normalizarTextoBusqueda(busquedaAstro);
+    if (!consulta) return [];
+
+    const coincidencias: ResultadoBusquedaAstro[] = [];
+
+    for (const cuerpo of cuerpos) {
+      const nombreNorm = normalizarTextoBusqueda(cuerpo.nombre);
+      const idNorm = normalizarTextoBusqueda(cuerpo.id);
+      if (nombreNorm.includes(consulta) || idNorm.includes(consulta)) {
+        coincidencias.push({
+          id: cuerpo.id,
+          categoria: 'cuerpo',
+          nombreSeleccion: cuerpo.nombre,
+          titulo: cuerpo.nombre,
+          subtitulo: cuerpo.tipo === 'luna' ? 'Luna' : 'Planeta',
+          altitud: cuerpo.altitud,
+          sobreHorizonte: cuerpo.altitud > 0,
+          textoBusqueda: nombreNorm,
+          prioridadInicio: nombreNorm.startsWith(consulta),
+        });
+      }
+    }
+
+    for (const estrella of estrellas) {
+      const nombreNorm = normalizarTextoBusqueda(estrella.nombre);
+      const constNorm = normalizarTextoBusqueda(estrella.constelacion);
+      if (nombreNorm.includes(consulta) || constNorm.includes(consulta)) {
+        coincidencias.push({
+          id: estrella.id,
+          categoria: 'estrella',
+          nombreSeleccion: estrella.nombre,
+          titulo: estrella.nombre,
+          subtitulo: `Estrella · ${estrella.constelacion}`,
+          altitud: estrella.altitud,
+          sobreHorizonte: estrella.altitud > 0,
+          textoBusqueda: nombreNorm,
+          prioridadInicio: nombreNorm.startsWith(consulta) || constNorm.startsWith(consulta),
+        });
+      }
+    }
+
+    for (const obj of messier) {
+      const idNorm = normalizarTextoBusqueda(obj.id);
+      const nombreNorm = normalizarTextoBusqueda(obj.nombre);
+      const constNorm = normalizarTextoBusqueda(obj.constelacion);
+      if (
+        idNorm.includes(consulta) ||
+        nombreNorm.includes(consulta) ||
+        constNorm.includes(consulta)
+      ) {
+        coincidencias.push({
+          id: obj.id,
+          categoria: 'messier',
+          nombreSeleccion: `${obj.id} · ${obj.nombre}`,
+          titulo: `${obj.id} · ${obj.nombre}`,
+          subtitulo: `Messier (${obj.tipo}) · ${obj.constelacion}`,
+          altitud: obj.altitud,
+          sobreHorizonte: obj.altitud > 0,
+          textoBusqueda: `${idNorm} ${nombreNorm}`,
+          prioridadInicio: idNorm.startsWith(consulta) || nombreNorm.startsWith(consulta),
+        });
+      }
+    }
+
+    return coincidencias
+      .sort((a, b) => {
+        if (a.prioridadInicio !== b.prioridadInicio) return a.prioridadInicio ? -1 : 1;
+        if (a.sobreHorizonte !== b.sobreHorizonte) return a.sobreHorizonte ? -1 : 1;
+        return b.altitud - a.altitud;
+      })
+      .slice(0, MAX_RESULTADOS_BUSQUEDA);
+  }, [busquedaAstro, cuerpos, estrellas, messier]);
+
   const trayectoriaAstro = useMemo(
     () =>
       astroSeleccionado
@@ -365,10 +559,108 @@ export function App() {
     const siguienteForm = { ...formUbicacion, [campo]: valor };
     setFormUbicacion(siguienteForm);
     setErrorGPS(null);
+    setAvisoFavorito(null);
 
     const { ubicacionValida } = validarFormularioUbicacion(siguienteForm);
     if (ubicacionValida) {
       setUbicacion(ubicacionValida);
+    }
+  };
+
+  const guardarUbicacionFavorita = () => {
+    setAvisoFavorito(null);
+    const { ubicacionValida } = validarFormularioUbicacion(formUbicacion);
+    if (!ubicacionValida) {
+      setAvisoFavorito('Corrige las coordenadas o la altitud antes de guardar en favoritos.');
+      return;
+    }
+
+    const nombreLimpio = ubicacionValida.nombre.trim() || 'Observatorio sin nombre';
+    const candidata: Ubicacion = {
+      ...ubicacionValida,
+      nombre: nombreLimpio,
+    };
+
+    if (favoritos.some((fav) => esUbicacionDuplicada(fav, candidata))) {
+      setAvisoFavorito('Ya existe un favorito con ese nombre o en coordenadas muy cercanas.');
+      return;
+    }
+
+    if (favoritos.length >= MAX_FAVORITOS) {
+      setAvisoFavorito(`Has alcanzado el límite máximo de ${MAX_FAVORITOS} observatorios favoritos.`);
+      return;
+    }
+
+    const nuevoFavorito: UbicacionFavorita = {
+      ...candidata,
+      id: generarIdFavorito(),
+    };
+    setFavoritos((prev) => [...prev, nuevoFavorito]);
+  };
+
+  const cargarUbicacionFavorita = (fav: UbicacionFavorita) => {
+    setErrorGPS(null);
+    setAvisoFavorito(null);
+    const seleccionada: Ubicacion = {
+      nombre: fav.nombre,
+      latitud: fav.latitud,
+      longitud: fav.longitud,
+      altitud: fav.altitud,
+    };
+    setUbicacion(seleccionada);
+    setFormUbicacion({
+      nombre: seleccionada.nombre,
+      latitud: String(seleccionada.latitud),
+      longitud: String(seleccionada.longitud),
+      altitud: String(seleccionada.altitud),
+    });
+  };
+
+  const eliminarUbicacionFavorita = (id: string) => {
+    setAvisoFavorito(null);
+    setFavoritos((prev) => prev.filter((fav) => fav.id !== id));
+  };
+
+  const seleccionarResultadoBusqueda = (resultado: ResultadoBusquedaAstro) => {
+    if (resultado.categoria === 'messier' && !mostrarMessier) {
+      setMostrarMessier(true);
+    }
+    setAstroSeleccionado({
+      id: resultado.id,
+      nombre: resultado.nombreSeleccion,
+      categoria: resultado.categoria,
+    });
+    setContadorFoco((prev) => prev + 1);
+    setBusquedaAstro(resultado.titulo);
+    setBuscadorAbierto(false);
+    setIndiceResultadoActivo(0);
+  };
+
+  const manejarTeclaBuscador = (evento: KeyboardEvent<HTMLInputElement>) => {
+    if (!buscadorAbierto || resultadosBusqueda.length === 0) {
+      if (evento.key === 'Escape') {
+        setBuscadorAbierto(false);
+      }
+      return;
+    }
+
+    if (evento.key === 'ArrowDown') {
+      evento.preventDefault();
+      setIndiceResultadoActivo((prev) => (prev + 1) % resultadosBusqueda.length);
+    } else if (evento.key === 'ArrowUp') {
+      evento.preventDefault();
+      setIndiceResultadoActivo(
+        (prev) => (prev - 1 + resultadosBusqueda.length) % resultadosBusqueda.length
+      );
+    } else if (evento.key === 'Enter') {
+      evento.preventDefault();
+      const indiceSeguro = Math.min(indiceResultadoActivo, resultadosBusqueda.length - 1);
+      const elegido = resultadosBusqueda[indiceSeguro];
+      if (elegido) {
+        seleccionarResultadoBusqueda(elegido);
+      }
+    } else if (evento.key === 'Escape') {
+      setBuscadorAbierto(false);
     }
   };
 
@@ -491,14 +783,25 @@ export function App() {
               <h2 className="font-semibold text-sm flex items-center gap-2">
                 <MapPin className="w-4 h-4" /> Configurar punto de observación
               </h2>
-              <button
-                onClick={detectarGPS}
-                disabled={cargandoGPS}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-current/30 hover:bg-current/10 cursor-pointer disabled:opacity-50"
-              >
-                <Crosshair className="w-3.5 h-3.5" />
-                {cargandoGPS ? 'Obteniendo GPS...' : 'Usar GPS del dispositivo'}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={guardarUbicacionFavorita}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-current/30 hover:bg-current/10 cursor-pointer transition-colors"
+                >
+                  <Star className="w-3.5 h-3.5" />
+                  Guardar en favoritos
+                </button>
+                <button
+                  type="button"
+                  onClick={detectarGPS}
+                  disabled={cargandoGPS}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-current/30 hover:bg-current/10 cursor-pointer disabled:opacity-50"
+                >
+                  <Crosshair className="w-3.5 h-3.5" />
+                  {cargandoGPS ? 'Obteniendo GPS...' : 'Usar GPS del dispositivo'}
+                </button>
+              </div>
             </div>
 
             {errorGPS && (
@@ -507,6 +810,15 @@ export function App() {
                 className={`text-xs px-3 py-2 rounded-lg border ${obtenerClaseErrorInline(tema)}`}
               >
                 {errorGPS}
+              </p>
+            )}
+
+            {avisoFavorito && (
+              <p
+                role="status"
+                className={`text-xs px-3 py-2 rounded-lg border ${obtenerClaseErrorInline(tema)}`}
+              >
+                {avisoFavorito}
               </p>
             )}
 
@@ -565,6 +877,55 @@ export function App() {
                 )}
               </label>
             </div>
+
+            {favoritos.length > 0 && (
+              <div className="pt-2 border-t border-current/15 space-y-2">
+                <div className="flex items-center justify-between text-xs opacity-75">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <Star className="w-3.5 h-3.5" /> Observatorios favoritos
+                  </span>
+                  <span className="font-mono">
+                    {favoritos.length}/{MAX_FAVORITOS}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {favoritos.map((fav) => {
+                    const esActual =
+                      Math.abs(fav.latitud - ubicacion.latitud) < 0.0005 &&
+                      Math.abs(fav.longitud - ubicacion.longitud) < 0.0005 &&
+                      fav.nombre === ubicacion.nombre;
+                    return (
+                      <div
+                        key={fav.id}
+                        className={`inline-flex items-center rounded-full border text-xs transition-colors ${obtenerClaseChipFavorito(
+                          tema,
+                          esActual
+                        )}`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => cargarUbicacionFavorita(fav)}
+                          title={`${fav.nombre} (${fav.latitud}°, ${fav.longitud}° · ${fav.altitud}m)`}
+                          className="pl-3 pr-2 py-1 cursor-pointer flex items-center gap-1.5 font-medium"
+                        >
+                          <MapPin className="w-3 h-3 opacity-75 shrink-0" />
+                          <span>{fav.nombre}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => eliminarUbicacionFavorita(fav.id)}
+                          aria-label={`Eliminar ${fav.nombre} de favoritos`}
+                          title="Eliminar favorito"
+                          className="pr-2.5 pl-1 py-1 opacity-60 hover:opacity-100 cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -686,10 +1047,112 @@ export function App() {
           {/* Columna Izquierda: Bóveda Celeste + Próximos Eventos */}
           <div className="lg:col-span-7 space-y-6">
             <div className={`p-4 md:p-6 rounded-2xl border ${clasesTarjeta}`}>
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                 <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75">
                   Bóveda Celeste en Tiempo Real
                 </h2>
+
+                {/* Buscador global de astros */}
+                <div ref={buscadorRef} className="relative w-full sm:w-72">
+                  <div className="relative flex items-center">
+                    <Search className="w-3.5 h-3.5 opacity-60 absolute left-2.5 pointer-events-none" />
+                    <input
+                      type="text"
+                      role="combobox"
+                      aria-label="Buscar astro en el catálogo"
+                      aria-expanded={buscadorAbierto && busquedaAstro.trim().length > 0}
+                      aria-controls="lista-resultados-astros"
+                      aria-autocomplete="list"
+                      aria-activedescendant={
+                        buscadorAbierto && resultadosBusqueda[indiceResultadoActivo]
+                          ? `opcion-astro-${resultadosBusqueda[indiceResultadoActivo].categoria}-${resultadosBusqueda[indiceResultadoActivo].id}`
+                          : undefined
+                      }
+                      value={busquedaAstro}
+                      onFocus={() => {
+                        if (busquedaAstro.trim().length > 0) setBuscadorAbierto(true);
+                      }}
+                      onChange={(e) => {
+                        setBusquedaAstro(e.target.value);
+                        setBuscadorAbierto(e.target.value.trim().length > 0);
+                        setIndiceResultadoActivo(0);
+                      }}
+                      onKeyDown={manejarTeclaBuscador}
+                      placeholder="Buscar planeta, estrella, M31, Orión..."
+                      className={`w-full pl-8 pr-7 py-1.5 rounded-xl border border-current/25 bg-transparent text-xs focus:outline-none focus:border-current/60 ${claseEsquemaInput}`}
+                    />
+                    {busquedaAstro && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBusquedaAstro('');
+                          setBuscadorAbierto(false);
+                          setIndiceResultadoActivo(0);
+                        }}
+                        aria-label="Limpiar búsqueda de astros"
+                        className="absolute right-2 opacity-60 hover:opacity-100 cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {buscadorAbierto && busquedaAstro.trim().length > 0 && (
+                    <ul
+                      id="lista-resultados-astros"
+                      role="listbox"
+                      aria-label="Resultados de búsqueda de astros"
+                      className={`absolute z-30 mt-1.5 w-full rounded-xl border overflow-hidden ${obtenerClaseDesplegableBusqueda(
+                        tema
+                      )}`}
+                    >
+                      {resultadosBusqueda.length === 0 ? (
+                        <li className="px-3 py-2.5 text-xs opacity-70">
+                          Sin coincidencias en el catálogo.
+                        </li>
+                      ) : (
+                        resultadosBusqueda.map((item, indice) => {
+                          const activo = indice === indiceResultadoActivo;
+                          return (
+                            <li
+                              key={`${item.categoria}-${item.id}`}
+                              id={`opcion-astro-${item.categoria}-${item.id}`}
+                              role="option"
+                              aria-selected={activo}
+                            >
+                              <button
+                                type="button"
+                                onMouseEnter={() => setIndiceResultadoActivo(indice)}
+                                onClick={() => seleccionarResultadoBusqueda(item)}
+                                className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 cursor-pointer transition-colors ${obtenerClaseItemBusqueda(
+                                  tema,
+                                  activo
+                                )}`}
+                              >
+                                <span className="min-w-0">
+                                  <span className="block text-xs font-semibold truncate">
+                                    {item.titulo}
+                                  </span>
+                                  <span className="block text-[11px] opacity-70 truncate">
+                                    {item.subtitulo}
+                                  </span>
+                                </span>
+                                <span
+                                  className={`text-[10px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${obtenerClaseInsigniaHorizonte(
+                                    tema,
+                                    item.sobreHorizonte
+                                  )}`}
+                                >
+                                  {item.sobreHorizonte ? 'Sobre' : 'Bajo'} · Alt {item.altitud}°
+                                </span>
+                              </button>
+                            </li>
+                          );
+                        })
+                      )}
+                    </ul>
+                  )}
+                </div>
               </div>
               <SkyMap
                 cuerpos={cuerpos}
@@ -702,6 +1165,7 @@ export function App() {
                 astroSeleccionado={astroSeleccionado}
                 trayectoria={trayectoriaAstro}
                 onSeleccionarAstro={setAstroSeleccionado}
+                contadorFoco={contadorFoco}
               />
             </div>
 
