@@ -724,6 +724,11 @@ export function App() {
               aviso={estadoMeteo.aviso}
               tema={tema}
               claseTarjeta={clasesTarjeta}
+              onSeleccionarHora={(fechaHora) => {
+                if (Number.isNaN(fechaHora.getTime())) return;
+                setReproduciendo(false);
+                setFechaStr(formatearFechaParaInput(fechaHora));
+              }}
             />
 
             <div className="space-y-2.5">

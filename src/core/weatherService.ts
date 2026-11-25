@@ -1,5 +1,5 @@
-import type { CondicionesMeteo, Ubicacion } from '../types/astronomy';
-import { esEntradaAstronomicaValida } from './skyCalculator';
+import type { CondicionesMeteo, FranjaHorariaMeteo, Ubicacion } from '../types/astronomy';
+import { calcularEstadoSolar, esEntradaAstronomicaValida } from './skyCalculator';
 
 interface OpenMeteoHourly {
   time: string[];
@@ -93,9 +93,16 @@ function formatearClaveHoraUTC(fecha: Date): string {
   return `${anio}-${mes}-${dia}T${hora}:00`;
 }
 
+function formatearHoraLocalFranja(fecha: Date): string {
+  const horas = String(fecha.getHours()).padStart(2, '0');
+  const minutos = String(fecha.getMinutes()).padStart(2, '0');
+  return `${horas}:${minutos}`;
+}
+
 function extraerDesdeHourly(
   hourly: OpenMeteoHourly,
   fecha: Date,
+  ubicacion: Ubicacion,
   esCache: boolean
 ): CondicionesMeteo | null {
   const claveHora = formatearClaveHoraUTC(fecha);
@@ -104,6 +111,29 @@ function extraerDesdeHourly(
 
   const nubesTotal = Math.round(hourly.cloud_cover[idx] ?? 0);
   const vientoKmh = Math.round(hourly.wind_speed_10m[idx] ?? 0);
+
+  const proximasHoras: FranjaHorariaMeteo[] = [];
+  const limite = Math.min(idx + 12, hourly.time.length);
+
+  for (let i = idx; i < limite; i++) {
+    const horaRaw = hourly.time[i];
+    const fechaISO = horaRaw.endsWith('Z') ? horaRaw : `${horaRaw}:00Z`;
+    const fechaFranja = new Date(fechaISO);
+    if (Number.isNaN(fechaFranja.getTime())) continue;
+
+    const nubesFranja = Math.min(100, Math.max(0, Math.round(hourly.cloud_cover[i] ?? 0)));
+    const vientoFranja = Math.max(0, Math.round(hourly.wind_speed_10m[i] ?? 0));
+    const estadoSolar = calcularEstadoSolar(fechaFranja, ubicacion);
+
+    proximasHoras.push({
+      fechaISO,
+      horaLocal: formatearHoraLocalFranja(fechaFranja),
+      nubesTotal: nubesFranja,
+      vientoKmh: vientoFranja,
+      veredicto: evaluarVeredicto(nubesFranja, vientoFranja),
+      esNoche: estadoSolar !== null && estadoSolar.altitudSol < -6,
+    });
+  }
 
   return {
     horaPronostico: `${claveHora.replace('T', ' ')} UTC`,
@@ -116,6 +146,7 @@ function extraerDesdeHourly(
     temperatura: Number((hourly.temperature_2m[idx] ?? 0).toFixed(1)),
     veredicto: evaluarVeredicto(nubesTotal, vientoKmh),
     esCache,
+    proximasHoras,
   };
 }
 
@@ -137,7 +168,7 @@ export async function obtenerCondicionesMeteo(
     Date.now() - cache.timestamp < CACHE_TTL_MS;
 
   if (cacheValida) {
-    const datos = extraerDesdeHourly(cache.hourly, fecha, true);
+    const datos = extraerDesdeHourly(cache.hourly, fecha, ubicacion, true);
     return {
       datos,
       aviso: datos ? null : 'Pronóstico disponible solo hasta 14 días vista.',
@@ -175,7 +206,7 @@ export async function obtenerCondicionesMeteo(
     };
     guardarCacheMeteo(nuevoCache);
 
-    const datos = extraerDesdeHourly(hourly, fecha, false);
+    const datos = extraerDesdeHourly(hourly, fecha, ubicacion, false);
     return {
       datos,
       aviso: datos ? null : 'Pronóstico disponible solo hasta 14 días vista.',
@@ -186,7 +217,7 @@ export async function obtenerCondicionesMeteo(
     }
 
     if (cache && cache.claveUbicacion === claveUbicacion) {
-      const datos = extraerDesdeHourly(cache.hourly, fecha, true);
+      const datos = extraerDesdeHourly(cache.hourly, fecha, ubicacion, true);
       return {
         datos,
         aviso: datos ? 'Sin conexión: mostrando datos guardados en caché.' : 'Sin conexión.',

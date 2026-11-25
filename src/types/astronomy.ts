@@ -41,6 +41,15 @@ export interface LineaConstelacion {
   constelacion: string;
   tramos: [string, string][];
 }
+export interface FranjaHorariaMeteo {
+  fechaISO: string;
+  horaLocal: string;
+  nubesTotal: number;
+  vientoKmh: number;
+  veredicto: CondicionesMeteo['veredicto'];
+  esNoche: boolean;
+}
+
 export interface CondicionesMeteo {
   horaPronostico: string;
   nubesTotal: number;
@@ -52,6 +61,7 @@ export interface CondicionesMeteo {
   temperatura: number;
   veredicto: 'Excelente' | 'Aceptable' | 'Desfavorable';
   esCache?: boolean;
+  proximasHoras: FranjaHorariaMeteo[];
 }
 export type TipoMessier = 'nebulosa' | 'cumulo' | 'galaxia';
 
