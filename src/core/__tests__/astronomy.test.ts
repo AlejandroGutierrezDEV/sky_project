@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Astronomy from 'astronomy-engine';
 import {
   calcularCielo,
+  calcularConstelaciones,
   calcularEstadoSolar,
   calcularEstrellas,
   calcularMessier,
@@ -175,11 +176,11 @@ describe('Motor astronómico (skyCalculator)', () => {
     });
   });
 
-  describe('calcularEstrellas y calcularMessier', () => {
+  describe('calcularEstrellas, calcularMessier y calcularConstelaciones', () => {
     it('aplica precesión J2000 situando a Polaris cerca de la latitud del observador en el hemisferio norte', () => {
       const fecha = new Date('2026-03-21T22:00:00Z');
       const estrellas = calcularEstrellas(fecha, VALENCIA);
-      const polaris = estrellas.find((e) => e.id === 'polaris');
+      const polaris = estrellas.find((e) => e.id === 'Alp UMi' || e.nombre === 'Polaris');
 
       expect(polaris).toBeDefined();
       expect(Math.abs((polaris?.altitud ?? 0) - VALENCIA.latitud)).toBeLessThan(1.5);
@@ -190,17 +191,35 @@ describe('Motor astronómico (skyCalculator)', () => {
       const estrellas = calcularEstrellas(fecha, VALENCIA);
       const messier = calcularMessier(fecha, VALENCIA);
 
-      expect(estrellas.length).toBeGreaterThan(0);
+      expect(estrellas.length).toBeGreaterThanOrEqual(400);
       for (const estrella of estrellas) {
         if (estrella.altitud > 0.1) expect(estrella.visible).toBe(true);
         if (estrella.altitud < -0.1) expect(estrella.visible).toBe(false);
       }
 
-      expect(messier.length).toBeGreaterThan(0);
+      expect(messier).toHaveLength(110);
       for (const obj of messier) {
         if (obj.altitud > 10.1) expect(obj.visible).toBe(true);
         if (obj.altitud < 9.9) expect(obj.visible).toBe(false);
       }
+    });
+
+    it('proyecta las 88 constelaciones oficiales de la IAU y valida entradas inválidas', () => {
+      const fecha = new Date('2026-03-21T22:00:00Z');
+      const constelaciones = calcularConstelaciones(fecha, VALENCIA);
+
+      expect(constelaciones).toHaveLength(88);
+      for (const constelacion of constelaciones) {
+        expect(Number.isFinite(constelacion.centroAltitud)).toBe(true);
+        expect(Number.isFinite(constelacion.centroAcimut)).toBe(true);
+        expect(constelacion.centroAcimut).toBeGreaterThanOrEqual(0);
+        expect(constelacion.centroAcimut).toBeLessThan(360);
+      }
+
+      expect(calcularConstelaciones(new Date('invalid'), VALENCIA)).toEqual([]);
+      expect(
+        calcularConstelaciones(fecha, { ...VALENCIA, latitud: 95 })
+      ).toEqual([]);
     });
   });
 
@@ -214,7 +233,7 @@ describe('Motor astronómico (skyCalculator)', () => {
         VALENCIA
       );
       const trajSirio = calcularTrayectoriaAstro(
-        { id: 'sirius', nombre: 'Sirio', categoria: 'estrella' },
+        { id: 'Alp CMa', nombre: 'Sirio', categoria: 'estrella' },
         fecha,
         VALENCIA
       );

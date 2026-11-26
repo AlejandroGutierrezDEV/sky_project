@@ -3,25 +3,29 @@ import { Globe, Compass, RotateCcw, X } from 'lucide-react';
 import type {
   AstroSeleccionado,
   CategoriaAstro,
+  ConstelacionCalculada,
   CuerpoCeleste,
   EscalaBortle,
   EstrellaCalculada,
+  InstrumentoObservacion,
   MessierCalculado,
   ModoMapa,
   PuntoTrayectoria,
   TemaVisual,
+  TipoObjetoMessier,
 } from '../types/astronomy';
-import { LINEAS_CONSTELACIONES } from '../data/brightStars';
+import { obtenerNombreConstelacionIAU } from '../data/constelacionesIAU';
 
 interface SkyMapProps {
   cuerpos: CuerpoCeleste[];
   estrellas: EstrellaCalculada[];
   messier: MessierCalculado[];
+  constelaciones: ConstelacionCalculada[];
   tema: TemaVisual;
   modoMapa: ModoMapa;
   onCambiarModoMapa: (modo: ModoMapa) => void;
   mostrarConstelaciones: boolean;
-  mostrarEtiquetasEstrellas: boolean;
+  mostrarEstrellas: boolean;
   mostrarMessier: boolean;
   astroSeleccionado: AstroSeleccionado | null;
   trayectoria: PuntoTrayectoria[];
@@ -29,6 +33,7 @@ interface SkyMapProps {
   contadorFoco?: number;
   magnitudLimiteVisible?: number;
   bortle?: EscalaBortle;
+  instrumentoActivo?: InstrumentoObservacion | 'Todos';
 }
 
 interface Camara3D {
@@ -102,12 +107,12 @@ function buscarPosicionAstroVisible(
   }
   if (astro.categoria === 'estrella') {
     const estrella = estrellas.find((e) => e.id === astro.id);
-    return estrella && estrella.visible
+    return estrella && estrella.altitud >= 0
       ? { altitud: estrella.altitud, acimut: estrella.acimut }
       : null;
   }
   const objMessier = messier.find((m) => m.id === astro.id);
-  return objMessier && objMessier.visible
+  return objMessier && objMessier.altitud >= 0
     ? { altitud: objMessier.altitud, acimut: objMessier.acimut }
     : null;
 }
@@ -148,23 +153,79 @@ const PALETAS: Record<TemaVisual, PaletaMapa> = {
   },
 };
 
-const COLORES_ESPECTRALES: Record<string, string> = {
-  rigel: '#93c5fd',
-  sirius: '#bae6fd',
-  spica: '#93c5fd',
-  bellatrix: '#bfdbfe',
-  regulus: '#bae6fd',
-  vega: '#e0f2fe',
-  deneb: '#e0f2fe',
-  altair: '#f0f9ff',
-  betelgeuse: '#fdba74',
-  aldebaran: '#fdba74',
-  antares: '#fca5a5',
-  arcturus: '#fed7aa',
-  capella: '#fef08a',
-  pollux: '#fde68a',
-  polaris: '#fef9c3',
+interface CajaEtiqueta {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+const ETIQUETA_TIPO_MESSIER: Readonly<Record<TipoObjetoMessier, string>> = {
+  Galaxia: 'Galaxia',
+  Nebulosa: 'Nebulosa',
+  CumuloGlobular: 'Cúmulo globular',
+  CumuloAbierto: 'Cúmulo abierto',
+  RemanenteSupernova: 'Remanente supernova',
+  Asterismo: 'Asterismo',
 };
+
+const ETIQUETA_INSTRUMENTO: Readonly<Record<InstrumentoObservacion, string>> = {
+  'Ojo desnudo': 'Ojo desnudo',
+  Prismaticos: 'Prismáticos',
+  Telescopio: 'Telescopio',
+};
+
+function obtenerColorEstrellaBV(
+  bv: number | undefined,
+  tema: TemaVisual,
+  fallback: string
+): string {
+  if (tema === 'rojo') return fallback;
+  if (bv === undefined || !Number.isFinite(bv)) return fallback;
+  if (bv < 0.0) return '#93c5fd';
+  if (bv < 0.4) return '#e0f2fe';
+  if (bv < 0.8) return '#fef9c3';
+  if (bv < 1.3) return '#fed7aa';
+  return '#fca5a5';
+}
+
+function intentarReservarEtiqueta(
+  ctx: CanvasRenderingContext2D,
+  texto: string,
+  x: number,
+  y: number,
+  cajas: CajaEtiqueta[],
+  tamanoCanvas: number,
+  alineacion: CanvasTextAlign = 'left',
+  alturaTexto = 11
+): boolean {
+  const ancho = ctx.measureText(texto).width;
+  const margen = 3;
+  const x1 =
+    alineacion === 'center'
+      ? x - ancho / 2
+      : alineacion === 'right'
+        ? x - ancho
+        : x;
+  const x2 = x1 + ancho;
+  const y1 = y - alturaTexto;
+  const y2 = y + 2;
+
+  if (x1 < 10 || x2 > tamanoCanvas - 10 || y1 < 10 || y2 > tamanoCanvas - 10) {
+    return false;
+  }
+
+  for (const caja of cajas) {
+    const separaX = x2 + margen < caja.x1 || x1 - margen > caja.x2;
+    const separaY = y2 + margen < caja.y1 || y1 - margen > caja.y2;
+    if (!separaX && !separaY) {
+      return false;
+    }
+  }
+
+  cajas.push({ x1, y1, x2, y2 });
+  return true;
+}
 
 const CLASES_TOOLTIP: Record<TemaVisual, string> = {
   oscuro: 'bg-slate-900/90 border-sky-500/40 text-slate-100 backdrop-blur-md',
@@ -369,60 +430,93 @@ function dibujarBaseMapa3D(
   ctx.globalAlpha = 1;
 }
 
+interface EtiquetaPendiente {
+  texto: string;
+  x: number;
+  y: number;
+  color: string;
+  fuente: string;
+  alineacion: CanvasTextAlign;
+  altura: number;
+}
+
+function dibujarConstelaciones(
+  ctx: CanvasRenderingContext2D,
+  constelaciones: ConstelacionCalculada[],
+  proyectarFn: (alt: number, az: number) => PuntoProyectado,
+  paleta: PaletaMapa
+): EtiquetaPendiente[] {
+  const etiquetas: EtiquetaPendiente[] = [];
+
+  ctx.save();
+  ctx.strokeStyle = paleta.lineaConst;
+  ctx.lineWidth = 1.0;
+
+  for (const constelacion of constelaciones) {
+    let tieneSegmentoVisible = false;
+    for (const segmento of constelacion.segmentos) {
+      if (segmento.desde.altitud < 0 || segmento.hasta.altitud < 0) continue;
+      const p1 = proyectarFn(segmento.desde.altitud, segmento.desde.acimut);
+      const p2 = proyectarFn(segmento.hasta.altitud, segmento.hasta.acimut);
+
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+      tieneSegmentoVisible = true;
+    }
+
+    if (tieneSegmentoVisible && constelacion.centroAltitud >= 5) {
+      const posCentro = proyectarFn(constelacion.centroAltitud, constelacion.centroAcimut);
+      etiquetas.push({
+        texto: constelacion.nombreEs,
+        x: posCentro.x,
+        y: posCentro.y,
+        color: paleta.textoEstrella,
+        fuente: '9px system-ui, sans-serif',
+        alineacion: 'center',
+        altura: 9,
+      });
+    }
+  }
+
+  ctx.restore();
+  return etiquetas;
+}
+
 function dibujarEstrellas(
   ctx: CanvasRenderingContext2D,
   estrellas: EstrellaCalculada[],
-  mostrarConstelaciones: boolean,
-  mostrarEtiquetas: boolean,
   proyectarFn: (alt: number, az: number) => PuntoProyectado,
   paleta: PaletaMapa,
   tema: TemaVisual,
   interactivos: ObjetoHover[],
   magnitudLimiteVisible?: number
-) {
-  const mapaEstrellas = new Map<string, { pos: PuntoProyectado; data: EstrellaCalculada }>();
+): EtiquetaPendiente[] {
   const limiteMagnitud =
     typeof magnitudLimiteVisible === 'number' && Number.isFinite(magnitudLimiteVisible)
       ? magnitudLimiteVisible
       : Number.POSITIVE_INFINITY;
 
-  for (const est of estrellas) {
-    if (est.altitud > -5 && est.magnitud <= limiteMagnitud) {
-      mapaEstrellas.set(est.id, { pos: proyectarFn(est.altitud, est.acimut), data: est });
-    }
-  }
-
-  if (mostrarConstelaciones) {
-    ctx.strokeStyle = paleta.lineaConst;
-    ctx.lineWidth = 1.2;
-    for (const constelacion of LINEAS_CONSTELACIONES) {
-      for (const [idA, idB] of constelacion.tramos) {
-        const a = mapaEstrellas.get(idA);
-        const b = mapaEstrellas.get(idB);
-        if (!a || !b) continue;
-        if (!a.data.visible && !b.data.visible) continue;
-
-        ctx.beginPath();
-        ctx.moveTo(a.pos.x, a.pos.y);
-        ctx.lineTo(b.pos.x, b.pos.y);
-        ctx.stroke();
-      }
-    }
-  }
-
-  const visibles = [...mapaEstrellas.values()]
-    .filter(({ data }) => data.visible)
+  const visibles = estrellas
+    .filter((est) => est.altitud >= 0 && est.magnitud <= limiteMagnitud)
+    .map((est) => ({ pos: proyectarFn(est.altitud, est.acimut), data: est }))
     .sort((a, b) => a.pos.profundidad - b.pos.profundidad);
 
-  for (const { pos, data } of visibles) {
-    const tamanoBase = Math.max(1.5, 4.2 - data.magnitud * 0.8);
-    const tamano = tamanoBase * Math.max(0.75, Math.min(1.25, pos.escala));
-    const colorEstrella =
-      tema === 'rojo' ? paleta.estrella : (COLORES_ESPECTRALES[data.id] ?? paleta.estrella);
+  const candidatasEtiquetas: { mag: number; etiqueta: EtiquetaPendiente }[] = [];
 
-    // Halo luminoso sutil para estrellas brillantes
-    if (data.magnitud < 1.8) {
-      const radioHalo = tamano * 3.4;
+  for (const { pos, data } of visibles) {
+    const tamanoBase = Math.max(1.0, 3.6 - data.magnitud * 0.62);
+    const tamano = tamanoBase * Math.max(0.75, Math.min(1.25, pos.escala));
+    const colorEstrella = obtenerColorEstrellaBV(
+      data.indiceColorBV,
+      tema,
+      paleta.estrella
+    );
+
+    // Halo luminoso sutil para estrellas muy brillantes
+    if (data.magnitud < 1.5) {
+      const radioHalo = tamano * 3.2;
       const halo = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, radioHalo);
       if (tema === 'rojo') {
         halo.addColorStop(0, 'rgba(239, 68, 68, 0.35)');
@@ -442,19 +536,28 @@ function dibujarEstrellas(
     ctx.fillStyle = colorEstrella;
     ctx.fill();
 
-    if (mostrarEtiquetas && data.magnitud < 2.1) {
-      ctx.font = '10px system-ui, sans-serif';
-      ctx.fillStyle = paleta.textoEstrella;
-      ctx.textAlign = 'left';
-      ctx.fillText(data.nombre.split(' ')[0], pos.x + tamano + 4, pos.y + 3);
+    if (data.nombre && data.magnitud <= 2.1) {
+      candidatasEtiquetas.push({
+        mag: data.magnitud,
+        etiqueta: {
+          texto: data.nombre,
+          x: pos.x + tamano + 4,
+          y: pos.y + 3,
+          color: paleta.textoEstrella,
+          fuente: '10px system-ui, sans-serif',
+          alineacion: 'left',
+          altura: 10,
+        },
+      });
     }
 
+    const nombreVisible = data.nombre ?? data.id;
     interactivos.push({
       id: data.id,
       categoria: 'estrella',
-      nombreCorto: data.nombre,
-      nombre: data.nombre,
-      subtitulo: `Estrella · Const. ${data.constelacion}`,
+      nombreCorto: nombreVisible,
+      nombre: nombreVisible,
+      subtitulo: data.nombre ? `Estrella (${data.id})` : `Estrella ${data.id}`,
       altitud: data.altitud,
       acimut: data.acimut,
       magnitud: data.magnitud,
@@ -462,6 +565,60 @@ function dibujarEstrellas(
       y: pos.y,
     });
   }
+
+  return candidatasEtiquetas
+    .sort((a, b) => a.mag - b.mag)
+    .slice(0, 24)
+    .map((item) => item.etiqueta);
+}
+
+function dibujarSimboloMessier(
+  ctx: CanvasRenderingContext2D,
+  tipo: TipoObjetoMessier,
+  x: number,
+  y: number,
+  r: number,
+  color: string
+) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.3;
+
+  if (tipo === 'Galaxia') {
+    ctx.beginPath();
+    ctx.ellipse(x, y, r * 1.15, r * 0.62, -0.45, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (tipo === 'CumuloGlobular') {
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.9, 0, Math.PI * 2);
+    ctx.moveTo(x - r * 0.9, y);
+    ctx.lineTo(x + r * 0.9, y);
+    ctx.moveTo(x, y - r * 0.9);
+    ctx.lineTo(x, y + r * 0.9);
+    ctx.stroke();
+  } else if (tipo === 'CumuloAbierto') {
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (tipo === 'Nebulosa' || tipo === 'RemanenteSupernova') {
+    ctx.beginPath();
+    ctx.moveTo(x, y - r);
+    ctx.lineTo(x + r, y);
+    ctx.lineTo(x, y + r);
+    ctx.lineTo(x - r, y);
+    ctx.closePath();
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(x, y - r * 0.95);
+    ctx.lineTo(x + r * 0.9, y + r * 0.75);
+    ctx.lineTo(x - r * 0.9, y + r * 0.75);
+    ctx.closePath();
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }
 
 function dibujarMessier(
@@ -470,34 +627,45 @@ function dibujarMessier(
   tema: TemaVisual,
   proyectarFn: (alt: number, az: number) => PuntoProyectado,
   interactivos: ObjetoHover[]
-) {
+): EtiquetaPendiente[] {
   const colorMessier = tema === 'rojo' ? '#dc2626' : '#34d399';
+  const visibles = messier
+    .filter((obj) => obj.altitud >= 0)
+    .sort((a, b) => a.magnitud - b.magnitud);
 
-  for (const obj of messier) {
-    if (!obj.visible) continue;
+  const etiquetas: EtiquetaPendiente[] = [];
+  const mostrarTodosEtiquetados = visibles.length <= 25;
+
+  for (const obj of visibles) {
     const pos = proyectarFn(obj.altitud, obj.acimut);
-    const r = 6 * Math.max(0.8, Math.min(1.2, pos.escala));
+    const r = 5.5 * Math.max(0.8, Math.min(1.2, pos.escala));
 
-    ctx.save();
-    ctx.strokeStyle = colorMessier;
-    ctx.lineWidth = 1.3;
-    ctx.setLineDash([2, 2]);
-    ctx.beginPath();
-    ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
+    dibujarSimboloMessier(ctx, obj.tipo, pos.x, pos.y, r, colorMessier);
 
-    ctx.font = '10px ui-monospace, monospace';
-    ctx.fillStyle = colorMessier;
-    ctx.textAlign = 'left';
-    ctx.fillText(obj.id, pos.x + r + 3, pos.y + 3);
+    if ((mostrarTodosEtiquetados || obj.magnitud <= 8.0) && etiquetas.length < 28) {
+      etiquetas.push({
+        texto: obj.id,
+        x: pos.x + r + 3,
+        y: pos.y + 3,
+        color: colorMessier,
+        fuente: '10px ui-monospace, monospace',
+        alineacion: 'left',
+        altura: 10,
+      });
+    }
+
+    const nombreVisible = obj.nombreComun
+      ? `${obj.id} · ${obj.nombreComun}`
+      : `${obj.id} · ${obj.nombreNGC}`;
 
     interactivos.push({
       id: obj.id,
       categoria: 'messier',
-      nombreCorto: `${obj.id} · ${obj.nombre}`,
-      nombre: `${obj.id} · ${obj.nombre}`,
-      subtitulo: `${obj.tipo.toUpperCase()} (${obj.dificultad}) · ${obj.constelacion}`,
+      nombreCorto: nombreVisible,
+      nombre: nombreVisible,
+      subtitulo: `${ETIQUETA_TIPO_MESSIER[obj.tipo]} · ${obtenerNombreConstelacionIAU(
+        obj.constelacionIAU
+      )} · ${ETIQUETA_INSTRUMENTO[obj.instrumentoMinimo]} · ${obj.tamanoArcmin}'`,
       altitud: obj.altitud,
       acimut: obj.acimut,
       magnitud: obj.magnitud,
@@ -505,6 +673,8 @@ function dibujarMessier(
       y: pos.y,
     });
   }
+
+  return etiquetas;
 }
 
 function dibujarCuerpos(
@@ -513,11 +683,13 @@ function dibujarCuerpos(
   tema: TemaVisual,
   proyectarFn: (alt: number, az: number) => PuntoProyectado,
   interactivos: ObjetoHover[]
-) {
+): EtiquetaPendiente[] {
   const visibles = cuerpos
     .filter((c) => c.altitud > 0)
     .map((c) => ({ cuerpo: c, pos: proyectarFn(c.altitud, c.acimut) }))
     .sort((a, b) => a.pos.profundidad - b.pos.profundidad);
+
+  const etiquetas: EtiquetaPendiente[] = [];
 
   for (const { cuerpo, pos } of visibles) {
     const colorCuerpo = tema === 'rojo' ? '#ff2a2a' : cuerpo.color;
@@ -548,10 +720,15 @@ function dibujarCuerpos(
     ctx.fillStyle = colorCuerpo;
     ctx.fill();
 
-    ctx.font = 'bold 12px system-ui, sans-serif';
-    ctx.fillStyle = colorCuerpo;
-    ctx.textAlign = 'left';
-    ctx.fillText(cuerpo.nombre, pos.x + rCuerpo + (esSaturno ? 10 : 6), pos.y + 4);
+    etiquetas.push({
+      texto: cuerpo.nombre,
+      x: pos.x + rCuerpo + (esSaturno ? 10 : 6),
+      y: pos.y + 4,
+      color: colorCuerpo,
+      fuente: 'bold 12px system-ui, sans-serif',
+      alineacion: 'left',
+      altura: 12,
+    });
 
     interactivos.push({
       id: cuerpo.id,
@@ -566,6 +743,41 @@ function dibujarCuerpos(
       y: pos.y,
     });
   }
+
+  return etiquetas;
+}
+
+function dibujarEtiquetasPrioritarias(
+  ctx: CanvasRenderingContext2D,
+  grupos: readonly EtiquetaPendiente[][],
+  tamanoCanvas: number
+) {
+  const cajas: CajaEtiqueta[] = [];
+  ctx.save();
+
+  for (const grupo of grupos) {
+    for (const etiqueta of grupo) {
+      ctx.font = etiqueta.fuente;
+      if (
+        intentarReservarEtiqueta(
+          ctx,
+          etiqueta.texto,
+          etiqueta.x,
+          etiqueta.y,
+          cajas,
+          tamanoCanvas,
+          etiqueta.alineacion,
+          etiqueta.altura
+        )
+      ) {
+        ctx.fillStyle = etiqueta.color;
+        ctx.textAlign = etiqueta.alineacion;
+        ctx.fillText(etiqueta.texto, etiqueta.x, etiqueta.y);
+      }
+    }
+  }
+
+  ctx.restore();
 }
 
 function dibujarTrayectoria(
@@ -686,11 +898,12 @@ export function SkyMap({
   cuerpos,
   estrellas,
   messier,
+  constelaciones,
   tema,
   modoMapa,
   onCambiarModoMapa,
   mostrarConstelaciones,
-  mostrarEtiquetasEstrellas,
+  mostrarEstrellas,
   mostrarMessier,
   astroSeleccionado,
   trayectoria,
@@ -698,6 +911,7 @@ export function SkyMap({
   contadorFoco = 0,
   magnitudLimiteVisible,
   bortle,
+  instrumentoActivo = 'Todos',
 }: Readonly<SkyMapProps>) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const escenaBaseRef = useRef<CacheEscenaCanvas | null>(null);
@@ -814,27 +1028,31 @@ export function SkyMap({
       cuerpos,
       estrellas,
       messier,
+      constelaciones,
       tema,
       modoMapa,
       camara,
       mostrarConstelaciones,
-      mostrarEtiquetasEstrellas,
+      mostrarEstrellas,
       mostrarMessier,
       trayectoria,
       magnitudLimiteVisible,
+      astroSeleccionado,
     }),
     [
       cuerpos,
       estrellas,
       messier,
+      constelaciones,
       tema,
       modoMapa,
       camara,
       mostrarConstelaciones,
-      mostrarEtiquetasEstrellas,
+      mostrarEstrellas,
       mostrarMessier,
       trayectoria,
       magnitudLimiteVisible,
+      astroSeleccionado,
     ]
   );
 
@@ -890,24 +1108,66 @@ export function SkyMap({
       ctxBase.save();
     }
 
-    dibujarEstrellas(
-      ctxBase,
-      estrellas,
-      mostrarConstelaciones,
-      mostrarEtiquetasEstrellas,
-      proyectarFn,
-      paleta,
-      tema,
-      interactivos,
-      magnitudLimiteVisible
-    );
+    const etiquetasConstelaciones = mostrarConstelaciones
+      ? dibujarConstelaciones(ctxBase, constelaciones, proyectarFn, paleta)
+      : [];
 
-    if (mostrarMessier) {
-      dibujarMessier(ctxBase, messier, tema, proyectarFn, interactivos);
-    }
+    const etiquetasEstrellas = mostrarEstrellas
+      ? dibujarEstrellas(
+          ctxBase,
+          estrellas,
+          proyectarFn,
+          paleta,
+          tema,
+          interactivos,
+          magnitudLimiteVisible
+        )
+      : [];
+
+    const etiquetasMessier = mostrarMessier
+      ? dibujarMessier(ctxBase, messier, tema, proyectarFn, interactivos)
+      : [];
 
     dibujarTrayectoria(ctxBase, trayectoria, tema, proyectarFn);
-    dibujarCuerpos(ctxBase, cuerpos, tema, proyectarFn, interactivos);
+    const etiquetasCuerpos = dibujarCuerpos(
+      ctxBase,
+      cuerpos,
+      tema,
+      proyectarFn,
+      interactivos
+    );
+
+    const etiquetasSeleccionado: EtiquetaPendiente[] = [];
+    if (astroSeleccionado) {
+      const objSeleccionado = interactivos.find(
+        (item) =>
+          item.id === astroSeleccionado.id &&
+          item.categoria === astroSeleccionado.categoria
+      );
+      if (objSeleccionado && objSeleccionado.categoria !== 'cuerpo') {
+        etiquetasSeleccionado.push({
+          texto: objSeleccionado.nombreCorto,
+          x: objSeleccionado.x + 10,
+          y: objSeleccionado.y + 3,
+          color: tema === 'rojo' ? '#ff5555' : '#38bdf8',
+          fuente: 'bold 11px system-ui, sans-serif',
+          alineacion: 'left',
+          altura: 11,
+        });
+      }
+    }
+
+    dibujarEtiquetasPrioritarias(
+      ctxBase,
+      [
+        etiquetasSeleccionado,
+        etiquetasCuerpos,
+        etiquetasMessier,
+        etiquetasEstrellas,
+        etiquetasConstelaciones,
+      ],
+      size
+    );
 
     ctxBase.restore();
     puntosInteractivosRef.current = interactivos;
@@ -915,14 +1175,16 @@ export function SkyMap({
     cuerpos,
     estrellas,
     messier,
+    constelaciones,
     tema,
     modoMapa,
     camara,
     mostrarConstelaciones,
-    mostrarEtiquetasEstrellas,
+    mostrarEstrellas,
     mostrarMessier,
     trayectoria,
     magnitudLimiteVisible,
+    astroSeleccionado,
   ]);
 
   // Effect 2: Composición desde el canvas cacheado y animación de la retícula de selección
@@ -1004,17 +1266,37 @@ export function SkyMap({
     const posX = (e.clientX - rect.left) * scaleX;
     const posY = (e.clientY - rect.top) * scaleY;
 
-    let masCercano: ObjetoHover | null = null;
-    let distanciaMin = e.pointerType === 'touch' ? 28 : 18;
+    const umbral = e.pointerType === 'touch' ? 28 : 18;
+    const candidatos: { obj: ObjetoHover; dist: number }[] = [];
+    let distMin = umbral;
 
     for (const obj of puntosInteractivosRef.current) {
       const dist = Math.hypot(obj.x - posX, obj.y - posY);
-      if (dist < distanciaMin) {
-        distanciaMin = dist;
-        masCercano = obj;
+      if (dist < umbral) {
+        candidatos.push({ obj, dist });
+        if (dist < distMin) distMin = dist;
       }
     }
-    return masCercano;
+
+    if (candidatos.length === 0) return null;
+
+    const prioridadCategoria: Record<CategoriaAstro, number> = {
+      cuerpo: 3,
+      messier: 2,
+      estrella: 1,
+    };
+
+    const cercanos = candidatos.filter((c) => c.dist <= distMin + 6);
+    cercanos.sort((a, b) => {
+      const diffPrio =
+        prioridadCategoria[b.obj.categoria] - prioridadCategoria[a.obj.categoria];
+      if (diffPrio !== 0) return diffPrio;
+      const diffDist = a.dist - b.dist;
+      if (Math.abs(diffDist) > 1.5) return diffDist;
+      return a.obj.magnitud - b.obj.magnitud;
+    });
+
+    return cercanos[0].obj;
   };
 
   const inspeccionarPuntero = (e: PointerEvent<HTMLCanvasElement>) => {
@@ -1174,11 +1456,16 @@ export function SkyMap({
         <div className="flex flex-wrap items-center gap-2">
           {typeof magnitudLimiteVisible === 'number' && Number.isFinite(magnitudLimiteVisible) && (
             <span
-              title="Magnitud límite visible estimada según escala Bortle y brillo lunar"
+              title="Magnitud límite visible estimada según escala Bortle, brillo lunar e instrumento"
               className="px-2 py-0.5 rounded-lg border border-current/20 bg-current/5 font-mono text-[11px] opacity-85"
             >
-              NELM ≤ {magnitudLimiteVisible.toFixed(1)} mag
-              {bortle !== undefined ? ` · B${bortle}` : ''}
+              {instrumentoActivo !== 'Todos'
+                ? `Límite ≤ ${magnitudLimiteVisible.toFixed(1)} mag · ${
+                    ETIQUETA_INSTRUMENTO[instrumentoActivo]
+                  }`
+                : `NELM ≤ ${magnitudLimiteVisible.toFixed(1)} mag${
+                    bortle !== undefined ? ` · B${bortle}` : ''
+                  }`}
             </span>
           )}
           {modoMapa === '3D' ? (

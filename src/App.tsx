@@ -26,14 +26,13 @@ import {
 import {
   calcularCielo,
   calcularEstadoSolar,
-  calcularEstrellas,
-  calcularMessier,
   calcularTransitoCuerpo,
   calcularTrayectoriaAstro,
 } from './core/skyCalculator';
 import { obtenerCondicionesMeteo } from './core/weatherService';
 import { calcularProximosEventos } from './core/eventsCalculator';
 import { SkyMap } from './components/SkyMap';
+import { BarraFiltrosCatalogo } from './components/BarraFiltrosCatalogo';
 import { WeatherPanel } from './components/WeatherPanel';
 import { EventsPanel } from './components/EventsPanel';
 import { StarfieldBackground } from './components/StarfieldBackground';
@@ -42,6 +41,11 @@ import { Navbar } from './components/Navbar';
 import { AstronomyGuide } from './components/AstronomyGuide';
 import { Compass3DModal } from './components/Compass3DModal';
 import { usePreferenciasMapa } from './hooks/usePreferenciasMapa';
+import {
+  FILTROS_CATALOGO_POR_DEFECTO,
+  useFiltrosCatalogo,
+} from './hooks/useFiltrosCatalogo';
+import { obtenerNombreConstelacionIAU } from './data/constelacionesIAU';
 import {
   BORTLE_POR_DEFECTO,
   DESCRIPCIONES_BORTLE,
@@ -58,6 +62,7 @@ import type {
   DatosLunares,
   EfemeridesTransito,
   EscalaBortle,
+  FiltrosCatalogo,
   ObjetivoBrujula,
   TemaVisual,
   Ubicacion,
@@ -445,6 +450,9 @@ export function App() {
     setModoMapa,
     resetearDatosLocales,
   } = usePreferenciasMapa();
+  const [filtrosCatalogo, setFiltrosCatalogo] = useState<FiltrosCatalogo>(
+    FILTROS_CATALOGO_POR_DEFECTO
+  );
   const [confirmandoReset, setConfirmandoReset] = useState(false);
   const [avisoReset, setAvisoReset] = useState<string | null>(null);
   const timeoutResetRef = useRef<number | null>(null);
@@ -619,15 +627,20 @@ export function App() {
     [estadoMeteo.datos?.nubesTotal, bortleActual, datosLunares]
   );
 
-  const estrellas = useMemo(
-    () => calcularEstrellas(fechaSeleccionada, coordenadasEstables),
-    [fechaSeleccionada, coordenadasEstables]
-  );
-
-  const messier = useMemo(
-    () => calcularMessier(fechaSeleccionada, coordenadasEstables),
-    [fechaSeleccionada, coordenadasEstables]
-  );
+  const {
+    estrellas,
+    messier,
+    constelaciones,
+    estrellasCompletas,
+    messierCompletos,
+    magnitudLimiteEfectiva,
+    totalMessierSobreHorizonte,
+  } = useFiltrosCatalogo({
+    ubicacion: coordenadasEstables,
+    fecha: fechaSeleccionada,
+    magnitudLimiteVisible: calidadCielo.magnitudLimiteVisible,
+    filtros: filtrosCatalogo,
+  });
 
   const resultadosBusqueda = useMemo<ResultadoBusquedaAstro[]>(() => {
     const consulta = normalizarTextoBusqueda(busquedaAstro);
@@ -653,43 +666,55 @@ export function App() {
       }
     }
 
-    for (const estrella of estrellas) {
-      const nombreNorm = normalizarTextoBusqueda(estrella.nombre);
-      const constNorm = normalizarTextoBusqueda(estrella.constelacion);
-      if (nombreNorm.includes(consulta) || constNorm.includes(consulta)) {
+    for (const estrella of estrellasCompletas) {
+      const nombreEstrella = estrella.nombre ?? estrella.id;
+      const nombreNorm = normalizarTextoBusqueda(nombreEstrella);
+      const idNorm = normalizarTextoBusqueda(estrella.id);
+      if (nombreNorm.includes(consulta) || idNorm.includes(consulta)) {
         coincidencias.push({
           id: estrella.id,
           categoria: 'estrella',
-          nombreSeleccion: estrella.nombre,
-          titulo: estrella.nombre,
-          subtitulo: `Estrella · ${estrella.constelacion}`,
+          nombreSeleccion: nombreEstrella,
+          titulo: nombreEstrella,
+          subtitulo: estrella.nombre
+            ? `Estrella (${estrella.id}) · Mag ${estrella.magnitud}`
+            : `Estrella · Mag ${estrella.magnitud}`,
           altitud: estrella.altitud,
-          sobreHorizonte: estrella.altitud > 0,
-          textoBusqueda: nombreNorm,
-          prioridadInicio: nombreNorm.startsWith(consulta) || constNorm.startsWith(consulta),
+          sobreHorizonte: estrella.altitud >= 0,
+          textoBusqueda: `${nombreNorm} ${idNorm}`,
+          prioridadInicio: nombreNorm.startsWith(consulta) || idNorm.startsWith(consulta),
         });
       }
     }
 
-    for (const obj of messier) {
+    for (const obj of messierCompletos) {
       const idNorm = normalizarTextoBusqueda(obj.id);
-      const nombreNorm = normalizarTextoBusqueda(obj.nombre);
-      const constNorm = normalizarTextoBusqueda(obj.constelacion);
+      const ngcNorm = normalizarTextoBusqueda(obj.nombreNGC);
+      const comunNorm = normalizarTextoBusqueda(obj.nombreComun ?? '');
+      const nombreConstEs = obtenerNombreConstelacionIAU(obj.constelacionIAU);
+      const constNorm = normalizarTextoBusqueda(`${obj.constelacionIAU} ${nombreConstEs}`);
       if (
         idNorm.includes(consulta) ||
-        nombreNorm.includes(consulta) ||
+        ngcNorm.includes(consulta) ||
+        comunNorm.includes(consulta) ||
         constNorm.includes(consulta)
       ) {
+        const nombrePrincipal = obj.nombreComun
+          ? `${obj.id} · ${obj.nombreComun}`
+          : `${obj.id} · ${obj.nombreNGC}`;
         coincidencias.push({
           id: obj.id,
           categoria: 'messier',
-          nombreSeleccion: `${obj.id} · ${obj.nombre}`,
-          titulo: `${obj.id} · ${obj.nombre}`,
-          subtitulo: `Messier (${obj.tipo}) · ${obj.constelacion}`,
+          nombreSeleccion: nombrePrincipal,
+          titulo: nombrePrincipal,
+          subtitulo: `${obj.tipo} (${obj.nombreNGC}) · ${nombreConstEs}`,
           altitud: obj.altitud,
-          sobreHorizonte: obj.altitud > 0,
-          textoBusqueda: `${idNorm} ${nombreNorm}`,
-          prioridadInicio: idNorm.startsWith(consulta) || nombreNorm.startsWith(consulta),
+          sobreHorizonte: obj.altitud >= 0,
+          textoBusqueda: `${idNorm} ${comunNorm} ${ngcNorm}`,
+          prioridadInicio:
+            idNorm.startsWith(consulta) ||
+            comunNorm.startsWith(consulta) ||
+            ngcNorm.startsWith(consulta),
         });
       }
     }
@@ -701,7 +726,7 @@ export function App() {
         return b.altitud - a.altitud;
       })
       .slice(0, MAX_RESULTADOS_BUSQUEDA);
-  }, [busquedaAstro, cuerpos, estrellas, messier]);
+  }, [busquedaAstro, cuerpos, estrellasCompletas, messierCompletos]);
 
   const trayectoriaAstro = useMemo(
     () =>
@@ -740,26 +765,29 @@ export function App() {
       };
     }
     if (astroSeleccionado.categoria === 'estrella') {
-      const estrella = estrellas.find((e) => e.id === astroSeleccionado.id);
+      const estrella = estrellasCompletas.find((e) => e.id === astroSeleccionado.id);
       if (!estrella || estrella.altitud <= 0 || !Number.isFinite(estrella.acimut)) return null;
       return {
         id: `estrella-${estrella.id}`,
-        nombre: estrella.nombre,
+        nombre: estrella.nombre ?? estrella.id,
         acimut: estrella.acimut,
         altitud: estrella.altitud,
         color: '#fde68a',
       };
     }
-    const objMessier = messier.find((m) => m.id === astroSeleccionado.id);
+    const objMessier = messierCompletos.find((m) => m.id === astroSeleccionado.id);
     if (!objMessier || objMessier.altitud <= 0 || !Number.isFinite(objMessier.acimut)) return null;
+    const nombreMessier = objMessier.nombreComun
+      ? `${objMessier.id} · ${objMessier.nombreComun}`
+      : `${objMessier.id} · ${objMessier.nombreNGC}`;
     return {
       id: `messier-${objMessier.id}`,
-      nombre: `${objMessier.id} · ${objMessier.nombre}`,
+      nombre: nombreMessier,
       acimut: objMessier.acimut,
       altitud: objMessier.altitud,
       color: '#34d399',
     };
-  }, [astroSeleccionado, cuerpos, estrellas, messier]);
+  }, [astroSeleccionado, cuerpos, estrellasCompletas, messierCompletos]);
 
   const actualizarCampoUbicacion = (
     campo: Exclude<keyof FormularioUbicacion, 'bortle'>,
@@ -912,8 +940,16 @@ export function App() {
   };
 
   const seleccionarResultadoBusqueda = (resultado: ResultadoBusquedaAstro) => {
-    if (resultado.categoria === 'messier' && !preferencias.capas.messier) {
-      toggleCapa('messier', true);
+    if (resultado.categoria === 'messier') {
+      if (!preferencias.capas.messier) {
+        toggleCapa('messier', true);
+      }
+      const visibleConFiltroActual = messier.some((m) => m.id === resultado.id);
+      if (!visibleConFiltroActual) {
+        setFiltrosCatalogo(FILTROS_CATALOGO_POR_DEFECTO);
+      }
+    } else if (resultado.categoria === 'estrella' && !preferencias.capas.estrellas) {
+      toggleCapa('estrellas', true);
     }
     setAstroSeleccionado({
       id: resultado.id,
@@ -1549,22 +1585,36 @@ export function App() {
                       )}
                     </div>
                   </div>
+                  <BarraFiltrosCatalogo
+                    filtros={filtrosCatalogo}
+                    onCambiarFiltros={(actualizacion) =>
+                      setFiltrosCatalogo((prev) => ({ ...prev, ...actualizacion }))
+                    }
+                    onResetearFiltros={() => setFiltrosCatalogo(FILTROS_CATALOGO_POR_DEFECTO)}
+                    tema={tema}
+                    totalMessierFiltrados={messier.length}
+                    totalMessierSobreHorizonte={totalMessierSobreHorizonte}
+                    magnitudLimiteEfectiva={magnitudLimiteEfectiva}
+                    capaMessierActiva={preferencias.capas.messier}
+                  />
                   <SkyMap
                     cuerpos={cuerpos}
                     estrellas={estrellas}
                     messier={messier}
+                    constelaciones={constelaciones}
                     tema={tema}
                     modoMapa={preferencias.modoMapa}
                     onCambiarModoMapa={setModoMapa}
                     mostrarConstelaciones={preferencias.capas.constelaciones}
-                    mostrarEtiquetasEstrellas={preferencias.capas.estrellas}
+                    mostrarEstrellas={preferencias.capas.estrellas}
                     mostrarMessier={preferencias.capas.messier}
                     astroSeleccionado={astroSeleccionado}
                     trayectoria={trayectoriaAstro}
                     onSeleccionarAstro={setAstroSeleccionado}
                     contadorFoco={contadorFoco}
-                    magnitudLimiteVisible={calidadCielo.magnitudLimiteVisible}
+                    magnitudLimiteVisible={magnitudLimiteEfectiva}
                     bortle={bortleActual}
+                    instrumentoActivo={filtrosCatalogo.instrumento}
                   />
                 </div>
 

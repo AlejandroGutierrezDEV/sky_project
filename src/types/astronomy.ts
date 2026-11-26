@@ -45,13 +45,32 @@ export interface CuerpoCeleste {
   color: string;
 }
 
+export type TipoObjetoMessier =
+  | 'Galaxia'
+  | 'Nebulosa'
+  | 'CumuloGlobular'
+  | 'CumuloAbierto'
+  | 'RemanenteSupernova'
+  | 'Asterismo';
+
+export type FiltroTipoUI = 'Todos' | 'Galaxia' | 'Nebulosa' | 'Cumulo';
+
+export type InstrumentoObservacion = 'Ojo desnudo' | 'Prismaticos' | 'Telescopio';
+
+export type EstacionAstronomica =
+  | 'Invierno'
+  | 'Primavera'
+  | 'Verano'
+  | 'Otono'
+  | 'Circumpolar';
+
 export interface EstrellaCatalogo {
-  id: string;
-  nombre: string;
-  constelacion: string;
-  ra: number;
-  dec: number;
-  magnitud: number;
+  id: string; // Código Bayer/Flamsteed o HIP
+  nombre?: string;
+  magnitud: number; // <= 4.0
+  raHoras: number;
+  decGrados: number;
+  indiceColorBV?: number;
 }
 
 export interface EstrellaCalculada extends EstrellaCatalogo {
@@ -60,9 +79,35 @@ export interface EstrellaCalculada extends EstrellaCatalogo {
   visible: boolean;
 }
 
-export interface LineaConstelacion {
-  constelacion: string;
-  tramos: [string, string][];
+export interface ConstelacionIAU {
+  codigo: string; // Código oficial IAU 3 letras
+  nombreEs: string;
+  nombreLatin: string;
+  estacion: EstacionAstronomica;
+  // Pares de coordenadas [raHoras, decGrados] para dibujar los asterismos
+  segmentos: Array<[[number, number], [number, number]]>;
+}
+
+export interface SegmentoHorizontalConstelacion {
+  desde: { altitud: number; acimut: number };
+  hasta: { altitud: number; acimut: number };
+}
+
+export interface ConstelacionCalculada {
+  codigo: string;
+  nombreEs: string;
+  nombreLatin: string;
+  estacion: EstacionAstronomica;
+  segmentos: SegmentoHorizontalConstelacion[];
+  centroAltitud: number;
+  centroAcimut: number;
+  visible: boolean;
+}
+
+export interface FiltrosCatalogo {
+  tipo: FiltroTipoUI;
+  instrumento: InstrumentoObservacion | 'Todos';
+  soloPorEncimaHorizonte: boolean;
 }
 export interface FranjaHorariaMeteo {
   fechaISO: string;
@@ -86,17 +131,17 @@ export interface CondicionesMeteo {
   esCache?: boolean;
   proximasHoras: FranjaHorariaMeteo[];
 }
-export type TipoMessier = 'nebulosa' | 'cumulo' | 'galaxia';
-
 export interface ObjetoMessier {
-  id: string;
-  nombre: string;
-  tipo: TipoMessier;
-  constelacion: string;
-  ra: number;
-  dec: number;
+  id: string; // 'M1' .. 'M110'
+  nombreNGC: string;
+  nombreComun?: string;
+  tipo: TipoObjetoMessier;
   magnitud: number;
-  dificultad: 'Fácil' | 'Moderada';
+  raHoras: number; // Ascensión Recta J2000 (0 a 24)
+  decGrados: number; // Declinación J2000 (-90 a +90)
+  constelacionIAU: string; // Código 3 letras (ej. 'ORI', 'AND')
+  instrumentoMinimo: InstrumentoObservacion;
+  tamanoArcmin: string;
 }
 
 export interface MessierCalculado extends ObjetoMessier {
