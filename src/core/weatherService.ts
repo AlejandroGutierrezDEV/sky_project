@@ -3,30 +3,36 @@ import { calcularEstadoSolar, esEntradaAstronomicaValida } from './skyCalculator
 
 interface OpenMeteoHourly {
   time: string[];
-  cloud_cover: number[];
-  cloud_cover_low: number[];
-  cloud_cover_mid: number[];
-  cloud_cover_high: number[];
-  relative_humidity_2m: number[];
-  wind_speed_10m: number[];
-  temperature_2m: number[];
+  cloud_cover: (number | null)[];
+  cloud_cover_low: (number | null)[];
+  cloud_cover_mid: (number | null)[];
+  cloud_cover_high: (number | null)[];
+  relative_humidity_2m: (number | null)[];
+  wind_speed_10m: (number | null)[];
+  temperature_2m: (number | null)[];
 }
 
-interface CacheMeteo {
-  claveUbicacion: string;
+interface EntradaCacheMeteo {
   timestamp: number;
+  ultimoAcceso: number;
   hourly: OpenMeteoHourly;
 }
 
-const CACHE_KEY = 'skyproject_meteo_cache_v2';
+type DiccionarioCacheMeteo = Record<string, EntradaCacheMeteo>;
+
+const CACHE_KEY = 'skyproject_meteo_cache_v3';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora
+const MAX_CACHE_UBICACIONES = 5;
 
 function esArrayDeStrings(valor: unknown): valor is string[] {
   return Array.isArray(valor) && valor.every((item) => typeof item === 'string');
 }
 
-function esArrayNumerico(valor: unknown): valor is number[] {
-  return Array.isArray(valor) && valor.every((item) => typeof item === 'number' || item === null);
+function esArrayNumerico(valor: unknown): valor is (number | null)[] {
+  return (
+    Array.isArray(valor) &&
+    valor.every((item) => (typeof item === 'number' && Number.isFinite(item)) || item === null)
+  );
 }
 
 function esOpenMeteoHourlyValido(valor: unknown): valor is OpenMeteoHourly {
@@ -44,39 +50,59 @@ function esOpenMeteoHourlyValido(valor: unknown): valor is OpenMeteoHourly {
   );
 }
 
-function leerCacheMeteo(): CacheMeteo | null {
+function esEntradaCacheMeteoValida(valor: unknown): valor is EntradaCacheMeteo {
+  if (typeof valor !== 'object' || valor === null) return false;
+  const obj = valor as Record<string, unknown>;
+  return (
+    typeof obj.timestamp === 'number' &&
+    Number.isFinite(obj.timestamp) &&
+    typeof obj.ultimoAcceso === 'number' &&
+    Number.isFinite(obj.ultimoAcceso) &&
+    esOpenMeteoHourlyValido(obj.hourly)
+  );
+}
+
+function leerDiccionarioCache(): DiccionarioCacheMeteo {
   try {
     const cacheRaw = localStorage.getItem(CACHE_KEY);
-    if (!cacheRaw) return null;
+    if (!cacheRaw) return {};
     const parsed: unknown = JSON.parse(cacheRaw);
-    if (typeof parsed !== 'object' || parsed === null) return null;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
 
-    const obj = parsed as Record<string, unknown>;
-    if (
-      typeof obj.claveUbicacion !== 'string' ||
-      typeof obj.timestamp !== 'number' ||
-      !Number.isFinite(obj.timestamp) ||
-      !esOpenMeteoHourlyValido(obj.hourly)
-    ) {
-      return null;
+    const diccionario: DiccionarioCacheMeteo = {};
+    for (const [clave, entrada] of Object.entries(parsed as Record<string, unknown>)) {
+      if (esEntradaCacheMeteoValida(entrada)) {
+        diccionario[clave] = entrada;
+      }
     }
-
-    return {
-      claveUbicacion: obj.claveUbicacion,
-      timestamp: obj.timestamp,
-      hourly: obj.hourly,
-    };
+    return diccionario;
   } catch {
-    return null;
+    return {};
   }
 }
 
-function guardarCacheMeteo(cache: CacheMeteo): void {
+function guardarDiccionarioCache(diccionario: DiccionarioCacheMeteo): void {
   try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+    localStorage.setItem(CACHE_KEY, JSON.stringify(diccionario));
   } catch {
     // Ignora errores de cuota o almacenamiento bloqueado
   }
+}
+
+function guardarEntradaCache(claveUbicacion: string, hourly: OpenMeteoHourly): void {
+  const diccionario = leerDiccionarioCache();
+  const ahora = Date.now();
+  diccionario[claveUbicacion] = {
+    timestamp: ahora,
+    ultimoAcceso: ahora,
+    hourly,
+  };
+
+  const entradasRecortadas = Object.entries(diccionario)
+    .sort(([, a], [, b]) => b.ultimoAcceso - a.ultimoAcceso)
+    .slice(0, MAX_CACHE_UBICACIONES);
+
+  guardarDiccionarioCache(Object.fromEntries(entradasRecortadas));
 }
 
 function evaluarVeredicto(nubesTotal: number, vientoKmh: number): CondicionesMeteo['veredicto'] {
@@ -160,15 +186,19 @@ export async function obtenerCondicionesMeteo(
   }
 
   const claveUbicacion = `${ubicacion.latitud.toFixed(2)},${ubicacion.longitud.toFixed(2)}`;
-  const cache = leerCacheMeteo();
+  const diccionario = leerDiccionarioCache();
+  const entradaCache = diccionario[claveUbicacion] ?? null;
 
   const cacheValida =
-    cache !== null &&
-    cache.claveUbicacion === claveUbicacion &&
-    Date.now() - cache.timestamp < CACHE_TTL_MS;
+    entradaCache !== null && Date.now() - entradaCache.timestamp < CACHE_TTL_MS;
 
   if (cacheValida) {
-    const datos = extraerDesdeHourly(cache.hourly, fecha, ubicacion, true);
+    diccionario[claveUbicacion] = {
+      ...entradaCache,
+      ultimoAcceso: Date.now(),
+    };
+    guardarDiccionarioCache(diccionario);
+    const datos = extraerDesdeHourly(entradaCache.hourly, fecha, ubicacion, true);
     return {
       datos,
       aviso: datos ? null : 'Pronóstico disponible solo hasta 14 días vista.',
@@ -199,12 +229,7 @@ export async function obtenerCondicionesMeteo(
       throw new Error('Respuesta meteorológica con formato inesperado');
     }
 
-    const nuevoCache: CacheMeteo = {
-      claveUbicacion,
-      timestamp: Date.now(),
-      hourly,
-    };
-    guardarCacheMeteo(nuevoCache);
+    guardarEntradaCache(claveUbicacion, hourly);
 
     const datos = extraerDesdeHourly(hourly, fecha, ubicacion, false);
     return {
@@ -216,8 +241,8 @@ export async function obtenerCondicionesMeteo(
       throw error;
     }
 
-    if (cache && cache.claveUbicacion === claveUbicacion) {
-      const datos = extraerDesdeHourly(cache.hourly, fecha, ubicacion, true);
+    if (entradaCache) {
+      const datos = extraerDesdeHourly(entradaCache.hourly, fecha, ubicacion, true);
       return {
         datos,
         aviso: datos ? 'Sin conexión: mostrando datos guardados en caché.' : 'Sin conexión.',

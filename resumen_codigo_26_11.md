@@ -47,6 +47,8 @@ src/
     StarfieldBackground.tsx
     WeatherPanel.tsx
   core/
+    __tests__/
+      astronomy.test.ts
     eventsCalculator.ts
     skyCalculator.ts
     weatherService.ts
@@ -697,897 +699,6 @@ export function AstronomyGuide({ tema, claseTarjeta, onVolver, onAbrirBrujula }:
 }
 ````
 
-## File: src/components/Compass3DModal.tsx
-````typescript
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent as EventoTecladoReact, PointerEvent as EventoPunteroReact } from 'react';
-import { Compass, Hand, Navigation, Smartphone, Target, X } from 'lucide-react';
-import type {
-  ConstructorOrientacionConPermiso,
-  CuerpoCeleste,
-  EstadoSensorBrujula,
-  EventoOrientacionDispositivo,
-  OrientacionBrujula,
-  TemaVisual,
-} from '../types/astronomy';
-
-interface Compass3DModalProps {
-  tema: TemaVisual;
-  cuerpos: CuerpoCeleste[];
-  onCerrar: () => void;
-}
-
-/* ── Utilidades angulares ─────────────────────────────────────────── */
-
-function normalizarAngulo(angulo: number): number {
-  return ((angulo % 360) + 360) % 360;
-}
-
-/** Diferencia por el camino más corto en el círculo, en el rango [-180, 180). */
-function diferenciaAngular(destino: number, origen: number): number {
-  return ((((destino - origen) % 360) + 540) % 360) - 180;
-}
-
-function limitar(valor: number, minimo: number, maximo: number): number {
-  return Math.min(maximo, Math.max(minimo, valor));
-}
-
-const DIRECCIONES = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'] as const;
-
-function direccionCardinal(rumbo: number): string {
-  return DIRECCIONES[Math.round(normalizarAngulo(rumbo) / 45) % 8];
-}
-
-function puntoPolar(angulo: number, radio: number): { x: number; y: number } {
-  const rad = (angulo * Math.PI) / 180;
-  return { x: CENTRO + Math.sin(rad) * radio, y: CENTRO - Math.cos(rad) * radio };
-}
-
-/* ── Geometría estática del disco (viewBox -20 -20 440 440) ──────── */
-
-const CENTRO = 200;
-const RADIO_ESFERA = 196;
-const RADIO_MARCADORES = 187;
-const RADIO_MARCAS = 175;
-const MARGEN_ALINEACION = 8;
-const INCLINACION_VISUAL_MAX = 65;
-
-interface MarcaGraduacion {
-  angulo: number;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  tipo: 'menor' | 'media' | 'mayor';
-}
-
-const MARCAS: MarcaGraduacion[] = Array.from({ length: 72 }, (_, i) => {
-  const angulo = i * 5;
-  const tipo: MarcaGraduacion['tipo'] = angulo % 45 === 0 ? 'mayor' : angulo % 15 === 0 ? 'media' : 'menor';
-  const largo = tipo === 'mayor' ? 16 : tipo === 'media' ? 11 : 5;
-  const exterior = puntoPolar(angulo, RADIO_MARCAS);
-  const interior = puntoPolar(angulo, RADIO_MARCAS - largo);
-  return { angulo, x1: exterior.x, y1: exterior.y, x2: interior.x, y2: interior.y, tipo };
-});
-
-interface EtiquetaDisco {
-  angulo: number;
-  texto: string;
-  x: number;
-  y: number;
-  tipo: 'cardinal' | 'intercardinal' | 'grado';
-}
-
-const ETIQUETAS: EtiquetaDisco[] = Array.from({ length: 24 }, (_, i) => {
-  const angulo = i * 15;
-  if (angulo % 90 === 0) {
-    const p = puntoPolar(angulo, 141);
-    return { angulo, texto: DIRECCIONES[angulo / 45], ...p, tipo: 'cardinal' as const };
-  }
-  if (angulo % 45 === 0) {
-    const p = puntoPolar(angulo, 143);
-    return { angulo, texto: DIRECCIONES[angulo / 45], ...p, tipo: 'intercardinal' as const };
-  }
-  const p = puntoPolar(angulo, 145);
-  return { angulo, texto: String(angulo), ...p, tipo: 'grado' as const };
-});
-
-/* ── Paletas por tema (Filtro Rojo: solo rojos sobre negro puro) ── */
-
-interface PaletaBrujula {
-  esfera: string;
-  esferaBorde: string;
-  capa: string;
-  marcaMenor: string;
-  marcaMayor: string;
-  texto: string;
-  textoSuave: string;
-  acento: string;
-  norte: string;
-  sur: string;
-  aro: string;
-  marcadorFijo: string | null;
-  claseBackdrop: string;
-  clasePanel: string;
-  claseAcento: string;
-  claseLectura: string;
-  claseBotonPrimario: string;
-  claseAviso: string;
-  claseEstadoOk: string;
-  claseEstadoAviso: string;
-}
-
-const PALETAS: Record<TemaVisual, PaletaBrujula> = {
-  oscuro: {
-    esfera: 'rgba(2,6,23,0.9)',
-    esferaBorde: 'rgba(34,211,238,0.5)',
-    capa: 'rgba(15,23,42,0.95)',
-    marcaMenor: 'rgba(148,163,184,0.55)',
-    marcaMayor: '#e2e8f0',
-    texto: '#e2e8f0',
-    textoSuave: '#94a3b8',
-    acento: '#22d3ee',
-    norte: '#f43f5e',
-    sur: '#64748b',
-    aro: 'rgba(34,211,238,0.3)',
-    marcadorFijo: null,
-    claseBackdrop: 'bg-slate-950/65',
-    clasePanel: 'bg-slate-950/90 border-cyan-400/25 text-slate-100 shadow-2xl shadow-black/60',
-    claseAcento: 'text-cyan-300',
-    claseLectura: 'bg-slate-950/90 border-cyan-400/40 text-slate-50',
-    claseBotonPrimario: 'bg-cyan-500/15 border-cyan-400/50 text-cyan-100 hover:bg-cyan-500/25',
-    claseAviso: 'border-cyan-400/50 bg-cyan-500/10 text-cyan-100',
-    claseEstadoOk: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-    claseEstadoAviso: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
-  },
-  claro: {
-    esfera: 'rgba(248,250,252,0.96)',
-    esferaBorde: '#334155',
-    capa: '#cbd5e1',
-    marcaMenor: '#94a3b8',
-    marcaMayor: '#0f172a',
-    texto: '#0f172a',
-    textoSuave: '#475569',
-    acento: '#0369a1',
-    norte: '#e11d48',
-    sur: '#94a3b8',
-    aro: 'rgba(51,65,85,0.28)',
-    marcadorFijo: null,
-    claseBackdrop: 'bg-slate-900/40',
-    clasePanel: 'bg-white/95 border-slate-200 text-slate-900 shadow-2xl shadow-slate-900/20',
-    claseAcento: 'text-sky-700',
-    claseLectura: 'bg-white/95 border-slate-300 text-slate-900',
-    claseBotonPrimario: 'bg-slate-900 border-slate-900 text-white hover:bg-slate-800',
-    claseAviso: 'border-sky-600/50 bg-sky-50 text-sky-900',
-    claseEstadoOk: 'border-emerald-300 bg-emerald-50 text-emerald-800',
-    claseEstadoAviso: 'border-amber-300 bg-amber-50 text-amber-900',
-  },
-  rojo: {
-    esfera: '#000000',
-    esferaBorde: '#991b1b',
-    capa: '#450a0a',
-    marcaMenor: '#7f1d1d',
-    marcaMayor: '#dc2626',
-    texto: '#ef4444',
-    textoSuave: '#b91c1c',
-    acento: '#ef4444',
-    norte: '#f87171',
-    sur: '#7f1d1d',
-    aro: 'rgba(153,27,27,0.55)',
-    marcadorFijo: '#b91c1c',
-    claseBackdrop: 'bg-black/90',
-    clasePanel: 'bg-black border-red-800 text-red-500',
-    claseAcento: 'text-red-500',
-    claseLectura: 'bg-black border-red-700 text-red-500',
-    claseBotonPrimario: 'bg-red-950 border-red-600 text-red-400 hover:bg-red-900/60',
-    claseAviso: 'border-red-600 bg-red-950/60 text-red-400',
-    claseEstadoOk: 'border-red-700 bg-red-950/50 text-red-400',
-    claseEstadoAviso: 'border-red-900 bg-black text-red-600',
-  },
-};
-
-const MENSAJES_ESTADO: Record<EstadoSensorBrujula, string> = {
-  inactivo: 'Sensores en espera: pulsa «Activar sensores del dispositivo».',
-  solicitando: 'Solicitando permiso de orientación…',
-  buscando: 'Buscando lecturas del magnetómetro…',
-  activo: 'Sensores activos: la brújula sigue a tu dispositivo.',
-  denegado: 'Permiso denegado. Puedes seguir en modo simulación.',
-  'no-disponible': 'Este equipo no dispone de sensores de orientación. Modo simulación activo.',
-  inseguro: 'Los sensores requieren una conexión segura (HTTPS). Modo simulación activo.',
-  'sin-lecturas': 'No se reciben lecturas del sensor en este equipo. Modo simulación activo.',
-};
-
-/** Determina el estado inicial de los sensores sin efectos secundarios. */
-function detectarEstadoInicial(): EstadoSensorBrujula {
-  if (typeof window === 'undefined' || typeof DeviceOrientationEvent === 'undefined') {
-    return 'no-disponible';
-  }
-  if (!window.isSecureContext) return 'inseguro';
-  const constructor = DeviceOrientationEvent as unknown as ConstructorOrientacionConPermiso;
-  return typeof constructor.requestPermission === 'function' ? 'inactivo' : 'buscando';
-}
-
-function prefiereMovimientoReducido(): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
-
-const SELECTOR_ENFOCABLES =
-  'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps) {
-  const paleta = PALETAS[tema];
-  const idTitulo = useId();
-  const idDescripcion = useId();
-
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const botonCerrarRef = useRef<HTMLButtonElement | null>(null);
-  const discoRef = useRef<HTMLDivElement | null>(null);
-
-  const [estadoSensor, setEstadoSensor] = useState<EstadoSensorBrujula>(detectarEstadoInicial);
-  const [referenciaSensor, setReferenciaSensor] = useState<'absoluta' | 'relativa' | null>(null);
-  const [intentoSensor, setIntentoSensor] = useState(0);
-  const [modoManual, setModoManual] = useState(false);
-  const [rumboManual, setRumboManual] = useState(0);
-  const [inclinacionManual, setInclinacionManual] = useState(25);
-  const [visual, setVisual] = useState<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
-  const [movimientoReducido] = useState(prefiereMovimientoReducido);
-
-  const objetivoRef = useRef<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
-  const visualRef = useRef<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
-  const simulacionRef = useRef(true);
-  const lecturaRecibidaRef = useRef(false);
-  const lecturaAbsolutaRef = useRef(false);
-  const referenciaRef = useRef<'absoluta' | 'relativa' | null>(null);
-  const arrastreRef = useRef<{ idPuntero: number; anguloPrevio: number } | null>(null);
-
-  const simulacion = modoManual || estadoSensor !== 'activo';
-  const escuchando =
-    estadoSensor === 'buscando' || estadoSensor === 'activo' || estadoSensor === 'sin-lecturas';
-
-  // Referencia estable al callback de cierre (evita reiniciar el foco en cada render del padre)
-  const onCerrarRef = useRef(onCerrar);
-  useEffect(() => {
-    onCerrarRef.current = onCerrar;
-  }, [onCerrar]);
-
-  /* Bloqueo de scroll, foco inicial, Escape y trampa de foco */
-  useEffect(() => {
-    const elementoPrevio = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const overflowPrevio = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    botonCerrarRef.current?.focus();
-
-    const manejarTecla = (evento: globalThis.KeyboardEvent) => {
-      if (evento.key === 'Escape') {
-        evento.preventDefault();
-        onCerrarRef.current();
-        return;
-      }
-      if (evento.key !== 'Tab' || !panelRef.current) return;
-      const enfocables = Array.from(
-        panelRef.current.querySelectorAll<HTMLElement>(SELECTOR_ENFOCABLES)
-      ).filter((el) => !el.hasAttribute('hidden'));
-      if (enfocables.length === 0) return;
-      const primero = enfocables[0];
-      const ultimo = enfocables[enfocables.length - 1];
-      if (evento.shiftKey && document.activeElement === primero) {
-        evento.preventDefault();
-        ultimo.focus();
-      } else if (!evento.shiftKey && document.activeElement === ultimo) {
-        evento.preventDefault();
-        primero.focus();
-      }
-    };
-
-    document.addEventListener('keydown', manejarTecla);
-    return () => {
-      document.removeEventListener('keydown', manejarTecla);
-      document.body.style.overflow = overflowPrevio;
-      elementoPrevio?.focus();
-    };
-  }, []);
-
-  /* Sincroniza el objetivo con los controles manuales en modo simulación */
-  useEffect(() => {
-    simulacionRef.current = simulacion;
-    if (simulacion) {
-      objetivoRef.current = { rumbo: normalizarAngulo(rumboManual), inclinacion: inclinacionManual };
-    }
-  }, [simulacion, rumboManual, inclinacionManual]);
-
-  /* Escucha de sensores: deviceorientationabsolute (prioritario) + deviceorientation */
-  useEffect(() => {
-    if (!escuchando || typeof DeviceOrientationEvent === 'undefined') return;
-
-    const procesarOrientacion = (evento: Event) => {
-      if (!(evento instanceof DeviceOrientationEvent)) return;
-      const datos = evento as EventoOrientacionDispositivo;
-      let rumbo: number | null = null;
-      let absoluta = false;
-
-      if (typeof datos.webkitCompassHeading === 'number' && Number.isFinite(datos.webkitCompassHeading)) {
-        // Safari iOS: rumbo magnético ya referido al Norte
-        rumbo = normalizarAngulo(datos.webkitCompassHeading);
-        absoluta = true;
-      } else if (datos.alpha !== null && Number.isFinite(datos.alpha)) {
-        absoluta = evento.type === 'deviceorientationabsolute' || datos.absolute;
-        // Si ya llegan lecturas absolutas, se descartan las relativas
-        if (!absoluta && lecturaAbsolutaRef.current) return;
-        rumbo = normalizarAngulo(360 - datos.alpha);
-      }
-
-      if (rumbo === null) return;
-      if (absoluta) lecturaAbsolutaRef.current = true;
-
-      const inclinacion =
-        datos.beta !== null && Number.isFinite(datos.beta) ? limitar(datos.beta, -90, 90) : 0;
-
-      if (!simulacionRef.current) {
-        objetivoRef.current = { rumbo, inclinacion };
-      }
-
-      const referencia = absoluta ? 'absoluta' : 'relativa';
-      if (referenciaRef.current !== referencia) {
-        referenciaRef.current = referencia;
-        setReferenciaSensor(referencia);
-      }
-      if (!lecturaRecibidaRef.current) {
-        lecturaRecibidaRef.current = true;
-        setEstadoSensor('activo');
-      }
-    };
-
-    const admiteAbsoluto = 'ondeviceorientationabsolute' in window;
-    if (admiteAbsoluto) {
-      window.addEventListener('deviceorientationabsolute', procesarOrientacion);
-    }
-    window.addEventListener('deviceorientation', procesarOrientacion);
-
-    const temporizador = window.setTimeout(() => {
-      if (!lecturaRecibidaRef.current) {
-        setEstadoSensor((prev) => (prev === 'buscando' ? 'sin-lecturas' : prev));
-      }
-    }, 2500);
-
-    return () => {
-      window.clearTimeout(temporizador);
-      if (admiteAbsoluto) {
-        window.removeEventListener('deviceorientationabsolute', procesarOrientacion);
-      }
-      window.removeEventListener('deviceorientation', procesarOrientacion);
-    };
-  }, [escuchando, intentoSensor]);
-
-  /* Bucle de suavizado angular (camino más corto, sin saltos 359° → 0°) */
-  useEffect(() => {
-    const factor = movimientoReducido ? 0.45 : 0.16;
-    let idFrame = 0;
-    const paso = () => {
-      const objetivo = objetivoRef.current;
-      const actual = visualRef.current;
-      const difRumbo = diferenciaAngular(objetivo.rumbo, actual.rumbo);
-      const difInclinacion = objetivo.inclinacion - actual.inclinacion;
-      const rumbo =
-        Math.abs(difRumbo) < 0.05 ? objetivo.rumbo : normalizarAngulo(actual.rumbo + difRumbo * factor);
-      const inclinacion =
-        Math.abs(difInclinacion) < 0.05
-          ? objetivo.inclinacion
-          : actual.inclinacion + difInclinacion * factor;
-      if (rumbo !== actual.rumbo || inclinacion !== actual.inclinacion) {
-        const siguiente = { rumbo, inclinacion };
-        visualRef.current = siguiente;
-        setVisual(siguiente);
-      }
-      idFrame = window.requestAnimationFrame(paso);
-    };
-    idFrame = window.requestAnimationFrame(paso);
-    return () => window.cancelAnimationFrame(idFrame);
-  }, [movimientoReducido]);
-
-  const activarSensores = async () => {
-    if (typeof DeviceOrientationEvent === 'undefined') {
-      setEstadoSensor('no-disponible');
-      return;
-    }
-    if (!window.isSecureContext) {
-      setEstadoSensor('inseguro');
-      return;
-    }
-    const constructor = DeviceOrientationEvent as unknown as ConstructorOrientacionConPermiso;
-    if (typeof constructor.requestPermission === 'function') {
-      setEstadoSensor('solicitando');
-      try {
-        const respuesta = await constructor.requestPermission();
-        if (respuesta !== 'granted') {
-          setEstadoSensor('denegado');
-          return;
-        }
-      } catch {
-        setEstadoSensor('denegado');
-        return;
-      }
-    }
-    lecturaRecibidaRef.current = false;
-    lecturaAbsolutaRef.current = false;
-    setModoManual(false);
-    setEstadoSensor('buscando');
-    setIntentoSensor((prev) => prev + 1);
-  };
-
-  const pasarAModoManual = () => {
-    setRumboManual(Math.round(visualRef.current.rumbo));
-    setInclinacionManual(Math.round(limitar(visualRef.current.inclinacion, -60, 60)));
-    setModoManual(true);
-  };
-
-  /* Arrastre sobre la brújula (ratón o dedo) */
-  const anguloDesdePuntero = (clienteX: number, clienteY: number): number | null => {
-    const elemento = discoRef.current;
-    if (!elemento) return null;
-    const rect = elemento.getBoundingClientRect();
-    const dx = clienteX - (rect.left + rect.width / 2);
-    const dy = clienteY - (rect.top + rect.height / 2);
-    if (Math.hypot(dx, dy) < 8) return null;
-    return normalizarAngulo((Math.atan2(dx, -dy) * 180) / Math.PI);
-  };
-
-  const manejarPunteroAbajo = (evento: EventoPunteroReact<HTMLDivElement>) => {
-    const angulo = anguloDesdePuntero(evento.clientX, evento.clientY);
-    if (angulo === null) return;
-    evento.currentTarget.setPointerCapture(evento.pointerId);
-    arrastreRef.current = { idPuntero: evento.pointerId, anguloPrevio: angulo };
-    if (!simulacion) pasarAModoManual();
-    else setModoManual(true);
-  };
-
-  const manejarPunteroMovido = (evento: EventoPunteroReact<HTMLDivElement>) => {
-    const arrastre = arrastreRef.current;
-    if (!arrastre || arrastre.idPuntero !== evento.pointerId) return;
-    const angulo = anguloDesdePuntero(evento.clientX, evento.clientY);
-    if (angulo === null) return;
-    const delta = diferenciaAngular(angulo, arrastre.anguloPrevio);
-    arrastre.anguloPrevio = angulo;
-    // Girar el disco en sentido horario equivale a reducir el rumbo
-    setRumboManual((prev) => normalizarAngulo(prev - delta));
-  };
-
-  const finalizarArrastre = (evento: EventoPunteroReact<HTMLDivElement>) => {
-    if (arrastreRef.current?.idPuntero === evento.pointerId) {
-      arrastreRef.current = null;
-    }
-  };
-
-  const manejarTeclaDisco = (evento: EventoTecladoReact<HTMLDivElement>) => {
-    const paso = evento.shiftKey ? 15 : 1;
-    let delta = 0;
-    if (evento.key === 'ArrowRight' || evento.key === 'ArrowUp') delta = paso;
-    else if (evento.key === 'ArrowLeft' || evento.key === 'ArrowDown') delta = -paso;
-    else return;
-    evento.preventDefault();
-    if (!simulacion) {
-      setRumboManual(normalizarAngulo(Math.round(visualRef.current.rumbo) + delta));
-      setModoManual(true);
-      return;
-    }
-    setModoManual(true);
-    setRumboManual((prev) => normalizarAngulo(Math.round(prev) + delta));
-  };
-
-  /* Datos derivados */
-  const rumboEntero = Math.round(visual.rumbo) % 360;
-  const cardinal = direccionCardinal(visual.rumbo);
-  const inclinacionEntera = Math.round(visual.inclinacion);
-  const inclinacionVisual = limitar(visual.inclinacion, -INCLINACION_VISUAL_MAX, INCLINACION_VISUAL_MAX);
-
-  const cuerposVisibles = useMemo(
-    () => cuerpos.filter((c) => c.altitud > 0 && Number.isFinite(c.acimut)),
-    [cuerpos]
-  );
-
-  let alineado: CuerpoCeleste | null = null;
-  let mejorDiferencia = Number.POSITIVE_INFINITY;
-  for (const cuerpo of cuerposVisibles) {
-    const dif = Math.abs(diferenciaAngular(cuerpo.acimut, visual.rumbo));
-    if (dif <= MARGEN_ALINEACION && dif < mejorDiferencia) {
-      mejorDiferencia = dif;
-      alineado = cuerpo;
-    }
-  }
-
-  const mostrarBotonActivar =
-    estadoSensor === 'inactivo' || estadoSensor === 'denegado' || estadoSensor === 'sin-lecturas';
-  const estadoCorrecto = estadoSensor === 'activo';
-  const mensajeEstado =
-    estadoSensor === 'activo' && referenciaSensor === 'relativa'
-      ? 'Sensores activos (orientación relativa: el Norte puede no ser exacto en este navegador).'
-      : MENSAJES_ESTADO[estadoSensor];
-
-  return (
-    <div
-      className={`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 backdrop-blur-md ${paleta.claseBackdrop}`}
-      onPointerDown={(evento) => {
-        if (evento.target === evento.currentTarget) onCerrar();
-      }}
-    >
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={idTitulo}
-        aria-describedby={idDescripcion}
-        className={`hud-esquinas hud-${tema} relative w-full max-w-xl max-h-[94dvh] overflow-y-auto overscroll-contain rounded-3xl border p-4 sm:p-6 ${paleta.clasePanel}`}
-      >
-        {/* Cabecera */}
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className={`text-[10px] uppercase tracking-[0.25em] font-mono ${paleta.claseAcento}`}>
-              Instrumento de orientación
-            </p>
-            <h2 id={idTitulo} className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2">
-              <Compass className={`w-5 h-5 ${paleta.claseAcento}`} aria-hidden="true" />
-              Brújula Astronómica 3D
-            </h2>
-            <p id={idDescripcion} className="text-xs opacity-75 mt-1">
-              Gira con tu dispositivo o arrastra el disco. Los marcadores del anillo exterior son la
-              Luna y los planetas sobre el horizonte.
-            </p>
-          </div>
-          <button
-            ref={botonCerrarRef}
-            type="button"
-            onClick={onCerrar}
-            aria-label="Cerrar la brújula"
-            className="grid place-items-center min-w-11 min-h-11 rounded-xl border border-current/25 hover:bg-current/10 cursor-pointer shrink-0"
-          >
-            <X className="w-5 h-5" aria-hidden="true" />
-          </button>
-        </div>
-
-        {/* Brújula 3D */}
-        <div className="relative mx-auto mt-4 w-[min(80vw,22rem)] aspect-square select-none">
-          <div
-            ref={discoRef}
-            role="slider"
-            tabIndex={0}
-            aria-label="Rumbo de la brújula"
-            aria-valuemin={0}
-            aria-valuemax={359}
-            aria-valuenow={rumboEntero}
-            aria-valuetext={`${rumboEntero} grados, ${cardinal}`}
-            onPointerDown={manejarPunteroAbajo}
-            onPointerMove={manejarPunteroMovido}
-            onPointerUp={finalizarArrastre}
-            onPointerCancel={finalizarArrastre}
-            onKeyDown={manejarTeclaDisco}
-            className="absolute inset-0 rounded-full cursor-grab active:cursor-grabbing focus-visible:outline-2 focus-visible:outline-offset-4"
-            style={{ perspective: '1000px', touchAction: 'none' }}
-          >
-            <div
-              className="relative w-full h-full"
-              style={{
-                transformStyle: 'preserve-3d',
-                transform: `rotateX(${inclinacionVisual}deg)`,
-              }}
-            >
-              {/* Grosor del instrumento (capas inferiores) */}
-              {[-18, -12, -6].map((z) => (
-                <div
-                  key={z}
-                  aria-hidden="true"
-                  className="absolute inset-[3%] rounded-full"
-                  style={{
-                    transform: `translateZ(${z}px)`,
-                    backgroundColor: paleta.capa,
-                    border: `1px solid ${paleta.esferaBorde}`,
-                    opacity: 0.85,
-                  }}
-                />
-              ))}
-
-              {/* Disco giratorio (SVG) */}
-              <svg
-                viewBox="-20 -20 440 440"
-                className="absolute inset-0 w-full h-full"
-                aria-hidden="true"
-                style={{ transform: 'translateZ(0px)' }}
-              >
-                <circle
-                  cx={CENTRO}
-                  cy={CENTRO}
-                  r={RADIO_ESFERA}
-                  fill={paleta.esfera}
-                  stroke={paleta.esferaBorde}
-                  strokeWidth="2"
-                />
-                <circle
-                  cx={CENTRO}
-                  cy={CENTRO}
-                  r={RADIO_MARCAS + 2}
-                  fill="none"
-                  stroke={paleta.aro}
-                  strokeWidth="1"
-                />
-                <circle cx={CENTRO} cy={CENTRO} r={110} fill="none" stroke={paleta.aro} strokeDasharray="2 5" />
-
-                <g transform={`rotate(${-visual.rumbo} ${CENTRO} ${CENTRO})`}>
-                  {MARCAS.map((m) => (
-                    <line
-                      key={m.angulo}
-                      x1={m.x1}
-                      y1={m.y1}
-                      x2={m.x2}
-                      y2={m.y2}
-                      stroke={
-                        m.angulo === 0 ? paleta.norte : m.tipo === 'menor' ? paleta.marcaMenor : paleta.marcaMayor
-                      }
-                      strokeWidth={m.tipo === 'mayor' ? 2.5 : m.tipo === 'media' ? 1.6 : 1}
-                      strokeLinecap="round"
-                    />
-                  ))}
-
-                  {ETIQUETAS.map((e) => (
-                    <text
-                      key={e.angulo}
-                      x={e.x}
-                      y={e.y}
-                      transform={`rotate(${visual.rumbo} ${e.x} ${e.y})`}
-                      textAnchor="middle"
-                      dominantBaseline="central"
-                      fontFamily={
-                        e.tipo === 'grado'
-                          ? "'JetBrains Mono Variable', ui-monospace, monospace"
-                          : "'Space Grotesk Variable', system-ui, sans-serif"
-                      }
-                      fontWeight={e.tipo === 'grado' ? 500 : 700}
-                      fontSize={e.tipo === 'cardinal' ? 24 : e.tipo === 'intercardinal' ? 14 : 10.5}
-                      fill={
-                        e.angulo === 0 ? paleta.norte : e.tipo === 'grado' ? paleta.textoSuave : paleta.texto
-                      }
-                    >
-                      {e.texto}
-                    </text>
-                  ))}
-
-                  {/* Aguja: norte destacado y cola sur */}
-                  <polygon
-                    points={`${CENTRO},${CENTRO - 122} ${CENTRO - 9},${CENTRO - 76} ${CENTRO + 9},${CENTRO - 76}`}
-                    fill={paleta.norte}
-                  />
-                  <polygon
-                    points={`${CENTRO},${CENTRO + 108} ${CENTRO - 7},${CENTRO + 76} ${CENTRO + 7},${CENTRO + 76}`}
-                    fill={paleta.sur}
-                  />
-
-                  {/* Marcadores astronómicos en su acimut real */}
-                  {cuerposVisibles.map((cuerpo) => {
-                    const p = puntoPolar(cuerpo.acimut, RADIO_MARCADORES);
-                    const esAlineado = alineado?.id === cuerpo.id;
-                    const color = paleta.marcadorFijo ?? cuerpo.color;
-                    return (
-                      <g key={cuerpo.id} transform={`rotate(${visual.rumbo} ${p.x} ${p.y})`}>
-                        {esAlineado && (
-                          <circle cx={p.x} cy={p.y} r={14} fill="none" stroke={paleta.acento} strokeWidth="2" />
-                        )}
-                        <circle
-                          cx={p.x}
-                          cy={p.y}
-                          r={9.5}
-                          fill={esAlineado ? paleta.acento : color}
-                          stroke={paleta.esfera}
-                          strokeWidth="1.5"
-                        />
-                        <text
-                          x={p.x}
-                          y={p.y}
-                          textAnchor="middle"
-                          dominantBaseline="central"
-                          fontSize="8.5"
-                          fontWeight={700}
-                          fontFamily="'Space Grotesk Variable', system-ui, sans-serif"
-                          fill={tema === 'rojo' ? '#000000' : '#0f172a'}
-                        >
-                          {cuerpo.nombre.slice(0, 2)}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </g>
-
-                {/* Línea de fe fija (dirección del dispositivo) */}
-                <polygon
-                  points={`${CENTRO},${CENTRO - RADIO_ESFERA + 14} ${CENTRO - 10},${-16} ${CENTRO + 10},${-16}`}
-                  fill={paleta.acento}
-                />
-              </svg>
-
-              {/* Cardán: meridianos de la cúpula que giran con el rumbo */}
-              <div
-                aria-hidden="true"
-                className="absolute inset-0 pointer-events-none"
-                style={{ transformStyle: 'preserve-3d', transform: `rotateZ(${-visual.rumbo}deg)` }}
-              >
-                <div
-                  className="absolute inset-[6%] rounded-full"
-                  style={{ border: `1.5px solid ${paleta.aro}`, transform: 'rotateY(90deg)' }}
-                />
-                <div
-                  className="absolute inset-[6%] rounded-full"
-                  style={{ border: `1px solid ${paleta.aro}`, transform: 'rotateX(90deg)' }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Lectura central (plana, siempre legible) */}
-          <div
-            aria-hidden="true"
-            className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[34%] aspect-square rounded-full border flex flex-col items-center justify-center ${paleta.claseLectura}`}
-          >
-            <span className="font-mono font-bold text-3xl sm:text-4xl leading-none tabular-nums">
-              {String(rumboEntero).padStart(3, '0')}°
-            </span>
-            <span className={`font-display font-bold text-sm mt-1 ${paleta.claseAcento}`}>{cardinal}</span>
-            <span className="font-mono text-[10px] opacity-75 mt-0.5">
-              Incl {inclinacionEntera > 0 ? '+' : ''}
-              {inclinacionEntera}°
-            </span>
-          </div>
-        </div>
-
-        {/* Aviso de alineación */}
-        <div aria-live="polite" className="min-h-12 mt-3 flex items-center justify-center">
-          {alineado ? (
-            <p
-              className={`alineacion-pulso inline-flex items-center gap-2 px-3.5 py-2 rounded-full border text-sm font-medium ${paleta.claseAviso}`}
-            >
-              <Target className="w-4 h-4" aria-hidden="true" />
-              Apuntando hacia {alineado.nombre} ·{' '}
-              <span className="font-mono">Alt {Math.round(alineado.altitud)}°</span>
-            </p>
-          ) : (
-            <p className="text-xs opacity-65 text-center">
-              {cuerposVisibles.length > 0
-                ? 'Gira hasta situar un marcador bajo la línea de fe superior.'
-                : 'Ahora mismo no hay Luna ni planetas sobre el horizonte.'}
-            </p>
-          )}
-        </div>
-
-        {/* Estado de sensores */}
-        <div className="mt-2 space-y-3">
-          <p
-            role="status"
-            className={`flex items-start gap-2 text-xs px-3 py-2 rounded-xl border ${
-              estadoCorrecto ? paleta.claseEstadoOk : paleta.claseEstadoAviso
-            }`}
-          >
-            <Smartphone className="w-4 h-4 shrink-0 mt-px" aria-hidden="true" />
-            <span>{mensajeEstado}</span>
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-2">
-            {mostrarBotonActivar && (
-              <button
-                type="button"
-                onClick={() => {
-                  void activarSensores();
-                }}
-                className={`flex-1 inline-flex items-center justify-center gap-2 px-4 min-h-11 rounded-xl border text-sm font-semibold cursor-pointer transition-colors ${paleta.claseBotonPrimario}`}
-              >
-                <Navigation className="w-4 h-4" aria-hidden="true" />
-                Activar sensores del dispositivo
-              </button>
-            )}
-            {estadoSensor === 'activo' && (
-              <button
-                type="button"
-                onClick={() => (modoManual ? setModoManual(false) : pasarAModoManual())}
-                aria-pressed={modoManual}
-                className="flex-1 inline-flex items-center justify-center gap-2 px-4 min-h-11 rounded-xl border border-current/30 hover:bg-current/10 text-sm font-medium cursor-pointer transition-colors"
-              >
-                <Hand className="w-4 h-4" aria-hidden="true" />
-                {modoManual ? 'Volver a los sensores' : 'Modo manual'}
-              </button>
-            )}
-          </div>
-
-          {/* Controles de simulación */}
-          {simulacion && (
-            <fieldset className="p-3 rounded-2xl border border-current/20 bg-current/5 space-y-1">
-              <legend className="px-1.5 text-[10px] uppercase tracking-[0.2em] font-mono opacity-75">
-                Modo simulación
-              </legend>
-              <label className="block">
-                <span className="flex items-center justify-between text-xs">
-                  <span>Rumbo</span>
-                  <span className="font-mono">{String(Math.round(normalizarAngulo(rumboManual)) % 360).padStart(3, '0')}°</span>
-                </span>
-                <input
-                  type="range"
-                  min={0}
-                  max={359}
-                  step={1}
-                  value={Math.round(normalizarAngulo(rumboManual)) % 360}
-                  onChange={(e) => {
-                    const valor = Number(e.target.value);
-                    if (!Number.isFinite(valor)) return;
-                    setModoManual(true);
-                    setRumboManual(limitar(valor, 0, 359));
-                  }}
-                  className={`rango-hud ${paleta.claseAcento}`}
-                />
-              </label>
-              <label className="block">
-                <span className="flex items-center justify-between text-xs">
-                  <span>Inclinación</span>
-                  <span className="font-mono">
-                    {inclinacionManual > 0 ? '+' : ''}
-                    {inclinacionManual}°
-                  </span>
-                </span>
-                <input
-                  type="range"
-                  min={-60}
-                  max={60}
-                  step={1}
-                  value={inclinacionManual}
-                  onChange={(e) => {
-                    const valor = Number(e.target.value);
-                    if (!Number.isFinite(valor)) return;
-                    setModoManual(true);
-                    setInclinacionManual(limitar(valor, -60, 60));
-                  }}
-                  className={`rango-hud ${paleta.claseAcento}`}
-                />
-              </label>
-              <p className="text-[11px] opacity-70">
-                También puedes arrastrar el disco o usar las flechas del teclado (Mayús: pasos de 15°).
-              </p>
-            </fieldset>
-          )}
-
-          {/* Astros visibles */}
-          {cuerposVisibles.length > 0 && (
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-65 mb-1.5">
-                Sobre el horizonte
-              </p>
-              <ul className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
-                {cuerposVisibles.map((cuerpo) => {
-                  const esAlineado = alineado?.id === cuerpo.id;
-                  return (
-                    <li
-                      key={cuerpo.id}
-                      className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border ${
-                        esAlineado ? paleta.claseAviso : 'border-current/15'
-                      }`}
-                    >
-                      <span className="flex items-center gap-1.5 min-w-0">
-                        <span
-                          className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: paleta.marcadorFijo ?? cuerpo.color }}
-                          aria-hidden="true"
-                        />
-                        <span className="truncate font-medium">{cuerpo.nombre}</span>
-                      </span>
-                      <span className="font-mono opacity-80 shrink-0">
-                        {Math.round(cuerpo.acimut)}° · {Math.round(cuerpo.altitud)}°
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-              <p className="text-[10px] opacity-55 mt-1 font-mono">Acimut · Altitud</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-````
-
 ## File: src/components/MoonPhase3D.tsx
 ````typescript
 import { useId } from 'react';
@@ -1710,342 +821,6 @@ export function MoonPhase3D({
         </g>
       </svg>
     </div>
-  );
-}
-````
-
-## File: src/components/Navbar.tsx
-````typescript
-import { useEffect, useId, useState } from 'react';
-import { BookOpen, Compass, Crosshair, Eye, MapPin, Menu, Moon, Sun, Telescope, X } from 'lucide-react';
-import type { TemaVisual, Ubicacion, VistaActiva } from '../types/astronomy';
-
-interface NavbarProps {
-  tema: TemaVisual;
-  onCambiarTema: (tema: TemaVisual) => void;
-  vistaActiva: VistaActiva;
-  onCambiarVista: (vista: VistaActiva) => void;
-  onAbrirBrujula: () => void;
-  ubicacion: Ubicacion;
-  panelUbicacionAbierto: boolean;
-  onAlternarUbicacion: () => void;
-  onDetectarGPS: () => void;
-  cargandoGPS: boolean;
-}
-
-interface ElementoNavegacion {
-  vista: VistaActiva;
-  etiqueta: string;
-  descripcion: string;
-  Icono: typeof Telescope;
-}
-
-const ELEMENTOS_NAVEGACION: ElementoNavegacion[] = [
-  {
-    vista: 'observatorio',
-    etiqueta: 'Observatorio',
-    descripcion: 'Mapa celeste, meteorología, eventos y Sistema Solar',
-    Icono: Telescope,
-  },
-  {
-    vista: 'guia',
-    etiqueta: 'Guía de uso',
-    descripcion: 'Cómo usar SkyProject y astronomía básica',
-    Icono: BookOpen,
-  },
-];
-
-const OPCIONES_TEMA: { tema: TemaVisual; etiqueta: string; Icono: typeof Moon; titulo: string }[] = [
-  { tema: 'oscuro', etiqueta: 'Oscuro', Icono: Moon, titulo: 'Tema oscuro' },
-  { tema: 'claro', etiqueta: 'Claro', Icono: Sun, titulo: 'Tema claro' },
-  {
-    tema: 'rojo',
-    etiqueta: 'Filtro Rojo',
-    Icono: Eye,
-    titulo: 'Protege tu adaptación ocular en el campo',
-  },
-];
-
-const CLASES_BARRA: Record<TemaVisual, string> = {
-  oscuro:
-    'bg-slate-950/60 backdrop-blur-xl border-b border-cyan-400/15 shadow-[0_1px_24px_-12px_rgb(34_211_238/0.35)]',
-  claro: 'bg-white/70 backdrop-blur-xl border-b border-slate-200/90 shadow-sm shadow-slate-900/5',
-  rojo: 'bg-black border-b border-red-900/80',
-};
-
-const CLASES_MENU_MOVIL: Record<TemaVisual, string> = {
-  oscuro: 'bg-slate-950/90 backdrop-blur-xl border-cyan-400/15',
-  claro: 'bg-white/95 backdrop-blur-xl border-slate-200',
-  rojo: 'bg-black border-red-900/80',
-};
-
-const CLASE_ACENTO: Record<TemaVisual, string> = {
-  oscuro: 'text-cyan-300',
-  claro: 'text-sky-700',
-  rojo: 'text-red-500',
-};
-
-function obtenerClaseNavActiva(tema: TemaVisual, activo: boolean): string {
-  if (!activo) return 'border-transparent opacity-75 hover:opacity-100 hover:bg-current/5';
-  if (tema === 'rojo') return 'border-red-700 bg-red-950/70 text-red-400';
-  if (tema === 'claro') return 'border-slate-900 bg-slate-900 text-white';
-  return 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200';
-}
-
-function obtenerClaseBotonTema(temaActual: TemaVisual, boton: TemaVisual): string {
-  if (temaActual !== boton) return 'opacity-70 hover:opacity-100';
-  if (boton === 'oscuro') return 'bg-cyan-600/90 text-white';
-  if (boton === 'claro') return 'bg-slate-800 text-white';
-  return 'bg-red-950 text-red-500 border border-red-600';
-}
-
-function obtenerClaseBotonBrujula(tema: TemaVisual): string {
-  if (tema === 'rojo') return 'border-red-700 bg-red-950/50 text-red-400 hover:bg-red-950';
-  if (tema === 'claro') return 'border-slate-300 bg-white text-slate-900 hover:border-sky-600 hover:text-sky-700';
-  return 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 hover:border-cyan-300/70';
-}
-
-export function Navbar({
-  tema,
-  onCambiarTema,
-  vistaActiva,
-  onCambiarVista,
-  onAbrirBrujula,
-  ubicacion,
-  panelUbicacionAbierto,
-  onAlternarUbicacion,
-  onDetectarGPS,
-  cargandoGPS,
-}: NavbarProps) {
-  const [menuAbierto, setMenuAbierto] = useState(false);
-  const idMenu = useId();
-  const claseAcento = CLASE_ACENTO[tema];
-
-  // Cierra el menú móvil con Escape
-  useEffect(() => {
-    if (!menuAbierto) return;
-    const manejarTecla = (evento: globalThis.KeyboardEvent) => {
-      if (evento.key === 'Escape') setMenuAbierto(false);
-    };
-    document.addEventListener('keydown', manejarTecla);
-    return () => document.removeEventListener('keydown', manejarTecla);
-  }, [menuAbierto]);
-
-  const irAVista = (vista: VistaActiva) => {
-    onCambiarVista(vista);
-    setMenuAbierto(false);
-  };
-
-  const abrirBrujula = () => {
-    setMenuAbierto(false);
-    onAbrirBrujula();
-  };
-
-  const selectorTema = (compacto: boolean) => (
-    <div
-      role="group"
-      aria-label="Tema visual"
-      className="flex items-center gap-1 p-1 rounded-xl border border-current/20 bg-current/5"
-    >
-      {OPCIONES_TEMA.map(({ tema: opcion, etiqueta, Icono, titulo }) => (
-        <button
-          key={opcion}
-          type="button"
-          onClick={() => onCambiarTema(opcion)}
-          aria-pressed={tema === opcion}
-          title={titulo}
-          className={`flex flex-1 items-center justify-center gap-1.5 px-2.5 min-h-11 md:min-h-8 rounded-lg text-xs font-medium cursor-pointer transition-colors ${obtenerClaseBotonTema(
-            tema,
-            opcion
-          )}`}
-        >
-          <Icono className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-          <span className={compacto ? 'hidden xl:inline' : ''}>{etiqueta}</span>
-          {compacto && <span className="sr-only xl:hidden">{etiqueta}</span>}
-        </button>
-      ))}
-    </div>
-  );
-
-  const botonUbicacion = (
-    <div className="flex items-center gap-1">
-      <button
-        type="button"
-        onClick={() => {
-          onAlternarUbicacion();
-          setMenuAbierto(false);
-        }}
-        aria-expanded={panelUbicacionAbierto}
-        title="Configurar punto de observación"
-        className="flex min-w-0 items-center gap-1.5 px-2.5 min-h-11 md:min-h-9 rounded-lg border border-current/20 hover:bg-current/10 text-xs cursor-pointer transition-colors"
-      >
-        <MapPin className={`w-3.5 h-3.5 shrink-0 ${claseAcento}`} aria-hidden="true" />
-        <span className="truncate max-w-48 lg:max-w-40">{ubicacion.nombre}</span>
-        <span className="font-mono opacity-70 hidden lg:inline">
-          {ubicacion.latitud.toFixed(2)}°, {ubicacion.longitud.toFixed(2)}°
-        </span>
-      </button>
-      <button
-        type="button"
-        onClick={onDetectarGPS}
-        disabled={cargandoGPS}
-        aria-label={cargandoGPS ? 'Obteniendo ubicación GPS' : 'Usar ubicación GPS actual'}
-        title="Usar ubicación GPS actual"
-        className="flex items-center justify-center min-w-11 min-h-11 md:min-w-9 md:min-h-9 rounded-lg border border-current/20 hover:bg-current/10 cursor-pointer disabled:opacity-50 transition-colors"
-      >
-        <Crosshair
-          className={`w-4 h-4 ${cargandoGPS ? 'motion-safe:animate-spin' : ''}`}
-          aria-hidden="true"
-        />
-      </button>
-    </div>
-  );
-
-  return (
-    <nav
-      aria-label="Navegación principal"
-      className={`sticky top-0 z-30 transition-colors duration-300 ${CLASES_BARRA[tema]}`}
-    >
-      <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-3">
-        {/* Marca */}
-        <button
-          type="button"
-          onClick={() => irAVista('observatorio')}
-          className="flex items-center gap-2.5 min-w-0 cursor-pointer text-left"
-          aria-label="SkyProject, ir al Observatorio"
-        >
-          <span
-            className={`relative grid place-items-center w-9 h-9 rounded-xl border border-current/25 ${claseAcento}`}
-            aria-hidden="true"
-          >
-            <svg viewBox="0 0 32 32" className="w-6 h-6" fill="none" stroke="currentColor">
-              <circle cx="16" cy="16" r="11" strokeWidth="1.5" strokeOpacity="0.6" />
-              <ellipse cx="16" cy="16" rx="11" ry="4.5" strokeWidth="1.2" strokeOpacity="0.45" />
-              <path d="M16 3v4M16 25v4M3 16h4M25 16h4" strokeWidth="1.5" strokeLinecap="round" />
-              <circle cx="16" cy="16" r="2.4" fill="currentColor" stroke="none" />
-            </svg>
-          </span>
-          <span className="min-w-0">
-            <span className="block font-display text-lg font-bold tracking-tight leading-none">
-              SkyProject
-            </span>
-            <span className="block text-[10px] uppercase tracking-[0.2em] opacity-60 font-mono mt-1 truncate">
-              Observatorio personal
-            </span>
-          </span>
-        </button>
-
-        {/* Navegación de escritorio */}
-        <div className="hidden md:flex items-center gap-1">
-          {ELEMENTOS_NAVEGACION.map(({ vista, etiqueta, descripcion, Icono }) => {
-            const activo = vistaActiva === vista;
-            return (
-              <button
-                key={vista}
-                type="button"
-                onClick={() => irAVista(vista)}
-                aria-current={activo ? 'page' : undefined}
-                title={descripcion}
-                className={`flex items-center gap-2 px-3 min-h-9 rounded-lg border text-sm font-medium font-display cursor-pointer transition-colors ${obtenerClaseNavActiva(
-                  tema,
-                  activo
-                )}`}
-              >
-                <Icono className="w-4 h-4" aria-hidden="true" />
-                {etiqueta}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Acceso directo a la Brújula 3D (siempre visible) */}
-          <button
-            type="button"
-            onClick={abrirBrujula}
-            aria-haspopup="dialog"
-            title="Abrir la Brújula Astronómica 3D"
-            className={`flex items-center gap-2 pl-2 pr-3 min-h-11 md:min-h-9 rounded-full border text-xs font-semibold cursor-pointer transition-colors ${obtenerClaseBotonBrujula(
-              tema
-            )}`}
-          >
-            <span
-              className="grid place-items-center w-7 h-7 rounded-full border border-current/40"
-              aria-hidden="true"
-            >
-              <Compass className="w-4 h-4 brujula-icono-animada" />
-            </span>
-            <span className="font-display">Brújula 3D</span>
-          </button>
-
-          {/* Controles de escritorio */}
-          <div className="hidden md:flex items-center gap-2">
-            {botonUbicacion}
-            {selectorTema(true)}
-          </div>
-
-          {/* Botón hamburguesa (móvil) */}
-          <button
-            type="button"
-            onClick={() => setMenuAbierto((prev) => !prev)}
-            aria-expanded={menuAbierto}
-            aria-controls={idMenu}
-            aria-label={menuAbierto ? 'Cerrar menú de navegación' : 'Abrir menú de navegación'}
-            className="md:hidden grid place-items-center min-w-11 min-h-11 rounded-lg border border-current/20 hover:bg-current/10 cursor-pointer"
-          >
-            {menuAbierto ? (
-              <X className="w-5 h-5" aria-hidden="true" />
-            ) : (
-              <Menu className="w-5 h-5" aria-hidden="true" />
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Menú desplegable móvil */}
-      <div
-        id={idMenu}
-        hidden={!menuAbierto}
-        className={`md:hidden border-t ${CLASES_MENU_MOVIL[tema]}`}
-      >
-        <div className="px-4 py-4 space-y-4">
-          <ul className="space-y-1.5">
-            {ELEMENTOS_NAVEGACION.map(({ vista, etiqueta, descripcion, Icono }) => {
-              const activo = vistaActiva === vista;
-              return (
-                <li key={vista}>
-                  <button
-                    type="button"
-                    onClick={() => irAVista(vista)}
-                    aria-current={activo ? 'page' : undefined}
-                    className={`w-full flex items-center gap-3 px-3 min-h-12 rounded-xl border text-left cursor-pointer transition-colors ${obtenerClaseNavActiva(
-                      tema,
-                      activo
-                    )}`}
-                  >
-                    <Icono className="w-5 h-5 shrink-0" aria-hidden="true" />
-                    <span className="min-w-0">
-                      <span className="block font-display font-semibold text-sm">{etiqueta}</span>
-                      <span className="block text-[11px] opacity-70 truncate">{descripcion}</span>
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          <div className="space-y-2">
-            <p className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-60">
-              Punto de observación
-            </p>
-            {botonUbicacion}
-          </div>
-          <div className="space-y-2">
-            <p className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-60">Tema visual</p>
-            {selectorTema(false)}
-          </div>
-        </div>
-      </div>
-    </nav>
   );
 }
 ````
@@ -2297,6 +1072,371 @@ export function StarfieldBackground({ tema }: Readonly<StarfieldBackgroundProps>
 }
 ````
 
+## File: src/core/__tests__/astronomy.test.ts
+````typescript
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  calcularCielo,
+  calcularEstadoSolar,
+  calcularEstrellas,
+  calcularMessier,
+  calcularTransitoCuerpo,
+  calcularTrayectoriaAstro,
+  esEntradaAstronomicaValida,
+} from '../skyCalculator';
+import { calcularProximosEventos } from '../eventsCalculator';
+import { obtenerCondicionesMeteo } from '../weatherService';
+import type { Ubicacion } from '../../types/astronomy';
+
+const VALENCIA: Ubicacion = {
+  latitud: 39.47,
+  longitud: -0.38,
+  altitud: 150,
+  nombre: 'Valencia',
+};
+
+function crearMockStorage(): Storage {
+  const almacen = new Map<string, string>();
+  return {
+    get length() {
+      return almacen.size;
+    },
+    clear() {
+      almacen.clear();
+    },
+    getItem(clave: string) {
+      return almacen.get(clave) ?? null;
+    },
+    key(indice: number) {
+      return Array.from(almacen.keys())[indice] ?? null;
+    },
+    removeItem(clave: string) {
+      almacen.delete(clave);
+    },
+    setItem(clave: string, valor: string) {
+      almacen.set(clave, valor);
+    },
+  };
+}
+
+function crearHourlySintetico(inicioUTC: Date, horas: number) {
+  const time: string[] = [];
+  const cloud_cover: number[] = [];
+  const cloud_cover_low: number[] = [];
+  const cloud_cover_mid: number[] = [];
+  const cloud_cover_high: number[] = [];
+  const relative_humidity_2m: number[] = [];
+  const wind_speed_10m: number[] = [];
+  const temperature_2m: number[] = [];
+
+  for (let i = 0; i < horas; i++) {
+    const fecha = new Date(inicioUTC.getTime() + i * 3_600_000);
+    const anio = fecha.getUTCFullYear();
+    const mes = String(fecha.getUTCMonth() + 1).padStart(2, '0');
+    const dia = String(fecha.getUTCDate()).padStart(2, '0');
+    const hora = String(fecha.getUTCHours()).padStart(2, '0');
+    time.push(`${anio}-${mes}-${dia}T${hora}:00`);
+    cloud_cover.push(10 + (i % 5) * 5);
+    cloud_cover_low.push(5);
+    cloud_cover_mid.push(10);
+    cloud_cover_high.push(15);
+    relative_humidity_2m.push(60);
+    wind_speed_10m.push(12);
+    temperature_2m.push(18.4);
+  }
+
+  return {
+    time,
+    cloud_cover,
+    cloud_cover_low,
+    cloud_cover_mid,
+    cloud_cover_high,
+    relative_humidity_2m,
+    wind_speed_10m,
+    temperature_2m,
+  };
+}
+
+describe('Validación defensiva (esEntradaAstronomicaValida)', () => {
+  const fechaValida = new Date('2026-06-15T22:00:00Z');
+
+  it('acepta fechas y coordenadas dentro de los límites exactos', () => {
+    expect(esEntradaAstronomicaValida(fechaValida, VALENCIA)).toBe(true);
+    expect(
+      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: -90, longitud: -180 })
+    ).toBe(true);
+    expect(
+      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: 90, longitud: 180 })
+    ).toBe(true);
+  });
+
+  it('rechaza fechas inválidas', () => {
+    expect(esEntradaAstronomicaValida(new Date('invalid'), VALENCIA)).toBe(false);
+  });
+
+  it('rechaza latitudes y longitudes fuera de rango', () => {
+    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: -90.01 })).toBe(false);
+    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: 90.01 })).toBe(false);
+    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, longitud: -180.01 })).toBe(false);
+    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, longitud: 180.01 })).toBe(false);
+  });
+
+  it('rechaza altitudes no finitas (NaN e Infinity)', () => {
+    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, altitud: Number.NaN })).toBe(
+      false
+    );
+    expect(
+      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, altitud: Number.POSITIVE_INFINITY })
+    ).toBe(false);
+    expect(
+      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, altitud: Number.NEGATIVE_INFINITY })
+    ).toBe(false);
+  });
+});
+
+describe('Motor astronómico (skyCalculator)', () => {
+  describe('calcularEstadoSolar', () => {
+    it('clasifica correctamente Día al mediodía y Noche astronómica de madrugada en Valencia', () => {
+      const mediodia = calcularEstadoSolar(new Date('2026-03-21T12:00:00Z'), VALENCIA);
+      expect(mediodia).not.toBeNull();
+      expect(mediodia?.fase).toBe('Día');
+      expect(mediodia?.altitudSol).toBeGreaterThan(0);
+
+      const noche = calcularEstadoSolar(new Date('2026-03-21T01:00:00Z'), VALENCIA);
+      expect(noche).not.toBeNull();
+      expect(noche?.fase).toBe('Noche astronómica');
+      expect(noche?.altitudSol).toBeLessThan(-18);
+    });
+
+    it('clasifica crepúsculo civil/náutico/astronómico tras la puesta de sol', () => {
+      const fasesCrepusculo = new Set([
+        'Crepúsculo civil',
+        'Crepúsculo náutico',
+        'Crepúsculo astronómico',
+      ]);
+      const atardecer = calcularEstadoSolar(new Date('2026-03-21T18:45:00Z'), VALENCIA);
+      expect(atardecer).not.toBeNull();
+      expect(fasesCrepusculo.has(atardecer?.fase ?? '')).toBe(true);
+    });
+
+    it('devuelve null ante entradas inválidas', () => {
+      expect(calcularEstadoSolar(new Date('invalid'), VALENCIA)).toBeNull();
+      expect(
+        calcularEstadoSolar(new Date('2026-03-21T12:00:00Z'), { ...VALENCIA, latitud: 95 })
+      ).toBeNull();
+    });
+  });
+
+  describe('calcularCielo', () => {
+    it('devuelve los 8 cuerpos ordenados descendentemente por altitud con fase lunar solo en la Luna', () => {
+      const cuerpos = calcularCielo(new Date('2026-03-21T22:00:00Z'), VALENCIA);
+      expect(cuerpos).toHaveLength(8);
+
+      for (let i = 1; i < cuerpos.length; i++) {
+        expect(cuerpos[i - 1].altitud).toBeGreaterThanOrEqual(cuerpos[i].altitud);
+      }
+
+      const luna = cuerpos.find((c) => c.tipo === 'luna');
+      expect(luna).toBeDefined();
+      expect(luna?.faseLunar).toBeDefined();
+      expect(luna?.anguloFase).toBeTypeOf('number');
+
+      const planetas = cuerpos.filter((c) => c.tipo === 'planeta');
+      expect(planetas).toHaveLength(7);
+      for (const planeta of planetas) {
+        expect(planeta.faseLunar).toBeUndefined();
+        expect(planeta.anguloFase).toBeUndefined();
+      }
+    });
+  });
+
+  describe('calcularEstrellas y calcularMessier', () => {
+    it('aplica precesión J2000 situando a Polaris cerca de la latitud del observador en el hemisferio norte', () => {
+      const fecha = new Date('2026-03-21T22:00:00Z');
+      const estrellas = calcularEstrellas(fecha, VALENCIA);
+      const polaris = estrellas.find((e) => e.id === 'polaris');
+
+      expect(polaris).toBeDefined();
+      expect(Math.abs((polaris?.altitud ?? 0) - VALENCIA.latitud)).toBeLessThan(1.5);
+    });
+
+    it('aplica umbral de visibilidad > 0° en estrellas y > 10° en objetos Messier', () => {
+      const fecha = new Date('2026-03-21T22:00:00Z');
+      const estrellas = calcularEstrellas(fecha, VALENCIA);
+      const messier = calcularMessier(fecha, VALENCIA);
+
+      expect(estrellas.length).toBeGreaterThan(0);
+      for (const estrella of estrellas) {
+        if (estrella.altitud > 0.1) expect(estrella.visible).toBe(true);
+        if (estrella.altitud < -0.1) expect(estrella.visible).toBe(false);
+      }
+
+      expect(messier.length).toBeGreaterThan(0);
+      for (const obj of messier) {
+        if (obj.altitud > 10.1) expect(obj.visible).toBe(true);
+        if (obj.altitud < 9.9) expect(obj.visible).toBe(false);
+      }
+    });
+  });
+
+  describe('calcularTrayectoriaAstro y calcularTransitoCuerpo', () => {
+    const fecha = new Date('2026-03-21T22:00:00Z');
+
+    it('devuelve 25 puntos (-6h a +6h cada 30 min) para cuerpo, estrella y objeto Messier válidos', () => {
+      const trajLuna = calcularTrayectoriaAstro(
+        { id: 'Moon', nombre: 'Luna', categoria: 'cuerpo' },
+        fecha,
+        VALENCIA
+      );
+      const trajSirio = calcularTrayectoriaAstro(
+        { id: 'sirius', nombre: 'Sirio', categoria: 'estrella' },
+        fecha,
+        VALENCIA
+      );
+      const trajM31 = calcularTrayectoriaAstro(
+        { id: 'M31', nombre: 'M31 · Galaxia de Andrómeda', categoria: 'messier' },
+        fecha,
+        VALENCIA
+      );
+
+      expect(trajLuna).toHaveLength(25);
+      expect(trajSirio).toHaveLength(25);
+      expect(trajM31).toHaveLength(25);
+    });
+
+    it('devuelve array vacío para IDs inexistentes y tránsito vacío para cuerpos inexistentes', () => {
+      expect(
+        calcularTrayectoriaAstro(
+          { id: 'PlutonInexistente', nombre: 'Inexistente', categoria: 'cuerpo' },
+          fecha,
+          VALENCIA
+        )
+      ).toEqual([]);
+
+      expect(
+        calcularTrayectoriaAstro(
+          { id: 'estrella-falsa', nombre: 'Falsa', categoria: 'estrella' },
+          fecha,
+          VALENCIA
+        )
+      ).toEqual([]);
+
+      const transitoInvalido = calcularTransitoCuerpo('NoExiste', fecha, VALENCIA);
+      expect(transitoInvalido).toEqual({
+        salida: null,
+        culminacion: null,
+        puesta: null,
+        alturaMaxima: null,
+      });
+    });
+
+    it('calcula efemérides de tránsito válidas para un cuerpo existente', () => {
+      const transito = calcularTransitoCuerpo('Moon', fecha, VALENCIA);
+      expect(transito.culminacion).toBeInstanceOf(Date);
+      expect(transito.alturaMaxima).toBeTypeOf('number');
+    });
+  });
+});
+
+describe('Eventos astronómicos (eventsCalculator)', () => {
+  it('devuelve como máximo 6 eventos ordenados cronológicamente con diasRestantes >= 0', () => {
+    const fechaBase = new Date('2026-03-21T12:00:00Z');
+    const eventos = calcularProximosEventos(fechaBase, VALENCIA);
+
+    expect(eventos.length).toBeGreaterThan(0);
+    expect(eventos.length).toBeLessThanOrEqual(6);
+
+    for (let i = 0; i < eventos.length; i++) {
+      expect(eventos[i].diasRestantes).toBeGreaterThanOrEqual(0);
+      if (i > 0) {
+        expect(eventos[i].fechaPico.getTime()).toBeGreaterThanOrEqual(
+          eventos[i - 1].fechaPico.getTime()
+        );
+      }
+    }
+  });
+
+  it('diferencia eclipses lunares penumbrales frente a eclipses totales o parciales', () => {
+    // 25 de marzo de 2024: eclipse lunar penumbral
+    const eventosPenumbral = calcularProximosEventos(new Date('2024-03-20T12:00:00Z'), VALENCIA);
+    const eclipsePenumbral = eventosPenumbral.find((ev) => ev.titulo.includes('Eclipse Lunar'));
+    expect(eclipsePenumbral).toBeDefined();
+    expect(eclipsePenumbral?.titulo).toBe('Eclipse Lunar Penumbral');
+    expect(eclipsePenumbral?.resumen).toBe('Eclipse penumbral (oscurecimiento sutil)');
+
+    // 14 de marzo de 2025: eclipse lunar total
+    const eventosTotal = calcularProximosEventos(new Date('2025-03-01T12:00:00Z'), VALENCIA);
+    const eclipseTotal = eventosTotal.find((ev) => ev.titulo.includes('Eclipse Lunar'));
+    expect(eclipseTotal).toBeDefined();
+    expect(eclipseTotal?.titulo).toBe('Eclipse Lunar Total');
+    expect(eclipseTotal?.resumen).toMatch(/^Oscurecimiento: \d+%$/);
+  });
+});
+
+describe('Servicio meteorológico (weatherService)', () => {
+  let mockStorage: Storage;
+
+  beforeEach(() => {
+    mockStorage = crearMockStorage();
+    vi.stubGlobal('localStorage', mockStorage);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('usa la caché válida de localStorage sin invocar fetch y genera 12 franjas en proximasHoras', async () => {
+    const fechaUTC = new Date('2026-06-15T20:00:00Z');
+    const hourly = crearHourlySintetico(fechaUTC, 24);
+    mockStorage.setItem(
+      'skyproject_meteo_cache_v2',
+      JSON.stringify({
+        claveUbicacion: '39.47,-0.38',
+        timestamp: Date.now(),
+        hourly,
+      })
+    );
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resultado = await obtenerCondicionesMeteo(fechaUTC, VALENCIA);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(resultado.aviso).toBeNull();
+    expect(resultado.datos).not.toBeNull();
+    expect(resultado.datos?.esCache).toBe(true);
+    expect(resultado.datos?.horaPronostico).toBe('2026-06-15 20:00 UTC');
+    expect(resultado.datos?.proximasHoras).toHaveLength(12);
+    expect(resultado.datos?.proximasHoras[0].fechaISO).toBe('2026-06-15T20:00:00Z');
+  });
+
+  it('se recupera de forma segura ante JSON corrupto en localStorage y consulta Open-Meteo en UTC', async () => {
+    const fechaUTC = new Date('2026-06-15T21:00:00Z');
+    const hourly = crearHourlySintetico(fechaUTC, 18);
+    mockStorage.setItem('skyproject_meteo_cache_v2', '{json-corrupto');
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ hourly }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resultado = await obtenerCondicionesMeteo(fechaUTC, VALENCIA);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const urlLlamada = String(fetchMock.mock.calls[0][0]);
+    expect(urlLlamada).toContain('timezone=UTC');
+    expect(resultado.aviso).toBeNull();
+    expect(resultado.datos).not.toBeNull();
+    expect(resultado.datos?.esCache).toBe(false);
+    expect(resultado.datos?.horaPronostico).toBe('2026-06-15 21:00 UTC');
+    expect(resultado.datos?.proximasHoras).toHaveLength(12);
+  });
+});
+````
+
 ## File: src/data/brightStars.ts
 ````typescript
 import type { EstrellaCatalogo, LineaConstelacion } from '../types/astronomy';
@@ -2486,128 +1626,1297 @@ export default defineConfig({
 </svg>
 ````
 
-## File: src/core/eventsCalculator.ts
+## File: src/components/Compass3DModal.tsx
 ````typescript
-import * as Astronomy from 'astronomy-engine';
-import type { EventoCeleste, Ubicacion } from '../types/astronomy';
-import { LLUVIAS_ESTRELLAS } from '../data/meteorShowers';
-import { esEntradaAstronomicaValida } from './skyCalculator';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent as EventoTecladoReact, PointerEvent as EventoPunteroReact } from 'react';
+import { Compass, Hand, Navigation, Smartphone, Target, X } from 'lucide-react';
+import type {
+  ConstructorOrientacionConPermiso,
+  CuerpoCeleste,
+  EstadoSensorBrujula,
+  EventoOrientacionDispositivo,
+  ObjetivoBrujula,
+  OrientacionBrujula,
+  TemaVisual,
+} from '../types/astronomy';
 
-const NOMBRES_ECLIPSE: Record<string, string> = {
-  Total: 'Total',
-  Partial: 'Parcial',
-  Annular: 'Anular',
-  Penumbra: 'Penumbral',
+interface Compass3DModalProps {
+  tema: TemaVisual;
+  cuerpos: CuerpoCeleste[];
+  objetivoSeleccionado?: ObjetivoBrujula | null;
+  onCerrar: () => void;
+}
+
+/* ── Utilidades angulares ─────────────────────────────────────────── */
+
+function normalizarAngulo(angulo: number): number {
+  return ((angulo % 360) + 360) % 360;
+}
+
+/** Diferencia por el camino más corto en el círculo, en el rango [-180, 180). */
+function diferenciaAngular(destino: number, origen: number): number {
+  return ((((destino - origen) % 360) + 540) % 360) - 180;
+}
+
+function limitar(valor: number, minimo: number, maximo: number): number {
+  return Math.min(maximo, Math.max(minimo, valor));
+}
+
+const DIRECCIONES = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'] as const;
+
+function direccionCardinal(rumbo: number): string {
+  return DIRECCIONES[Math.round(normalizarAngulo(rumbo) / 45) % 8];
+}
+
+function puntoPolar(angulo: number, radio: number): { x: number; y: number } {
+  const rad = (angulo * Math.PI) / 180;
+  return { x: CENTRO + Math.sin(rad) * radio, y: CENTRO - Math.cos(rad) * radio };
+}
+
+/* ── Geometría estática del disco (viewBox -20 -20 440 440) ──────── */
+
+const CENTRO = 200;
+const RADIO_ESFERA = 196;
+const RADIO_MARCADORES = 187;
+const RADIO_MARCAS = 175;
+const MARGEN_ALINEACION = 8;
+const INCLINACION_VISUAL_MAX = 65;
+
+interface MarcaGraduacion {
+  angulo: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  tipo: 'menor' | 'media' | 'mayor';
+}
+
+const MARCAS: MarcaGraduacion[] = Array.from({ length: 72 }, (_, i) => {
+  const angulo = i * 5;
+  const tipo: MarcaGraduacion['tipo'] = angulo % 45 === 0 ? 'mayor' : angulo % 15 === 0 ? 'media' : 'menor';
+  const largo = tipo === 'mayor' ? 16 : tipo === 'media' ? 11 : 5;
+  const exterior = puntoPolar(angulo, RADIO_MARCAS);
+  const interior = puntoPolar(angulo, RADIO_MARCAS - largo);
+  return { angulo, x1: exterior.x, y1: exterior.y, x2: interior.x, y2: interior.y, tipo };
+});
+
+interface EtiquetaDisco {
+  angulo: number;
+  texto: string;
+  x: number;
+  y: number;
+  tipo: 'cardinal' | 'intercardinal' | 'grado';
+}
+
+const ETIQUETAS: EtiquetaDisco[] = Array.from({ length: 24 }, (_, i) => {
+  const angulo = i * 15;
+  if (angulo % 90 === 0) {
+    const p = puntoPolar(angulo, 141);
+    return { angulo, texto: DIRECCIONES[angulo / 45], ...p, tipo: 'cardinal' as const };
+  }
+  if (angulo % 45 === 0) {
+    const p = puntoPolar(angulo, 143);
+    return { angulo, texto: DIRECCIONES[angulo / 45], ...p, tipo: 'intercardinal' as const };
+  }
+  const p = puntoPolar(angulo, 145);
+  return { angulo, texto: String(angulo), ...p, tipo: 'grado' as const };
+});
+
+/* ── Paletas por tema (Filtro Rojo: solo rojos sobre negro puro) ── */
+
+interface PaletaBrujula {
+  esfera: string;
+  esferaBorde: string;
+  capa: string;
+  marcaMenor: string;
+  marcaMayor: string;
+  texto: string;
+  textoSuave: string;
+  acento: string;
+  norte: string;
+  sur: string;
+  aro: string;
+  marcadorFijo: string | null;
+  claseBackdrop: string;
+  clasePanel: string;
+  claseAcento: string;
+  claseLectura: string;
+  claseBotonPrimario: string;
+  claseAviso: string;
+  claseEstadoOk: string;
+  claseEstadoAviso: string;
+}
+
+const PALETAS: Record<TemaVisual, PaletaBrujula> = {
+  oscuro: {
+    esfera: 'rgba(2,6,23,0.9)',
+    esferaBorde: 'rgba(34,211,238,0.5)',
+    capa: 'rgba(15,23,42,0.95)',
+    marcaMenor: 'rgba(148,163,184,0.55)',
+    marcaMayor: '#e2e8f0',
+    texto: '#e2e8f0',
+    textoSuave: '#94a3b8',
+    acento: '#22d3ee',
+    norte: '#f43f5e',
+    sur: '#64748b',
+    aro: 'rgba(34,211,238,0.3)',
+    marcadorFijo: null,
+    claseBackdrop: 'bg-slate-950/65',
+    clasePanel: 'bg-slate-950/90 border-cyan-400/25 text-slate-100 shadow-2xl shadow-black/60',
+    claseAcento: 'text-cyan-300',
+    claseLectura: 'bg-slate-950/90 border-cyan-400/40 text-slate-50',
+    claseBotonPrimario: 'bg-cyan-500/15 border-cyan-400/50 text-cyan-100 hover:bg-cyan-500/25',
+    claseAviso: 'border-cyan-400/50 bg-cyan-500/10 text-cyan-100',
+    claseEstadoOk: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
+    claseEstadoAviso: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
+  },
+  claro: {
+    esfera: 'rgba(248,250,252,0.96)',
+    esferaBorde: '#334155',
+    capa: '#cbd5e1',
+    marcaMenor: '#94a3b8',
+    marcaMayor: '#0f172a',
+    texto: '#0f172a',
+    textoSuave: '#475569',
+    acento: '#0369a1',
+    norte: '#e11d48',
+    sur: '#94a3b8',
+    aro: 'rgba(51,65,85,0.28)',
+    marcadorFijo: null,
+    claseBackdrop: 'bg-slate-900/40',
+    clasePanel: 'bg-white/95 border-slate-200 text-slate-900 shadow-2xl shadow-slate-900/20',
+    claseAcento: 'text-sky-700',
+    claseLectura: 'bg-white/95 border-slate-300 text-slate-900',
+    claseBotonPrimario: 'bg-slate-900 border-slate-900 text-white hover:bg-slate-800',
+    claseAviso: 'border-sky-600/50 bg-sky-50 text-sky-900',
+    claseEstadoOk: 'border-emerald-300 bg-emerald-50 text-emerald-800',
+    claseEstadoAviso: 'border-amber-300 bg-amber-50 text-amber-900',
+  },
+  rojo: {
+    esfera: '#000000',
+    esferaBorde: '#991b1b',
+    capa: '#450a0a',
+    marcaMenor: '#7f1d1d',
+    marcaMayor: '#dc2626',
+    texto: '#ef4444',
+    textoSuave: '#b91c1c',
+    acento: '#ef4444',
+    norte: '#f87171',
+    sur: '#7f1d1d',
+    aro: 'rgba(153,27,27,0.55)',
+    marcadorFijo: '#b91c1c',
+    claseBackdrop: 'bg-black/90',
+    clasePanel: 'bg-black border-red-800 text-red-500',
+    claseAcento: 'text-red-500',
+    claseLectura: 'bg-black border-red-700 text-red-500',
+    claseBotonPrimario: 'bg-red-950 border-red-600 text-red-400 hover:bg-red-900/60',
+    claseAviso: 'border-red-600 bg-red-950/60 text-red-400',
+    claseEstadoOk: 'border-red-700 bg-red-950/50 text-red-400',
+    claseEstadoAviso: 'border-red-900 bg-black text-red-600',
+  },
 };
 
-function calcularDiasRestantes(desde: Date, hasta: Date): number {
-  const inicioDia = new Date(desde.getFullYear(), desde.getMonth(), desde.getDate()).getTime();
-  const finDia = new Date(hasta.getFullYear(), hasta.getMonth(), hasta.getDate()).getTime();
-  return Math.round((finDia - inicioDia) / (1000 * 60 * 60 * 24));
+const MENSAJES_ESTADO: Record<EstadoSensorBrujula, string> = {
+  inactivo: 'Sensores en espera: pulsa «Activar sensores del dispositivo».',
+  solicitando: 'Solicitando permiso de orientación…',
+  buscando: 'Buscando lecturas del magnetómetro…',
+  activo: 'Sensores activos: la brújula sigue a tu dispositivo.',
+  denegado: 'Permiso denegado. Puedes seguir en modo simulación.',
+  'no-disponible': 'Este equipo no dispone de sensores de orientación. Modo simulación activo.',
+  inseguro: 'Los sensores requieren una conexión segura (HTTPS). Modo simulación activo.',
+  'sin-lecturas': 'No se reciben lecturas del sensor en este equipo. Modo simulación activo.',
+};
+
+/** Determina el estado inicial de los sensores sin efectos secundarios. */
+function detectarEstadoInicial(): EstadoSensorBrujula {
+  if (typeof window === 'undefined' || typeof DeviceOrientationEvent === 'undefined') {
+    return 'no-disponible';
+  }
+  if (!window.isSecureContext) return 'inseguro';
+  const constructor = DeviceOrientationEvent as unknown as ConstructorOrientacionConPermiso;
+  return typeof constructor.requestPermission === 'function' ? 'inactivo' : 'buscando';
 }
 
-function obtenerProximasLluvias(fechaBase: Date): EventoCeleste[] {
-  const anioActual = fechaBase.getFullYear();
+function prefiereMovimientoReducido(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
 
-  return LLUVIAS_ESTRELLAS.map((lluvia) => {
-    let fechaPico = new Date(anioActual, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
-    if (calcularDiasRestantes(fechaBase, fechaPico) < 0) {
-      fechaPico = new Date(anioActual + 1, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
+function etiquetaMarcador(nombre: string): string {
+  const token = nombre.split(' ')[0];
+  if (/^M\d+$/i.test(token)) return token.slice(0, 3);
+  return nombre.slice(0, 2);
+}
+
+const SELECTOR_ENFOCABLES =
+  'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+export function Compass3DModal({
+  tema,
+  cuerpos,
+  objetivoSeleccionado = null,
+  onCerrar,
+}: Compass3DModalProps) {
+  const paleta = PALETAS[tema];
+  const idTitulo = useId();
+  const idDescripcion = useId();
+
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const botonCerrarRef = useRef<HTMLButtonElement | null>(null);
+  const discoRef = useRef<HTMLDivElement | null>(null);
+
+  const [estadoSensor, setEstadoSensor] = useState<EstadoSensorBrujula>(detectarEstadoInicial);
+  const [referenciaSensor, setReferenciaSensor] = useState<'absoluta' | 'relativa' | null>(null);
+  const [intentoSensor, setIntentoSensor] = useState(0);
+  const [modoManual, setModoManual] = useState(false);
+  const [rumboManual, setRumboManual] = useState(0);
+  const [inclinacionManual, setInclinacionManual] = useState(25);
+  const [visual, setVisual] = useState<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
+  const [movimientoReducido] = useState(prefiereMovimientoReducido);
+
+  const objetivoRef = useRef<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
+  const visualRef = useRef<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
+  const animacionIdRef = useRef<number>(0);
+  const simulacionRef = useRef(true);
+  const lecturaRecibidaRef = useRef(false);
+  const lecturaAbsolutaRef = useRef(false);
+  const referenciaRef = useRef<'absoluta' | 'relativa' | null>(null);
+  const arrastreRef = useRef<{ idPuntero: number; anguloPrevio: number } | null>(null);
+
+  const simulacion = modoManual || estadoSensor !== 'activo';
+  const escuchando =
+    estadoSensor === 'buscando' || estadoSensor === 'activo' || estadoSensor === 'sin-lecturas';
+
+  // Referencia estable al callback de cierre (evita reiniciar el foco en cada render del padre)
+  const onCerrarRef = useRef(onCerrar);
+  useEffect(() => {
+    onCerrarRef.current = onCerrar;
+  }, [onCerrar]);
+
+  /* Bloqueo de scroll, foco inicial, Escape y trampa de foco */
+  useEffect(() => {
+    const elementoPrevio = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overflowPrevio = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    botonCerrarRef.current?.focus();
+
+    const manejarTecla = (evento: globalThis.KeyboardEvent) => {
+      if (evento.key === 'Escape') {
+        evento.preventDefault();
+        onCerrarRef.current();
+        return;
+      }
+      if (evento.key !== 'Tab' || !panelRef.current) return;
+      const enfocables = Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>(SELECTOR_ENFOCABLES)
+      ).filter((el) => !el.hasAttribute('hidden'));
+      if (enfocables.length === 0) return;
+      const primero = enfocables[0];
+      const ultimo = enfocables[enfocables.length - 1];
+      if (evento.shiftKey && document.activeElement === primero) {
+        evento.preventDefault();
+        ultimo.focus();
+      } else if (!evento.shiftKey && document.activeElement === ultimo) {
+        evento.preventDefault();
+        primero.focus();
+      }
+    };
+
+    document.addEventListener('keydown', manejarTecla);
+    return () => {
+      document.removeEventListener('keydown', manejarTecla);
+      document.body.style.overflow = overflowPrevio;
+      elementoPrevio?.focus();
+    };
+  }, []);
+
+  /* Suavizado angular bajo demanda (camino más corto, sin bucle activo en reposo) */
+  const programarSuavizado = useCallback(() => {
+    if (animacionIdRef.current !== 0) return;
+    const factor = movimientoReducido ? 0.45 : 0.16;
+
+    const paso = () => {
+      const objetivo = objetivoRef.current;
+      const actual = visualRef.current;
+      const difRumbo = diferenciaAngular(objetivo.rumbo, actual.rumbo);
+      const difInclinacion = objetivo.inclinacion - actual.inclinacion;
+
+      if (Math.abs(difRumbo) < 0.05 && Math.abs(difInclinacion) < 0.05) {
+        if (actual.rumbo !== objetivo.rumbo || actual.inclinacion !== objetivo.inclinacion) {
+          const exacto = { rumbo: objetivo.rumbo, inclinacion: objetivo.inclinacion };
+          visualRef.current = exacto;
+          setVisual(exacto);
+        }
+        animacionIdRef.current = 0;
+        return;
+      }
+
+      const rumbo =
+        Math.abs(difRumbo) < 0.05
+          ? objetivo.rumbo
+          : normalizarAngulo(actual.rumbo + difRumbo * factor);
+      const inclinacion =
+        Math.abs(difInclinacion) < 0.05
+          ? objetivo.inclinacion
+          : actual.inclinacion + difInclinacion * factor;
+
+      const siguiente = { rumbo, inclinacion };
+      visualRef.current = siguiente;
+      setVisual(siguiente);
+      animacionIdRef.current = window.requestAnimationFrame(paso);
+    };
+
+    animacionIdRef.current = window.requestAnimationFrame(paso);
+  }, [movimientoReducido]);
+
+  useEffect(() => {
+    return () => {
+      if (animacionIdRef.current !== 0) {
+        window.cancelAnimationFrame(animacionIdRef.current);
+        animacionIdRef.current = 0;
+      }
+    };
+  }, []);
+
+  /* Sincroniza el objetivo con los controles manuales en modo simulación */
+  useEffect(() => {
+    simulacionRef.current = simulacion;
+    if (simulacion) {
+      objetivoRef.current = { rumbo: normalizarAngulo(rumboManual), inclinacion: inclinacionManual };
+      programarSuavizado();
+    }
+  }, [simulacion, rumboManual, inclinacionManual, programarSuavizado]);
+
+  /* Escucha de sensores: deviceorientationabsolute (prioritario) + deviceorientation */
+  useEffect(() => {
+    if (!escuchando || typeof DeviceOrientationEvent === 'undefined') return;
+
+    const procesarOrientacion = (evento: Event) => {
+      if (!(evento instanceof DeviceOrientationEvent)) return;
+      const datos = evento as EventoOrientacionDispositivo;
+      let rumbo: number | null = null;
+      let absoluta = false;
+
+      if (typeof datos.webkitCompassHeading === 'number' && Number.isFinite(datos.webkitCompassHeading)) {
+        // Safari iOS: rumbo magnético ya referido al Norte
+        rumbo = normalizarAngulo(datos.webkitCompassHeading);
+        absoluta = true;
+      } else if (datos.alpha !== null && Number.isFinite(datos.alpha)) {
+        absoluta = evento.type === 'deviceorientationabsolute' || datos.absolute;
+        // Si ya llegan lecturas absolutas, se descartan las relativas
+        if (!absoluta && lecturaAbsolutaRef.current) return;
+        rumbo = normalizarAngulo(360 - datos.alpha);
+      }
+
+      if (rumbo === null) return;
+      if (absoluta) lecturaAbsolutaRef.current = true;
+
+      const inclinacion =
+        datos.beta !== null && Number.isFinite(datos.beta) ? limitar(datos.beta, -90, 90) : 0;
+
+      if (!simulacionRef.current) {
+        objetivoRef.current = { rumbo, inclinacion };
+        programarSuavizado();
+      }
+
+      const referencia = absoluta ? 'absoluta' : 'relativa';
+      if (referenciaRef.current !== referencia) {
+        referenciaRef.current = referencia;
+        setReferenciaSensor(referencia);
+      }
+      if (!lecturaRecibidaRef.current) {
+        lecturaRecibidaRef.current = true;
+        setEstadoSensor('activo');
+      }
+    };
+
+    const admiteAbsoluto = 'ondeviceorientationabsolute' in window;
+    if (admiteAbsoluto) {
+      window.addEventListener('deviceorientationabsolute', procesarOrientacion);
+    }
+    window.addEventListener('deviceorientation', procesarOrientacion);
+
+    const temporizador = window.setTimeout(() => {
+      if (!lecturaRecibidaRef.current) {
+        setEstadoSensor((prev) => (prev === 'buscando' ? 'sin-lecturas' : prev));
+      }
+    }, 2500);
+
+    return () => {
+      window.clearTimeout(temporizador);
+      if (admiteAbsoluto) {
+        window.removeEventListener('deviceorientationabsolute', procesarOrientacion);
+      }
+      window.removeEventListener('deviceorientation', procesarOrientacion);
+    };
+  }, [escuchando, intentoSensor, programarSuavizado]);
+
+  const activarSensores = async () => {
+    if (typeof DeviceOrientationEvent === 'undefined') {
+      setEstadoSensor('no-disponible');
+      return;
+    }
+    if (!window.isSecureContext) {
+      setEstadoSensor('inseguro');
+      return;
+    }
+    const constructor = DeviceOrientationEvent as unknown as ConstructorOrientacionConPermiso;
+    if (typeof constructor.requestPermission === 'function') {
+      setEstadoSensor('solicitando');
+      try {
+        const respuesta = await constructor.requestPermission();
+        if (respuesta !== 'granted') {
+          setEstadoSensor('denegado');
+          return;
+        }
+      } catch {
+        setEstadoSensor('denegado');
+        return;
+      }
+    }
+    lecturaRecibidaRef.current = false;
+    lecturaAbsolutaRef.current = false;
+    setModoManual(false);
+    setEstadoSensor('buscando');
+    setIntentoSensor((prev) => prev + 1);
+  };
+
+  const pasarAModoManual = () => {
+    setRumboManual(Math.round(visualRef.current.rumbo));
+    setInclinacionManual(Math.round(limitar(visualRef.current.inclinacion, -60, 60)));
+    setModoManual(true);
+  };
+
+  /* Arrastre sobre la brújula (ratón o dedo) */
+  const anguloDesdePuntero = (clienteX: number, clienteY: number): number | null => {
+    const elemento = discoRef.current;
+    if (!elemento) return null;
+    const rect = elemento.getBoundingClientRect();
+    const dx = clienteX - (rect.left + rect.width / 2);
+    const dy = clienteY - (rect.top + rect.height / 2);
+    if (Math.hypot(dx, dy) < 8) return null;
+    return normalizarAngulo((Math.atan2(dx, -dy) * 180) / Math.PI);
+  };
+
+  const manejarPunteroAbajo = (evento: EventoPunteroReact<HTMLDivElement>) => {
+    const angulo = anguloDesdePuntero(evento.clientX, evento.clientY);
+    if (angulo === null) return;
+    evento.currentTarget.setPointerCapture(evento.pointerId);
+    arrastreRef.current = { idPuntero: evento.pointerId, anguloPrevio: angulo };
+    if (!simulacion) pasarAModoManual();
+    else setModoManual(true);
+  };
+
+  const manejarPunteroMovido = (evento: EventoPunteroReact<HTMLDivElement>) => {
+    const arrastre = arrastreRef.current;
+    if (!arrastre || arrastre.idPuntero !== evento.pointerId) return;
+    const angulo = anguloDesdePuntero(evento.clientX, evento.clientY);
+    if (angulo === null) return;
+    const delta = diferenciaAngular(angulo, arrastre.anguloPrevio);
+    arrastre.anguloPrevio = angulo;
+    // Girar el disco en sentido horario equivale a reducir el rumbo
+    setRumboManual((prev) => normalizarAngulo(prev - delta));
+  };
+
+  const finalizarArrastre = (evento: EventoPunteroReact<HTMLDivElement>) => {
+    if (arrastreRef.current?.idPuntero === evento.pointerId) {
+      arrastreRef.current = null;
+    }
+  };
+
+  const manejarTeclaDisco = (evento: EventoTecladoReact<HTMLDivElement>) => {
+    const paso = evento.shiftKey ? 15 : 1;
+    let delta = 0;
+    if (evento.key === 'ArrowRight' || evento.key === 'ArrowUp') delta = paso;
+    else if (evento.key === 'ArrowLeft' || evento.key === 'ArrowDown') delta = -paso;
+    else return;
+    evento.preventDefault();
+    if (!simulacion) {
+      setRumboManual(normalizarAngulo(Math.round(visualRef.current.rumbo) + delta));
+      setModoManual(true);
+      return;
+    }
+    setModoManual(true);
+    setRumboManual((prev) => normalizarAngulo(Math.round(prev) + delta));
+  };
+
+  /* Datos derivados */
+  const rumboEntero = Math.round(visual.rumbo) % 360;
+  const cardinal = direccionCardinal(visual.rumbo);
+  const inclinacionEntera = Math.round(visual.inclinacion);
+  const inclinacionVisual = limitar(visual.inclinacion, -INCLINACION_VISUAL_MAX, INCLINACION_VISUAL_MAX);
+
+  const objetivosVisibles = useMemo<ObjetivoBrujula[]>(() => {
+    const lista: ObjetivoBrujula[] = cuerpos
+      .filter((c) => c.altitud > 0 && Number.isFinite(c.acimut))
+      .map((c) => ({
+        id: c.id,
+        nombre: c.nombre,
+        acimut: c.acimut,
+        altitud: c.altitud,
+        color: c.color,
+      }));
+
+    if (
+      objetivoSeleccionado &&
+      objetivoSeleccionado.altitud > 0 &&
+      Number.isFinite(objetivoSeleccionado.acimut) &&
+      !lista.some((item) => item.id === objetivoSeleccionado.id)
+    ) {
+      lista.unshift(objetivoSeleccionado);
     }
 
-    return {
-      id: `lluvia-${lluvia.id}-${fechaPico.getFullYear()}`,
-      titulo: lluvia.nombre,
-      tipo: 'lluvia' as const,
-      fechaPico,
-      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
-      resumen: `Máximo ~${lluvia.thz} meteoros/h`,
-      detalle: `Radiante: Const. ${lluvia.radiante}`,
-    };
-  });
+    return lista;
+  }, [cuerpos, objetivoSeleccionado]);
+
+  let alineado: ObjetivoBrujula | null = null;
+  let mejorDiferencia = Number.POSITIVE_INFINITY;
+  for (const objetivo of objetivosVisibles) {
+    const dif = Math.abs(diferenciaAngular(objetivo.acimut, visual.rumbo));
+    if (dif <= MARGEN_ALINEACION && dif < mejorDiferencia) {
+      mejorDiferencia = dif;
+      alineado = objetivo;
+    }
+  }
+
+  const mostrarBotonActivar =
+    estadoSensor === 'inactivo' || estadoSensor === 'denegado' || estadoSensor === 'sin-lecturas';
+  const estadoCorrecto = estadoSensor === 'activo';
+  const mensajeEstado =
+    estadoSensor === 'activo' && referenciaSensor === 'relativa'
+      ? 'Sensores activos (orientación relativa: el Norte puede no ser exacto en este navegador).'
+      : MENSAJES_ESTADO[estadoSensor];
+
+  return (
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 backdrop-blur-md ${paleta.claseBackdrop}`}
+      onPointerDown={(evento) => {
+        if (evento.target === evento.currentTarget) onCerrar();
+      }}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={idTitulo}
+        aria-describedby={idDescripcion}
+        className={`hud-esquinas hud-${tema} relative w-full max-w-xl max-h-[94dvh] overflow-y-auto overscroll-contain rounded-3xl border p-4 sm:p-6 ${paleta.clasePanel}`}
+      >
+        {/* Cabecera */}
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className={`text-[10px] uppercase tracking-[0.25em] font-mono ${paleta.claseAcento}`}>
+              Instrumento de orientación
+            </p>
+            <h2 id={idTitulo} className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2">
+              <Compass className={`w-5 h-5 ${paleta.claseAcento}`} aria-hidden="true" />
+              Brújula Astronómica 3D
+            </h2>
+            <p id={idDescripcion} className="text-xs opacity-75 mt-1">
+              Gira con tu dispositivo o arrastra el disco. Los marcadores del anillo exterior son la
+              Luna, los planetas y el astro seleccionado sobre el horizonte.
+            </p>
+          </div>
+          <button
+            ref={botonCerrarRef}
+            type="button"
+            onClick={onCerrar}
+            aria-label="Cerrar la brújula"
+            className="grid place-items-center min-w-11 min-h-11 rounded-xl border border-current/25 hover:bg-current/10 cursor-pointer shrink-0"
+          >
+            <X className="w-5 h-5" aria-hidden="true" />
+          </button>
+        </div>
+
+        {/* Brújula 3D */}
+        <div className="relative mx-auto mt-4 w-[min(80vw,22rem)] aspect-square select-none">
+          <div
+            ref={discoRef}
+            role="slider"
+            tabIndex={0}
+            aria-label="Rumbo de la brújula"
+            aria-valuemin={0}
+            aria-valuemax={359}
+            aria-valuenow={rumboEntero}
+            aria-valuetext={`${rumboEntero} grados, ${cardinal}`}
+            onPointerDown={manejarPunteroAbajo}
+            onPointerMove={manejarPunteroMovido}
+            onPointerUp={finalizarArrastre}
+            onPointerCancel={finalizarArrastre}
+            onKeyDown={manejarTeclaDisco}
+            className="absolute inset-0 rounded-full cursor-grab active:cursor-grabbing focus-visible:outline-2 focus-visible:outline-offset-4"
+            style={{ perspective: '1000px', touchAction: 'none' }}
+          >
+            <div
+              className="relative w-full h-full"
+              style={{
+                transformStyle: 'preserve-3d',
+                transform: `rotateX(${inclinacionVisual}deg)`,
+              }}
+            >
+              {/* Grosor del instrumento (capas inferiores) */}
+              {[-18, -12, -6].map((z) => (
+                <div
+                  key={z}
+                  aria-hidden="true"
+                  className="absolute inset-[3%] rounded-full"
+                  style={{
+                    transform: `translateZ(${z}px)`,
+                    backgroundColor: paleta.capa,
+                    border: `1px solid ${paleta.esferaBorde}`,
+                    opacity: 0.85,
+                  }}
+                />
+              ))}
+
+              {/* Disco giratorio (SVG) */}
+              <svg
+                viewBox="-20 -20 440 440"
+                className="absolute inset-0 w-full h-full"
+                aria-hidden="true"
+                style={{ transform: 'translateZ(0px)' }}
+              >
+                <circle
+                  cx={CENTRO}
+                  cy={CENTRO}
+                  r={RADIO_ESFERA}
+                  fill={paleta.esfera}
+                  stroke={paleta.esferaBorde}
+                  strokeWidth="2"
+                />
+                <circle
+                  cx={CENTRO}
+                  cy={CENTRO}
+                  r={RADIO_MARCAS + 2}
+                  fill="none"
+                  stroke={paleta.aro}
+                  strokeWidth="1"
+                />
+                <circle cx={CENTRO} cy={CENTRO} r={110} fill="none" stroke={paleta.aro} strokeDasharray="2 5" />
+
+                <g transform={`rotate(${-visual.rumbo} ${CENTRO} ${CENTRO})`}>
+                  {MARCAS.map((m) => (
+                    <line
+                      key={m.angulo}
+                      x1={m.x1}
+                      y1={m.y1}
+                      x2={m.x2}
+                      y2={m.y2}
+                      stroke={
+                        m.angulo === 0 ? paleta.norte : m.tipo === 'menor' ? paleta.marcaMenor : paleta.marcaMayor
+                      }
+                      strokeWidth={m.tipo === 'mayor' ? 2.5 : m.tipo === 'media' ? 1.6 : 1}
+                      strokeLinecap="round"
+                    />
+                  ))}
+
+                  {ETIQUETAS.map((e) => (
+                    <text
+                      key={e.angulo}
+                      x={e.x}
+                      y={e.y}
+                      transform={`rotate(${visual.rumbo} ${e.x} ${e.y})`}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fontFamily={
+                        e.tipo === 'grado'
+                          ? "'JetBrains Mono Variable', ui-monospace, monospace"
+                          : "'Space Grotesk Variable', system-ui, sans-serif"
+                      }
+                      fontWeight={e.tipo === 'grado' ? 500 : 700}
+                      fontSize={e.tipo === 'cardinal' ? 24 : e.tipo === 'intercardinal' ? 14 : 10.5}
+                      fill={
+                        e.angulo === 0 ? paleta.norte : e.tipo === 'grado' ? paleta.textoSuave : paleta.texto
+                      }
+                    >
+                      {e.texto}
+                    </text>
+                  ))}
+
+                  {/* Aguja: norte destacado y cola sur */}
+                  <polygon
+                    points={`${CENTRO},${CENTRO - 122} ${CENTRO - 9},${CENTRO - 76} ${CENTRO + 9},${CENTRO - 76}`}
+                    fill={paleta.norte}
+                  />
+                  <polygon
+                    points={`${CENTRO},${CENTRO + 108} ${CENTRO - 7},${CENTRO + 76} ${CENTRO + 7},${CENTRO + 76}`}
+                    fill={paleta.sur}
+                  />
+
+                  {/* Marcadores astronómicos en su acimut real */}
+                  {objetivosVisibles.map((objetivo) => {
+                    const p = puntoPolar(objetivo.acimut, RADIO_MARCADORES);
+                    const esAlineado = alineado?.id === objetivo.id;
+                    const esSeleccionado = objetivoSeleccionado?.id === objetivo.id;
+                    const color = paleta.marcadorFijo ?? objetivo.color;
+                    const etiqueta = etiquetaMarcador(objetivo.nombre);
+                    return (
+                      <g key={objetivo.id} transform={`rotate(${visual.rumbo} ${p.x} ${p.y})`}>
+                        {(esAlineado || esSeleccionado) && (
+                          <circle
+                            cx={p.x}
+                            cy={p.y}
+                            r={14}
+                            fill="none"
+                            stroke={paleta.acento}
+                            strokeWidth={esAlineado ? '2' : '1.4'}
+                            strokeDasharray={esAlineado ? undefined : '3 2'}
+                          />
+                        )}
+                        <circle
+                          cx={p.x}
+                          cy={p.y}
+                          r={9.5}
+                          fill={esAlineado ? paleta.acento : color}
+                          stroke={paleta.esfera}
+                          strokeWidth="1.5"
+                        />
+                        <text
+                          x={p.x}
+                          y={p.y}
+                          textAnchor="middle"
+                          dominantBaseline="central"
+                          fontSize={etiqueta.length > 2 ? '7.5' : '8.5'}
+                          fontWeight={700}
+                          fontFamily="'Space Grotesk Variable', system-ui, sans-serif"
+                          fill={tema === 'rojo' ? '#000000' : '#0f172a'}
+                        >
+                          {etiqueta}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </g>
+
+                {/* Línea de fe fija (dirección del dispositivo) */}
+                <polygon
+                  points={`${CENTRO},${CENTRO - RADIO_ESFERA + 14} ${CENTRO - 10},${-16} ${CENTRO + 10},${-16}`}
+                  fill={paleta.acento}
+                />
+              </svg>
+
+              {/* Cardán: meridianos de la cúpula que giran con el rumbo */}
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 pointer-events-none"
+                style={{ transformStyle: 'preserve-3d', transform: `rotateZ(${-visual.rumbo}deg)` }}
+              >
+                <div
+                  className="absolute inset-[6%] rounded-full"
+                  style={{ border: `1.5px solid ${paleta.aro}`, transform: 'rotateY(90deg)' }}
+                />
+                <div
+                  className="absolute inset-[6%] rounded-full"
+                  style={{ border: `1px solid ${paleta.aro}`, transform: 'rotateX(90deg)' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Lectura central (plana, siempre legible) */}
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[34%] aspect-square rounded-full border flex flex-col items-center justify-center ${paleta.claseLectura}`}
+          >
+            <span className="font-mono font-bold text-3xl sm:text-4xl leading-none tabular-nums">
+              {String(rumboEntero).padStart(3, '0')}°
+            </span>
+            <span className={`font-display font-bold text-sm mt-1 ${paleta.claseAcento}`}>{cardinal}</span>
+            <span className="font-mono text-[10px] opacity-75 mt-0.5">
+              Incl {inclinacionEntera > 0 ? '+' : ''}
+              {inclinacionEntera}°
+            </span>
+          </div>
+        </div>
+
+        {/* Aviso de alineación */}
+        <div aria-live="polite" className="min-h-12 mt-3 flex items-center justify-center">
+          {alineado ? (
+            <p
+              className={`alineacion-pulso inline-flex items-center gap-2 px-3.5 py-2 rounded-full border text-sm font-medium ${paleta.claseAviso}`}
+            >
+              <Target className="w-4 h-4" aria-hidden="true" />
+              Apuntando hacia {alineado.nombre} ·{' '}
+              <span className="font-mono">Alt {Math.round(alineado.altitud)}°</span>
+            </p>
+          ) : (
+            <p className="text-xs opacity-65 text-center">
+              {objetivosVisibles.length > 0
+                ? 'Gira hasta situar un marcador bajo la línea de fe superior.'
+                : 'Ahora mismo no hay objetivos visibles sobre el horizonte.'}
+            </p>
+          )}
+        </div>
+
+        {/* Estado de sensores */}
+        <div className="mt-2 space-y-3">
+          <p
+            role="status"
+            className={`flex items-start gap-2 text-xs px-3 py-2 rounded-xl border ${
+              estadoCorrecto ? paleta.claseEstadoOk : paleta.claseEstadoAviso
+            }`}
+          >
+            <Smartphone className="w-4 h-4 shrink-0 mt-px" aria-hidden="true" />
+            <span>{mensajeEstado}</span>
+          </p>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            {mostrarBotonActivar && (
+              <button
+                type="button"
+                onClick={() => {
+                  void activarSensores();
+                }}
+                className={`flex-1 inline-flex items-center justify-center gap-2 px-4 min-h-11 rounded-xl border text-sm font-semibold cursor-pointer transition-colors ${paleta.claseBotonPrimario}`}
+              >
+                <Navigation className="w-4 h-4" aria-hidden="true" />
+                Activar sensores del dispositivo
+              </button>
+            )}
+            {estadoSensor === 'activo' && (
+              <button
+                type="button"
+                onClick={() => (modoManual ? setModoManual(false) : pasarAModoManual())}
+                aria-pressed={modoManual}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 min-h-11 rounded-xl border border-current/30 hover:bg-current/10 text-sm font-medium cursor-pointer transition-colors"
+              >
+                <Hand className="w-4 h-4" aria-hidden="true" />
+                {modoManual ? 'Volver a los sensores' : 'Modo manual'}
+              </button>
+            )}
+          </div>
+
+          {/* Controles de simulación */}
+          {simulacion && (
+            <fieldset className="p-3 rounded-2xl border border-current/20 bg-current/5 space-y-1">
+              <legend className="px-1.5 text-[10px] uppercase tracking-[0.2em] font-mono opacity-75">
+                Modo simulación
+              </legend>
+              <label className="block">
+                <span className="flex items-center justify-between text-xs">
+                  <span>Rumbo</span>
+                  <span className="font-mono">{String(Math.round(normalizarAngulo(rumboManual)) % 360).padStart(3, '0')}°</span>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={359}
+                  step={1}
+                  value={Math.round(normalizarAngulo(rumboManual)) % 360}
+                  onChange={(e) => {
+                    const valor = Number(e.target.value);
+                    if (!Number.isFinite(valor)) return;
+                    setModoManual(true);
+                    setRumboManual(limitar(valor, 0, 359));
+                  }}
+                  className={`rango-hud ${paleta.claseAcento}`}
+                />
+              </label>
+              <label className="block">
+                <span className="flex items-center justify-between text-xs">
+                  <span>Inclinación</span>
+                  <span className="font-mono">
+                    {inclinacionManual > 0 ? '+' : ''}
+                    {inclinacionManual}°
+                  </span>
+                </span>
+                <input
+                  type="range"
+                  min={-60}
+                  max={60}
+                  step={1}
+                  value={inclinacionManual}
+                  onChange={(e) => {
+                    const valor = Number(e.target.value);
+                    if (!Number.isFinite(valor)) return;
+                    setModoManual(true);
+                    setInclinacionManual(limitar(valor, -60, 60));
+                  }}
+                  className={`rango-hud ${paleta.claseAcento}`}
+                />
+              </label>
+              <p className="text-[11px] opacity-70">
+                También puedes arrastrar el disco o usar las flechas del teclado (Mayús: pasos de 15°).
+              </p>
+            </fieldset>
+          )}
+
+          {/* Astros visibles */}
+          {objetivosVisibles.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-65 mb-1.5">
+                Sobre el horizonte
+              </p>
+              <ul className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
+                {objetivosVisibles.map((objetivo) => {
+                  const esAlineado = alineado?.id === objetivo.id;
+                  return (
+                    <li
+                      key={objetivo.id}
+                      className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border ${
+                        esAlineado ? paleta.claseAviso : 'border-current/15'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: paleta.marcadorFijo ?? objetivo.color }}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate font-medium">{objetivo.nombre}</span>
+                      </span>
+                      <span className="font-mono opacity-80 shrink-0">
+                        {Math.round(objetivo.acimut)}° · {Math.round(objetivo.altitud)}°
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="text-[10px] opacity-55 mt-1 font-mono">Acimut · Altitud</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+````
+
+## File: src/components/Navbar.tsx
+````typescript
+import { useEffect, useId, useState } from 'react';
+import { BookOpen, Compass, Crosshair, Eye, MapPin, Menu, Moon, Sun, Telescope, X } from 'lucide-react';
+import type { TemaVisual, Ubicacion, VistaActiva } from '../types/astronomy';
+
+interface NavbarProps {
+  tema: TemaVisual;
+  onCambiarTema: (tema: TemaVisual) => void;
+  vistaActiva: VistaActiva;
+  onCambiarVista: (vista: VistaActiva) => void;
+  onAbrirBrujula: () => void;
+  ubicacion: Ubicacion;
+  panelUbicacionAbierto: boolean;
+  onAlternarUbicacion: () => void;
+  onDetectarGPS: () => void;
+  cargandoGPS: boolean;
 }
 
-function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoCeleste[] {
-  const eventos: EventoCeleste[] = [];
-  const observador = new Astronomy.Observer(
-    ubicacion.latitud,
-    ubicacion.longitud,
-    ubicacion.altitud
+interface ElementoNavegacion {
+  vista: VistaActiva;
+  etiqueta: string;
+  descripcion: string;
+  Icono: typeof Telescope;
+}
+
+const ELEMENTOS_NAVEGACION: ElementoNavegacion[] = [
+  {
+    vista: 'observatorio',
+    etiqueta: 'Observatorio',
+    descripcion: 'Mapa celeste, meteorología, eventos y Sistema Solar',
+    Icono: Telescope,
+  },
+  {
+    vista: 'guia',
+    etiqueta: 'Guía de uso',
+    descripcion: 'Cómo usar SkyProject y astronomía básica',
+    Icono: BookOpen,
+  },
+];
+
+const OPCIONES_TEMA: { tema: TemaVisual; etiqueta: string; Icono: typeof Moon; titulo: string }[] = [
+  { tema: 'oscuro', etiqueta: 'Oscuro', Icono: Moon, titulo: 'Tema oscuro' },
+  { tema: 'claro', etiqueta: 'Claro', Icono: Sun, titulo: 'Tema claro' },
+  {
+    tema: 'rojo',
+    etiqueta: 'Filtro Rojo',
+    Icono: Eye,
+    titulo: 'Protege tu adaptación ocular en el campo',
+  },
+];
+
+const CLASES_BARRA: Record<TemaVisual, string> = {
+  oscuro:
+    'bg-slate-950/60 backdrop-blur-xl border-b border-cyan-400/15 shadow-[0_1px_24px_-12px_rgb(34_211_238/0.35)]',
+  claro: 'bg-white/70 backdrop-blur-xl border-b border-slate-200/90 shadow-sm shadow-slate-900/5',
+  rojo: 'bg-black border-b border-red-900/80',
+};
+
+const CLASES_MENU_MOVIL: Record<TemaVisual, string> = {
+  oscuro: 'bg-slate-950/90 backdrop-blur-xl border-cyan-400/15',
+  claro: 'bg-white/95 backdrop-blur-xl border-slate-200',
+  rojo: 'bg-black border-red-900/80',
+};
+
+const CLASE_ACENTO: Record<TemaVisual, string> = {
+  oscuro: 'text-cyan-300',
+  claro: 'text-sky-700',
+  rojo: 'text-red-500',
+};
+
+function obtenerClaseNavActiva(tema: TemaVisual, activo: boolean): string {
+  if (!activo) return 'border-transparent opacity-75 hover:opacity-100 hover:bg-current/5';
+  if (tema === 'rojo') return 'border-red-700 bg-red-950/70 text-red-400';
+  if (tema === 'claro') return 'border-slate-900 bg-slate-900 text-white';
+  return 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200';
+}
+
+function obtenerClaseBotonTema(temaActual: TemaVisual, boton: TemaVisual): string {
+  if (temaActual !== boton) return 'opacity-70 hover:opacity-100';
+  if (boton === 'oscuro') return 'bg-cyan-600/90 text-white';
+  if (boton === 'claro') return 'bg-slate-800 text-white';
+  return 'bg-red-950 text-red-500 border border-red-600';
+}
+
+function obtenerClaseBotonBrujula(tema: TemaVisual): string {
+  if (tema === 'rojo') return 'border-red-700 bg-red-950/50 text-red-400 hover:bg-red-950';
+  if (tema === 'claro') return 'border-slate-300 bg-white text-slate-900 hover:border-sky-600 hover:text-sky-700';
+  return 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 hover:border-cyan-300/70';
+}
+
+export function Navbar({
+  tema,
+  onCambiarTema,
+  vistaActiva,
+  onCambiarVista,
+  onAbrirBrujula,
+  ubicacion,
+  panelUbicacionAbierto,
+  onAlternarUbicacion,
+  onDetectarGPS,
+  cargandoGPS,
+}: NavbarProps) {
+  const [menuAbierto, setMenuAbierto] = useState(false);
+  const idMenu = useId();
+  const claseAcento = CLASE_ACENTO[tema];
+
+  // Cierra el menú móvil con Escape
+  useEffect(() => {
+    if (!menuAbierto) return;
+    const manejarTecla = (evento: globalThis.KeyboardEvent) => {
+      if (evento.key === 'Escape') setMenuAbierto(false);
+    };
+    document.addEventListener('keydown', manejarTecla);
+    return () => document.removeEventListener('keydown', manejarTecla);
+  }, [menuAbierto]);
+
+  const irAVista = (vista: VistaActiva) => {
+    onCambiarVista(vista);
+    setMenuAbierto(false);
+  };
+
+  const abrirBrujula = () => {
+    setMenuAbierto(false);
+    onAbrirBrujula();
+  };
+
+  const selectorTema = (compacto: boolean) => (
+    <div
+      role="group"
+      aria-label="Tema visual"
+      className="flex items-center gap-1 p-1 rounded-xl border border-current/20 bg-current/5"
+    >
+      {OPCIONES_TEMA.map(({ tema: opcion, etiqueta, Icono, titulo }) => (
+        <button
+          key={opcion}
+          type="button"
+          onClick={() => onCambiarTema(opcion)}
+          aria-pressed={tema === opcion}
+          title={titulo}
+          className={`flex flex-1 items-center justify-center gap-1.5 px-2.5 min-h-11 md:min-h-8 rounded-lg text-xs font-medium cursor-pointer transition-colors ${obtenerClaseBotonTema(
+            tema,
+            opcion
+          )}`}
+        >
+          <Icono className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+          <span className={compacto ? 'hidden xl:inline' : ''}>{etiqueta}</span>
+          {compacto && <span className="sr-only xl:hidden">{etiqueta}</span>}
+        </button>
+      ))}
+    </div>
   );
 
-  // 1. Próximos 2 eclipses lunares con comprobación de visibilidad local
-  let fechaBusqueda = new Date(fechaBase);
-  for (let i = 0; i < 2; i++) {
-    const lunar = Astronomy.SearchLunarEclipse(fechaBusqueda);
-    const fechaPico = lunar.peak.date;
-    const tipoClave = String(lunar.kind);
-    const tipoStr = NOMBRES_ECLIPSE[tipoClave] ?? 'Lunar';
+  const botonUbicacion = (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => {
+          onAlternarUbicacion();
+          setMenuAbierto(false);
+        }}
+        aria-expanded={panelUbicacionAbierto}
+        aria-controls="panel-ubicacion"
+        title="Configurar punto de observación"
+        className="flex min-w-0 items-center gap-1.5 px-2.5 min-h-11 md:min-h-9 rounded-lg border border-current/20 hover:bg-current/10 text-xs cursor-pointer transition-colors"
+      >
+        <MapPin className={`w-3.5 h-3.5 shrink-0 ${claseAcento}`} aria-hidden="true" />
+        <span className="truncate max-w-48 lg:max-w-40">{ubicacion.nombre}</span>
+        <span className="font-mono opacity-70 hidden lg:inline">
+          {ubicacion.latitud.toFixed(2)}°, {ubicacion.longitud.toFixed(2)}°
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={onDetectarGPS}
+        disabled={cargandoGPS}
+        aria-label={cargandoGPS ? 'Obteniendo ubicación GPS' : 'Usar ubicación GPS actual'}
+        title="Usar ubicación GPS actual"
+        className="flex items-center justify-center min-w-11 min-h-11 md:min-w-9 md:min-h-9 rounded-lg border border-current/20 hover:bg-current/10 cursor-pointer disabled:opacity-50 transition-colors"
+      >
+        <Crosshair
+          className={`w-4 h-4 ${cargandoGPS ? 'motion-safe:animate-spin' : ''}`}
+          aria-hidden="true"
+        />
+      </button>
+    </div>
+  );
 
-    const eqLuna = Astronomy.Equator(Astronomy.Body.Moon, fechaPico, observador, true, true);
-    const horLuna = Astronomy.Horizon(fechaPico, observador, eqLuna.ra, eqLuna.dec, 'normal');
+  return (
+    <nav
+      aria-label="Navegación principal"
+      className={`sticky top-0 z-30 transition-colors duration-300 ${CLASES_BARRA[tema]}`}
+    >
+      <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-3">
+        {/* Marca */}
+        <button
+          type="button"
+          onClick={() => irAVista('observatorio')}
+          className="flex items-center gap-2.5 min-w-0 cursor-pointer text-left"
+          aria-label="SkyProject, ir al Observatorio"
+        >
+          <span
+            className={`relative grid place-items-center w-9 h-9 rounded-xl border border-current/25 ${claseAcento}`}
+            aria-hidden="true"
+          >
+            <svg viewBox="0 0 32 32" className="w-6 h-6" fill="none" stroke="currentColor">
+              <circle cx="16" cy="16" r="11" strokeWidth="1.5" strokeOpacity="0.6" />
+              <ellipse cx="16" cy="16" rx="11" ry="4.5" strokeWidth="1.2" strokeOpacity="0.45" />
+              <path d="M16 3v4M16 25v4M3 16h4M25 16h4" strokeWidth="1.5" strokeLinecap="round" />
+              <circle cx="16" cy="16" r="2.4" fill="currentColor" stroke="none" />
+            </svg>
+          </span>
+          <span className="min-w-0">
+            <span className="block font-display text-lg font-bold tracking-tight leading-none">
+              SkyProject
+            </span>
+            <span className="block text-[10px] uppercase tracking-[0.2em] opacity-60 font-mono mt-1 truncate">
+              Observatorio personal
+            </span>
+          </span>
+        </button>
 
-    const resumen =
-      tipoClave === 'Penumbra'
-        ? 'Eclipse penumbral (oscurecimiento sutil)'
-        : `Oscurecimiento: ${Math.round(lunar.obscuration * 100)}%`;
+        {/* Navegación de escritorio */}
+        <div className="hidden md:flex items-center gap-1">
+          {ELEMENTOS_NAVEGACION.map(({ vista, etiqueta, descripcion, Icono }) => {
+            const activo = vistaActiva === vista;
+            return (
+              <button
+                key={vista}
+                type="button"
+                onClick={() => irAVista(vista)}
+                aria-current={activo ? 'page' : undefined}
+                title={descripcion}
+                className={`flex items-center gap-2 px-3 min-h-9 rounded-lg border text-sm font-medium font-display cursor-pointer transition-colors ${obtenerClaseNavActiva(
+                  tema,
+                  activo
+                )}`}
+              >
+                <Icono className="w-4 h-4" aria-hidden="true" />
+                {etiqueta}
+              </button>
+            );
+          })}
+        </div>
 
-    const detalle =
-      horLuna.altitude > 0
-        ? `Visible desde tu ubicación (Luna a ${horLuna.altitude.toFixed(1)}° en el máximo)`
-        : `No visible desde tu ubicación (Luna bajo el horizonte: ${horLuna.altitude.toFixed(1)}°)`;
+        <div className="flex items-center gap-2">
+          {/* Acceso directo a la Brújula 3D (siempre visible) */}
+          <button
+            type="button"
+            onClick={abrirBrujula}
+            aria-haspopup="dialog"
+            title="Abrir la Brújula Astronómica 3D"
+            className={`flex items-center gap-2 pl-2 pr-3 min-h-11 md:min-h-9 rounded-full border text-xs font-semibold cursor-pointer transition-colors ${obtenerClaseBotonBrujula(
+              tema
+            )}`}
+          >
+            <span
+              className="grid place-items-center w-7 h-7 rounded-full border border-current/40"
+              aria-hidden="true"
+            >
+              <Compass className="w-4 h-4 brujula-icono-animada" />
+            </span>
+            <span className="font-display">Brújula 3D</span>
+          </button>
 
-    eventos.push({
-      id: `eclipse-lunar-${fechaPico.getTime()}`,
-      titulo: `Eclipse Lunar ${tipoStr}`,
-      tipo: 'eclipse',
-      fechaPico,
-      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
-      resumen,
-      detalle,
-    });
+          {/* Controles de escritorio */}
+          <div className="hidden md:flex items-center gap-2">
+            {botonUbicacion}
+            {selectorTema(true)}
+          </div>
 
-    fechaBusqueda = new Date(fechaPico.getTime() + 15 * 24 * 60 * 60 * 1000);
-  }
+          {/* Botón hamburguesa (móvil) */}
+          <button
+            type="button"
+            onClick={() => setMenuAbierto((prev) => !prev)}
+            aria-expanded={menuAbierto}
+            aria-controls={idMenu}
+            aria-label={menuAbierto ? 'Cerrar menú de navegación' : 'Abrir menú de navegación'}
+            className="md:hidden grid place-items-center min-w-11 min-h-11 rounded-lg border border-current/20 hover:bg-current/10 cursor-pointer"
+          >
+            {menuAbierto ? (
+              <X className="w-5 h-5" aria-hidden="true" />
+            ) : (
+              <Menu className="w-5 h-5" aria-hidden="true" />
+            )}
+          </button>
+        </div>
+      </div>
 
-  // 2. Próximos eclipses solares visibles sobre el horizonte en tu ubicación
-  let fechaSolar = new Date(fechaBase);
-  let encontrados = 0;
-  let intentos = 0;
-
-  while (encontrados < 2 && intentos < 8) {
-    intentos++;
-    const solar = Astronomy.SearchLocalSolarEclipse(fechaSolar, observador);
-    const fechaPico = solar.peak.time.date;
-
-    if (solar.peak.altitude > 0) {
-      const tipoStr = NOMBRES_ECLIPSE[String(solar.kind)] ?? 'Solar';
-      eventos.push({
-        id: `eclipse-solar-${fechaPico.getTime()}`,
-        titulo: `Eclipse Solar ${tipoStr}`,
-        tipo: 'eclipse',
-        fechaPico,
-        diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
-        resumen: `Ocultación local: ${Math.round(solar.obscuration * 100)}%`,
-        detalle: `Altura del Sol en máximo: ${solar.peak.altitude.toFixed(1)}°`,
-      });
-      encontrados++;
-    }
-
-    fechaSolar = new Date(fechaPico.getTime() + 20 * 24 * 60 * 60 * 1000);
-  }
-
-  return eventos;
-}
-
-export function calcularProximosEventos(fechaBase: Date, ubicacion: Ubicacion): EventoCeleste[] {
-  if (!esEntradaAstronomicaValida(fechaBase, ubicacion)) return [];
-
-  const lluvias = obtenerProximasLluvias(fechaBase);
-  const eclipses = obtenerProximosEclipses(fechaBase, ubicacion);
-
-  return [...lluvias, ...eclipses]
-    .sort((a, b) => a.fechaPico.getTime() - b.fechaPico.getTime())
-    .slice(0, 6);
+      {/* Menú desplegable móvil */}
+      <div
+        id={idMenu}
+        hidden={!menuAbierto}
+        className={`md:hidden border-t ${CLASES_MENU_MOVIL[tema]}`}
+      >
+        <div className="px-4 py-4 space-y-4">
+          <ul className="space-y-1.5">
+            {ELEMENTOS_NAVEGACION.map(({ vista, etiqueta, descripcion, Icono }) => {
+              const activo = vistaActiva === vista;
+              return (
+                <li key={vista}>
+                  <button
+                    type="button"
+                    onClick={() => irAVista(vista)}
+                    aria-current={activo ? 'page' : undefined}
+                    className={`w-full flex items-center gap-3 px-3 min-h-12 rounded-xl border text-left cursor-pointer transition-colors ${obtenerClaseNavActiva(
+                      tema,
+                      activo
+                    )}`}
+                  >
+                    <Icono className="w-5 h-5 shrink-0" aria-hidden="true" />
+                    <span className="min-w-0">
+                      <span className="block font-display font-semibold text-sm">{etiqueta}</span>
+                      <span className="block text-[11px] opacity-70 truncate">{descripcion}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="space-y-2">
+            <p className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-60">
+              Punto de observación
+            </p>
+            {botonUbicacion}
+          </div>
+          <div className="space-y-2">
+            <p className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-60">Tema visual</p>
+            {selectorTema(false)}
+          </div>
+        </div>
+      </div>
+    </nav>
+  );
 }
 ````
 
@@ -2734,66 +3043,6 @@ Antes de finalizar cualquier tarea, ejecuta y verifica que pasan sin errores:
 - Ejecutar `npm run lint` y `npm run build` al finalizar cada tarea.
 ````
 
-## File: index.html
-````html
-<!doctype html>
-<html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SkyProject — Mapa Celeste</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
-````
-
-## File: package.json
-````json
-{
-  "name": "sky_project",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@capacitor/core": "^8.6.2",
-    "@fontsource-variable/inter": "^5.3.0",
-    "@fontsource-variable/jetbrains-mono": "^5.3.0",
-    "@fontsource-variable/space-grotesk": "^5.3.0",
-    "@tailwindcss/vite": "^4.3.5",
-    "astronomy-engine": "^2.1.19",
-    "lucide-react": "^1.80.0",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "tailwindcss": "^4.3.5"
-  },
-  "devDependencies": {
-    "@capacitor/cli": "^8.6.2",
-    "@eslint/js": "^10.0.1",
-    "@types/node": "^24.19.2",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.2",
-    "eslint": "^10.14.0",
-    "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.5.7",
-    "globals": "^17.13.0",
-    "typescript": "~6.0.3",
-    "typescript-eslint": "^8.72.1",
-    "vite": "^8.3.6"
-  }
-}
-````
-
 ## File: tsconfig.app.json
 ````json
 {
@@ -2853,109 +3102,128 @@ Antes de finalizar cualquier tarea, ejecuta y verifica que pasan sin errores:
 }
 ````
 
-## File: src/components/EventsPanel.tsx
+## File: src/core/eventsCalculator.ts
 ````typescript
-import { CalendarClock, Sparkles, Eclipse, ArrowUpRight } from 'lucide-react';
-import type { EventoCeleste, TemaVisual } from '../types/astronomy';
+import * as Astronomy from 'astronomy-engine';
+import type { EventoCeleste, Ubicacion } from '../types/astronomy';
+import { LLUVIAS_ESTRELLAS } from '../data/meteorShowers';
+import { esEntradaAstronomicaValida } from './skyCalculator';
 
-interface EventsPanelProps {
-  eventos: EventoCeleste[];
-  tema: TemaVisual;
-  claseTarjeta: string;
-  onSeleccionarFecha: (fecha: Date) => void;
+const NOMBRES_ECLIPSE: Record<string, string> = {
+  total: 'Total',
+  partial: 'Parcial',
+  annular: 'Anular',
+  penumbral: 'Penumbral',
+};
+
+function calcularDiasRestantes(desde: Date, hasta: Date): number {
+  const inicioDia = new Date(desde.getFullYear(), desde.getMonth(), desde.getDate()).getTime();
+  const finDia = new Date(hasta.getFullYear(), hasta.getMonth(), hasta.getDate()).getTime();
+  return Math.round((finDia - inicioDia) / (1000 * 60 * 60 * 24));
 }
 
-function formatearBadgeDias(dias: number): string {
-  if (dias < 0) return 'Ayer';
-  if (dias === 0) return '¡Hoy!';
-  if (dias === 1) return 'Mañana';
-  return `En ${dias} días`;
+function obtenerProximasLluvias(fechaBase: Date): EventoCeleste[] {
+  const anioActual = fechaBase.getFullYear();
+
+  return LLUVIAS_ESTRELLAS.map((lluvia) => {
+    let fechaPico = new Date(anioActual, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
+    if (calcularDiasRestantes(fechaBase, fechaPico) < 0) {
+      fechaPico = new Date(anioActual + 1, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
+    }
+
+    return {
+      id: `lluvia-${lluvia.id}-${fechaPico.getFullYear()}`,
+      titulo: lluvia.nombre,
+      tipo: 'lluvia' as const,
+      fechaPico,
+      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
+      resumen: `Máximo ~${lluvia.thz} meteoros/h`,
+      detalle: `Radiante: Const. ${lluvia.radiante}`,
+    };
+  });
 }
 
-function obtenerClaseIconoEvento(tema: TemaVisual, tipo: EventoCeleste['tipo']): string {
-  if (tema === 'rojo') return 'text-red-500';
-  if (tema === 'claro') return tipo === 'lluvia' ? 'text-amber-600' : 'text-sky-600';
-  return tipo === 'lluvia' ? 'text-amber-400' : 'text-sky-400';
-}
-
-function obtenerClaseBadgeDias(tema: TemaVisual): string {
-  if (tema === 'rojo') return 'border-red-600 text-red-500';
-  if (tema === 'claro') return 'border-sky-600/40 bg-sky-500/10 text-sky-700';
-  return 'border-sky-500/40 bg-sky-500/10 text-sky-400';
-}
-
-export function EventsPanel({
-  eventos,
-  tema,
-  claseTarjeta,
-  onSeleccionarFecha,
-}: Readonly<EventsPanelProps>) {
-  return (
-    <section className={`p-4 rounded-2xl border space-y-3 ${claseTarjeta}`}>
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75 flex items-center gap-2">
-          <CalendarClock className="w-4 h-4" /> Próximos Eventos Celestes
-        </h2>
-        <span className="text-[11px] opacity-60">Lluvias y Eclipses</span>
-      </div>
-
-      <div className="space-y-2.5">
-        {eventos.map((ev) => {
-          const fechaTexto = ev.fechaPico.toLocaleDateString('es-ES', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-          });
-
-          const claseHoverEvento =
-            tema === 'rojo'
-              ? 'hover:border-red-600/80'
-              : tema === 'claro'
-                ? 'hover:border-slate-300 hover:shadow-md'
-                : 'hover:border-sky-500/40';
-
-          return (
-            <div
-              key={ev.id}
-              className={`tarjeta-3d p-3.5 rounded-xl border border-current/15 bg-current/5 flex flex-col gap-1.5 ${claseHoverEvento}`}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <span className="font-bold text-sm flex items-center gap-1.5">
-                  {ev.tipo === 'lluvia' ? (
-                    <Sparkles className={`w-3.5 h-3.5 shrink-0 ${obtenerClaseIconoEvento(tema, 'lluvia')}`} />
-                  ) : (
-                    <Eclipse className={`w-3.5 h-3.5 shrink-0 ${obtenerClaseIconoEvento(tema, 'eclipse')}`} />
-                  )}
-                  {ev.titulo}
-                </span>
-
-                <span
-                  className={`text-[11px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${obtenerClaseBadgeDias(
-                    tema
-                  )}`}
-                >
-                  {formatearBadgeDias(ev.diasRestantes)}
-                </span>
-              </div>
-
-              <div className="text-xs opacity-80 font-mono flex flex-wrap items-center justify-between gap-2">
-                <span>
-                  {fechaTexto} · {ev.resumen}
-                </span>
-                <button
-                  onClick={() => onSeleccionarFecha(ev.fechaPico)}
-                  className="inline-flex items-center gap-1 underline decoration-dotted hover:opacity-100 cursor-pointer font-sans font-medium"
-                >
-                  Ver en mapa <ArrowUpRight className="w-3 h-3" />
-                </button>
-              </div>
-              <p className="text-[11px] opacity-65">{ev.detalle}</p>
-            </div>
-          );
-        })}
-      </div>
-    </section>
+function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoCeleste[] {
+  const eventos: EventoCeleste[] = [];
+  const observador = new Astronomy.Observer(
+    ubicacion.latitud,
+    ubicacion.longitud,
+    ubicacion.altitud
   );
+
+  // 1. Próximos 2 eclipses lunares con comprobación de visibilidad local
+  let fechaBusqueda = new Date(fechaBase);
+  for (let i = 0; i < 2; i++) {
+    const lunar = Astronomy.SearchLunarEclipse(fechaBusqueda);
+    const fechaPico = lunar.peak.date;
+    const tipoClave = String(lunar.kind).toLowerCase();
+    const tipoStr = NOMBRES_ECLIPSE[tipoClave] ?? 'Lunar';
+
+    const eqLuna = Astronomy.Equator(Astronomy.Body.Moon, fechaPico, observador, true, true);
+    const horLuna = Astronomy.Horizon(fechaPico, observador, eqLuna.ra, eqLuna.dec, 'normal');
+
+    const resumen =
+      tipoClave === 'penumbral'
+        ? 'Eclipse penumbral (oscurecimiento sutil)'
+        : `Oscurecimiento: ${Math.round(lunar.obscuration * 100)}%`;
+
+    const detalle =
+      horLuna.altitude > 0
+        ? `Visible desde tu ubicación (Luna a ${horLuna.altitude.toFixed(1)}° en el máximo)`
+        : `No visible desde tu ubicación (Luna bajo el horizonte: ${horLuna.altitude.toFixed(1)}°)`;
+
+    eventos.push({
+      id: `eclipse-lunar-${fechaPico.getTime()}`,
+      titulo: `Eclipse Lunar ${tipoStr}`,
+      tipo: 'eclipse',
+      fechaPico,
+      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
+      resumen,
+      detalle,
+    });
+
+    fechaBusqueda = new Date(fechaPico.getTime() + 15 * 24 * 60 * 60 * 1000);
+  }
+
+  // 2. Próximos eclipses solares visibles sobre el horizonte en tu ubicación
+  let fechaSolar = new Date(fechaBase);
+  let encontrados = 0;
+  let intentos = 0;
+
+  while (encontrados < 2 && intentos < 8) {
+    intentos++;
+    const solar = Astronomy.SearchLocalSolarEclipse(fechaSolar, observador);
+    const fechaPico = solar.peak.time.date;
+
+    if (solar.peak.altitude > 0) {
+      const tipoStr = NOMBRES_ECLIPSE[String(solar.kind).toLowerCase()] ?? 'Solar';
+      eventos.push({
+        id: `eclipse-solar-${fechaPico.getTime()}`,
+        titulo: `Eclipse Solar ${tipoStr}`,
+        tipo: 'eclipse',
+        fechaPico,
+        diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
+        resumen: `Ocultación local: ${Math.round(solar.obscuration * 100)}%`,
+        detalle: `Altura del Sol en máximo: ${solar.peak.altitude.toFixed(1)}°`,
+      });
+      encontrados++;
+    }
+
+    fechaSolar = new Date(fechaPico.getTime() + 20 * 24 * 60 * 60 * 1000);
+  }
+
+  return eventos;
+}
+
+export function calcularProximosEventos(fechaBase: Date, ubicacion: Ubicacion): EventoCeleste[] {
+  if (!esEntradaAstronomicaValida(fechaBase, ubicacion)) return [];
+
+  const lluvias = obtenerProximasLluvias(fechaBase);
+  const eclipses = obtenerProximosEclipses(fechaBase, ubicacion);
+
+  return [...lluvias, ...eclipses]
+    .sort((a, b) => a.fechaPico.getTime() - b.fechaPico.getTime())
+    .slice(0, 6);
 }
 ````
 
@@ -3191,198 +3459,6 @@ export async function obtenerCondicionesMeteo(
 }
 ````
 
-## File: src/index.css
-````css
-@import "tailwindcss";
-
-/* Sistema tipográfico astronómico (fuentes locales vía @fontsource-variable) */
-@theme {
-  --font-display: 'Space Grotesk Variable', system-ui, sans-serif;
-  --font-sans: 'Inter Variable', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
-}
-
-@layer base {
-  body {
-    font-family: var(--font-sans);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-
-  h1,
-  h2,
-  h3 {
-    font-family: var(--font-display);
-    letter-spacing: -0.01em;
-  }
-
-  /* Filtro Rojo: ningún acento del navegador puede salir del espectro rojo */
-  .tema-rojo {
-    accent-color: #dc2626;
-  }
-
-  .tema-rojo *:focus-visible {
-    outline-color: #dc2626;
-  }
-
-  .tema-rojo ::selection {
-    background-color: #7f1d1d;
-    color: #f87171;
-  }
-}
-
-@layer utilities {
-  .tarjeta-3d {
-    transform-style: preserve-3d;
-    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
-      box-shadow 240ms ease,
-      border-color 240ms ease,
-      opacity 200ms ease;
-  }
-
-  .tarjeta-3d:hover {
-    transform: perspective(900px) translateY(-2px) rotateX(1.2deg);
-  }
-
-  /* ── Estética HUD de observatorio ─────────────────────────────── */
-  .hud-esquinas {
-    position: relative;
-  }
-
-  /* Esquinas técnicas discretas (marcas de retícula en las 4 esquinas) */
-  .hud-esquinas::before {
-    content: '';
-    position: absolute;
-    inset: 6px;
-    pointer-events: none;
-    border-radius: inherit;
-    --hud-l: 12px;
-    --hud-g: 1.5px;
-    background:
-      linear-gradient(var(--hud-color), var(--hud-color)) top left / var(--hud-l) var(--hud-g) no-repeat,
-      linear-gradient(var(--hud-color), var(--hud-color)) top left / var(--hud-g) var(--hud-l) no-repeat,
-      linear-gradient(var(--hud-color), var(--hud-color)) top right / var(--hud-l) var(--hud-g) no-repeat,
-      linear-gradient(var(--hud-color), var(--hud-color)) top right / var(--hud-g) var(--hud-l) no-repeat,
-      linear-gradient(var(--hud-color), var(--hud-color)) bottom left / var(--hud-l) var(--hud-g) no-repeat,
-      linear-gradient(var(--hud-color), var(--hud-color)) bottom left / var(--hud-g) var(--hud-l) no-repeat,
-      linear-gradient(var(--hud-color), var(--hud-color)) bottom right / var(--hud-l) var(--hud-g) no-repeat,
-      linear-gradient(var(--hud-color), var(--hud-color)) bottom right / var(--hud-g) var(--hud-l) no-repeat;
-  }
-
-  /* Oscuro: brillo cian tenue */
-  .hud-oscuro {
-    --hud-color: rgb(34 211 238 / 0.45);
-    box-shadow:
-      0 0 0 1px rgb(34 211 238 / 0.04),
-      0 0 24px -12px rgb(34 211 238 / 0.35),
-      0 20px 25px -5px rgb(0 0 0 / 0.3);
-  }
-
-  /* Claro: acabado limpio de instrumento */
-  .hud-claro {
-    --hud-color: rgb(71 85 105 / 0.45);
-  }
-
-  /* Rojo: líneas finas rojo oscuro, sin brillo */
-  .hud-rojo {
-    --hud-color: rgb(153 27 27 / 0.9);
-  }
-
-  /* Rejilla técnica tenue para fondos de instrumentos */
-  .hud-rejilla {
-    background-image:
-      linear-gradient(to right, color-mix(in srgb, currentColor 7%, transparent) 1px, transparent 1px),
-      linear-gradient(to bottom, color-mix(in srgb, currentColor 7%, transparent) 1px, transparent 1px);
-    background-size: 24px 24px;
-  }
-
-  /* Icono de brújula con oscilación sutil */
-  .brujula-icono-animada {
-    animation: brujula-oscilar 4.5s ease-in-out infinite;
-    transform-origin: center;
-  }
-
-  .alineacion-pulso {
-    animation: alineacion-pulso 1.6s ease-in-out infinite;
-  }
-
-  /* Deslizadores HUD: usan currentColor para respetar los 3 temas */
-  .rango-hud {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 100%;
-    height: 2.5rem;
-    background: transparent;
-    cursor: pointer;
-    touch-action: pan-y;
-  }
-
-  .rango-hud::-webkit-slider-runnable-track {
-    height: 4px;
-    border-radius: 9999px;
-    background: color-mix(in srgb, currentColor 30%, transparent);
-  }
-
-  .rango-hud::-moz-range-track {
-    height: 4px;
-    border-radius: 9999px;
-    background: color-mix(in srgb, currentColor 30%, transparent);
-  }
-
-  .rango-hud::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 22px;
-    height: 22px;
-    margin-top: -9px;
-    border-radius: 9999px;
-    background: currentColor;
-    border: 3px solid color-mix(in srgb, currentColor 35%, black);
-  }
-
-  .rango-hud::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
-    border-radius: 9999px;
-    background: currentColor;
-    border: 3px solid color-mix(in srgb, currentColor 35%, black);
-  }
-}
-
-@keyframes brujula-oscilar {
-  0%,
-  100% {
-    transform: rotate(-14deg);
-  }
-  50% {
-    transform: rotate(14deg);
-  }
-}
-
-@keyframes alineacion-pulso {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.55;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tarjeta-3d,
-  .tarjeta-3d:hover {
-    transform: none;
-    transition: none;
-  }
-
-  .brujula-icono-animada,
-  .alineacion-pulso {
-    animation: none;
-  }
-}
-````
-
 ## File: .gitignore
 ````
 # Logs
@@ -3416,295 +3492,178 @@ PORTFOLIO.md
 resumen_codigo.md
 ````
 
-## File: README.md
-````markdown
-# ✨ SkyProject
-
-[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-Strict-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vite.dev/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
-[![Capacitor](https://img.shields.io/badge/Capacitor-8-119EFF?style=for-the-badge&logo=capacitor&logoColor=white)](https://capacitorjs.com/)
-[![Offline First](https://img.shields.io/badge/Architecture-Offline--First-10B981?style=for-the-badge)](#arquitectura-y-decisiones-técnicas)
-
-Aplicación web **offline-first** de astronomía observacional para planificar salidas nocturnas y explorar la bóveda celeste en tiempo real. Calcula efemérides planetarias, posiciones estelares, objetos del catálogo Messier, próximos eventos astronómicos y previsión meteorológica por capas de nubosidad para cualquier ubicación y fecha.
-
----
-
-## 🚀 Funcionalidades principales
-
-- **Mapa celeste interactivo (`<canvas>`) con doble vista:**
-  - **2D Planisferio:** proyección polar del cielo con rejilla de altitud (30° y 60°), puntos cardinales e inspección de astros por puntero o toque.
-  - **3D Bóveda:** proyección hemisférica interactiva con rotación libre mediante arrastre (ratón y pantalla táctil).
-  - Renderizado de **33 estrellas brillantes** con colores espectrales, líneas de constelaciones (Orión, Osa Mayor, Casiopea), **12 objetos Messier**, Luna y planetas (incluidos los anillos de Saturno).
-- **Motor astronómico local (`astronomy-engine`):**
-  - Altitud, acimut, orientación cardinal, magnitud aparente y visibilidad sobre el horizonte.
-  - Precesión de coordenadas desde época **J2000** a la fecha exacta de observación.
-  - Cálculo del estado solar y fase del crepúsculo (*Día*, *Civil*, *Náutico*, *Astronómico* y *Noche astronómica*).
-- **Esfera lunar dinámica (`MoonPhase3D`):** representación SVG vectorial de la fase lunar real a partir del ángulo de fase, con sombreado de limbo y mares lunares adaptados al tema activo.
-- **Meteorología astronómica (Open-Meteo API):**
-  - Consulta sincronizada en **UTC** hasta 14 días vista con desglose de nubosidad baja (< 3 km), media (3–8 km) y alta (> 8 km), viento, humedad, temperatura y veredicto automático (*Excelente*, *Aceptable* o *Desfavorable*).
-  - Caché en `localStorage` (TTL de 1 hora) con *fallback* automático sin conexión.
-- **Calendario de próximos eventos celestes:** próximas lluvias de estrellas (THZ y radiante) y eclipses lunares y solares calculados para las coordenadas del observador, con salto directo en un clic al mapa en la fecha del pico.
-- **Tres temas visuales y modo campo:** `Oscuro`, `Claro` y **Filtro Rojo** para preservar la adaptación ocular nocturna, acompañados de un fondo estelar animado que respeta `prefers-reduced-motion`.
-- **Ubicación flexible:** geolocalización GPS del navegador o edición manual de latitud, longitud y altitud con validación defensiva y persistencia local.
-
----
-
-## 📸 Capturas recomendadas
-
-> Sustituye las rutas siguientes por tus capturas reales dentro de `docs/screenshots/` (recomendado: ancho de `1280px` en formato `.webp` o `.png`).
-
-| Vista | Descripción recomendada para la captura |
-| :--- | :--- |
-| ![Vista principal en modo oscuro](docs/screenshots/vista-principal-oscuro.png) | **Vista principal (Tema Oscuro):** mapa celeste en 2D/3D, panel meteorológico y tarjetas del Sistema Solar con la esfera lunar `MoonPhase3D`. |
-| ![Bóveda 3D interactiva](docs/screenshots/boveda-3d.png) | **Modo 3D Bóveda:** cúpula rotada mostrando constelaciones, objetos Messier y el *tooltip* de inspección de un planeta o estrella. |
-| ![Modo Filtro Rojo](docs/screenshots/filtro-rojo-nocturno.png) | **Tema Filtro Rojo:** interfaz completa en modo de visión nocturna junto al panel de próximos eventos celestes. |
-
----
-
-## 🛠️ Stack tecnológico
-
-| Categoría | Tecnología | Uso en el proyecto |
-| :--- | :--- | :--- |
-| **Frontend** | React 19 + TypeScript (modo estricto) | UI reactiva y tipado exhaustivo sin `any` |
-| **Build & Estilos** | Vite 8 + Tailwind CSS v4 | Bundling ultrarrápido y diseño *responsive* |
-| **Astronomía** | `astronomy-engine` | Efemérides, precesión J2000 y eclipses 100% en local |
-| **Meteorología** | Open-Meteo API | Previsión horaria en UTC con caché en `localStorage` |
-| **Iconografía** | `lucide-react` | Iconos vectoriales ligeros |
-| **Móvil (preparado)** | Capacitor 8 | Empaquetado nativo futuro (Android / iOS) |
-| **Calidad de código** | ESLint 10 + `typescript-eslint` | Reglas de React Hooks y análisis estático |
-
----
-
-## 🏗️ Arquitectura y decisiones técnicas
-
-```text
-src/
-├── components/
-│   ├── SkyMap.tsx                # Canvas interactivo 2D Planisferio y 3D Bóveda (Pointer Events)
-│   ├── MoonPhase3D.tsx           # Esfera lunar SVG basada en el ángulo de fase real
-│   ├── StarfieldBackground.tsx   # Fondo estelar en canvas con soporte prefers-reduced-motion
-│   ├── WeatherPanel.tsx          # Panel meteorológico y desglose de nubosidad por capas
-│   └── EventsPanel.tsx           # Próximas lluvias de estrellas y eclipses locales
-├── core/
-│   ├── skyCalculator.ts          # Cálculos astronómicos, precesión J2000 y validación de entrada
-│   ├── eventsCalculator.ts       # Búsqueda de eclipses visibles y cálculo de lluvias anuales
-│   └── weatherService.ts         # Cliente Open-Meteo en UTC, caché local y fallback offline
-├── data/
-│   ├── brightStars.ts            # Catálogo de 33 estrellas brillantes y trazos de constelaciones
-│   ├── messierCatalog.ts         # Catálogo de 12 objetos de cielo profundo (nebulosas, cúmulos, galaxias)
-│   └── meteorShowers.ts          # Calendario de 9 lluvias de estrellas anuales
-├── types/
-│   └── astronomy.ts              # Contratos e interfaces TypeScript centralizadas
-├── App.tsx                       # Estado principal, temas, GPS y control temporal
-└── main.tsx                      # Punto de entrada de React
+## File: index.html
+````html
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#020617" />
+    <title>SkyProject — Mapa Celeste</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
 ````
 
-## File: src/components/WeatherPanel.tsx
-````typescript
-import { Cloud, Droplets, Moon, Sun, Thermometer, Wind } from 'lucide-react';
-import type { CondicionesMeteo, TemaVisual } from '../types/astronomy';
+## File: package.json
+````json
+{
+  "name": "sky_project",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.6.2",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/space-grotesk": "^5.3.0",
+    "@tailwindcss/vite": "^4.3.5",
+    "astronomy-engine": "^2.1.19",
+    "lucide-react": "^1.80.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.5"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.2",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^8.3.6",
+    "vitest": "^5.1.2"
+  }
+}
+````
 
-interface WeatherPanelProps {
-  meteo: CondicionesMeteo | null;
-  cargando: boolean;
-  aviso: string | null;
+## File: src/components/EventsPanel.tsx
+````typescript
+import { CalendarClock, Sparkles, Eclipse, ArrowUpRight } from 'lucide-react';
+import type { EventoCeleste, TemaVisual } from '../types/astronomy';
+
+interface EventsPanelProps {
+  eventos: EventoCeleste[];
   tema: TemaVisual;
   claseTarjeta: string;
-  onSeleccionarHora: (fecha: Date) => void;
+  onSeleccionarFecha: (fecha: Date) => void;
 }
 
-const ESTILOS_VEREDICTO_OSCURO: Record<CondicionesMeteo['veredicto'], string> = {
-  Excelente: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400',
-  Aceptable: 'border-amber-500/40 bg-amber-500/15 text-amber-400',
-  Desfavorable: 'border-rose-500/40 bg-rose-500/15 text-rose-400',
-};
-
-const ESTILOS_VEREDICTO_CLARO: Record<CondicionesMeteo['veredicto'], string> = {
-  Excelente: 'border-emerald-600/40 bg-emerald-500/15 text-emerald-700',
-  Aceptable: 'border-amber-600/40 bg-amber-500/15 text-amber-700',
-  Desfavorable: 'border-rose-600/40 bg-rose-500/15 text-rose-700',
-};
-
-const COLORES_BARRA_OSCURO: Record<CondicionesMeteo['veredicto'], string> = {
-  Excelente: 'bg-emerald-400',
-  Aceptable: 'bg-amber-400',
-  Desfavorable: 'bg-rose-400',
-};
-
-const COLORES_BARRA_CLARO: Record<CondicionesMeteo['veredicto'], string> = {
-  Excelente: 'bg-emerald-600',
-  Aceptable: 'bg-amber-500',
-  Desfavorable: 'bg-rose-600',
-};
-
-const COLORES_BARRA_ROJO: Record<CondicionesMeteo['veredicto'], string> = {
-  Excelente: 'bg-red-500',
-  Aceptable: 'bg-red-700',
-  Desfavorable: 'bg-red-900',
-};
-
-function obtenerEstiloVeredicto(tema: TemaVisual, veredicto: CondicionesMeteo['veredicto']): string {
-  if (tema === 'rojo') return 'border-red-600 bg-red-950/50 text-red-500';
-  if (tema === 'claro') return ESTILOS_VEREDICTO_CLARO[veredicto];
-  return ESTILOS_VEREDICTO_OSCURO[veredicto];
+function formatearBadgeDias(dias: number): string {
+  if (dias < 0) return 'Ayer';
+  if (dias === 0) return '¡Hoy!';
+  if (dias === 1) return 'Mañana';
+  return `En ${dias} días`;
 }
 
-function obtenerColorBarraFranja(
-  tema: TemaVisual,
-  veredicto: CondicionesMeteo['veredicto']
-): string {
-  if (tema === 'rojo') return COLORES_BARRA_ROJO[veredicto];
-  if (tema === 'claro') return COLORES_BARRA_CLARO[veredicto];
-  return COLORES_BARRA_OSCURO[veredicto];
+function obtenerClaseIconoEvento(tema: TemaVisual, tipo: EventoCeleste['tipo']): string {
+  if (tema === 'rojo') return 'text-red-500';
+  if (tema === 'claro') return tipo === 'lluvia' ? 'text-amber-600' : 'text-sky-600';
+  return tipo === 'lluvia' ? 'text-amber-400' : 'text-sky-400';
 }
 
-export function WeatherPanel({
-  meteo,
-  cargando,
-  aviso,
+function obtenerClaseBadgeDias(tema: TemaVisual): string {
+  if (tema === 'rojo') return 'border-red-600 text-red-500';
+  if (tema === 'claro') return 'border-sky-600/40 bg-sky-500/10 text-sky-700';
+  return 'border-sky-500/40 bg-sky-500/10 text-sky-400';
+}
+
+export function EventsPanel({
+  eventos,
   tema,
   claseTarjeta,
-  onSeleccionarHora,
-}: Readonly<WeatherPanelProps>) {
-  const colorBarra =
-    tema === 'rojo' ? 'bg-red-600' : tema === 'claro' ? 'bg-sky-600' : 'bg-sky-400';
-
+  onSeleccionarFecha,
+}: Readonly<EventsPanelProps>) {
   return (
     <section className={`p-4 rounded-2xl border space-y-3 ${claseTarjeta}`}>
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between">
         <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75 flex items-center gap-2">
-          <Cloud className="w-4 h-4" /> Condiciones del Cielo
+          <CalendarClock className="w-4 h-4" aria-hidden="true" /> Próximos Eventos Celestes
         </h2>
-
-        {meteo && (
-          <span
-            className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${obtenerEstiloVeredicto(
-              tema,
-              meteo.veredicto
-            )}`}
-          >
-            {meteo.veredicto}
-          </span>
-        )}
+        <span className="text-[11px] opacity-60">Lluvias y Eclipses</span>
       </div>
 
-      {cargando && <p className="text-xs opacity-70 font-mono">Consultando Open-Meteo...</p>}
+      <div className="space-y-2.5">
+        {eventos.map((ev) => {
+          const fechaTexto = ev.fechaPico.toLocaleDateString('es-ES', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+          });
 
-      {!cargando && meteo && (
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono opacity-75">
-            <span>Pronóstico: {meteo.horaPronostico}</span>
-            {meteo.esCache && (
-              <span className="px-2 py-0.5 rounded-full border border-current/25">
-                Desde caché
-              </span>
-            )}
-          </div>
+          const claseHoverEvento =
+            tema === 'rojo'
+              ? 'hover:border-red-600/80'
+              : tema === 'claro'
+                ? 'hover:border-slate-300 hover:shadow-md'
+                : 'hover:border-sky-500/40';
 
-          <div className="grid grid-cols-4 gap-2 text-center font-mono text-xs pt-1">
-            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
-              <Cloud className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" />
-              <div className="font-bold text-sm">{meteo.nubesTotal}%</div>
-              <div className="text-[10px] opacity-65">Nubes</div>
-            </div>
-            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
-              <Wind className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" />
-              <div className="font-bold text-sm">{meteo.vientoKmh}</div>
-              <div className="text-[10px] opacity-65">km/h</div>
-            </div>
-            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
-              <Droplets className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" />
-              <div className="font-bold text-sm">{meteo.humedad}%</div>
-              <div className="text-[10px] opacity-65">Humedad</div>
-            </div>
-            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
-              <Thermometer className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" />
-              <div className="font-bold text-sm">{meteo.temperatura}°</div>
-              <div className="text-[10px] opacity-65">Temp.</div>
-            </div>
-          </div>
-
-          <div className="space-y-1.5 text-xs font-mono pt-1">
-            {[
-              { etiqueta: 'Nubes bajas (< 3 km)', valor: meteo.nubesBajas },
-              { etiqueta: 'Nubes medias (3-8 km)', valor: meteo.nubesMedias },
-              { etiqueta: 'Nubes altas (> 8 km)', valor: meteo.nubesAltas },
-            ].map((capa) => (
-              <div key={capa.etiqueta} className="space-y-1">
-                <div className="flex justify-between opacity-80">
-                  <span>{capa.etiqueta}</span>
-                  <span>{capa.valor}%</span>
-                </div>
-                <div className="w-full h-1.5 rounded-full bg-current/15 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all motion-reduce:transition-none ${colorBarra}`}
-                    style={{ width: `${capa.valor}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {meteo.proximasHoras.length > 0 && (
-            <div className="pt-2 border-t border-current/15 space-y-2">
-              <div className="flex items-center justify-between gap-2 text-[11px] font-mono">
-                <span className="uppercase tracking-wider font-semibold opacity-75">
-                  Ventana de las próximas 12 h
+          return (
+            <div
+              key={ev.id}
+              className={`tarjeta-3d p-3.5 rounded-xl border border-current/15 bg-current/5 flex flex-col gap-1.5 ${claseHoverEvento}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-bold text-sm flex items-center gap-1.5">
+                  {ev.tipo === 'lluvia' ? (
+                    <Sparkles
+                      className={`w-3.5 h-3.5 shrink-0 ${obtenerClaseIconoEvento(tema, 'lluvia')}`}
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Eclipse
+                      className={`w-3.5 h-3.5 shrink-0 ${obtenerClaseIconoEvento(tema, 'eclipse')}`}
+                      aria-hidden="true"
+                    />
+                  )}
+                  {ev.titulo}
                 </span>
-                <span className="opacity-60">Claridad · clic para saltar</span>
+
+                <span
+                  className={`text-[11px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${obtenerClaseBadgeDias(
+                    tema
+                  )}`}
+                >
+                  {formatearBadgeDias(ev.diasRestantes)}
+                </span>
               </div>
 
-              <div className="overflow-x-auto pb-1 -mx-1 px-1">
-                <div className="grid grid-cols-12 gap-1 min-w-[432px] sm:min-w-0">
-                  {meteo.proximasHoras.map((franja, indice) => {
-                    const claridad = Math.min(100, Math.max(0, 100 - franja.nubesTotal));
-                    const colorBarraFranja = obtenerColorBarraFranja(tema, franja.veredicto);
-                    const esHoraActual = indice === 0;
-                    const claseFranjaActiva = esHoraActual
-                      ? 'border-current/40 bg-current/10'
-                      : 'border-current/15 bg-current/5 hover:border-current/35 hover:bg-current/10';
-
-                    return (
-                      <button
-                        key={franja.fechaISO}
-                        type="button"
-                        onClick={() => {
-                          const fecha = new Date(franja.fechaISO);
-                          if (!Number.isNaN(fecha.getTime())) {
-                            onSeleccionarHora(fecha);
-                          }
-                        }}
-                        title={`${franja.horaLocal} · Claridad ${claridad}% (Nubes ${franja.nubesTotal}%) · Viento ${franja.vientoKmh} km/h · ${franja.veredicto} · ${franja.esNoche ? 'Noche' : 'Día'}`}
-                        aria-label={`Ver cielo a las ${franja.horaLocal}, claridad ${claridad}%, ${franja.veredicto}, ${franja.esNoche ? 'noche' : 'día'}`}
-                        className={`flex flex-col items-center gap-1 py-1.5 px-0.5 rounded-lg border cursor-pointer transition-colors motion-reduce:transition-none ${claseFranjaActiva}`}
-                      >
-                        <div className="w-2.5 h-11 rounded-full bg-current/10 flex items-end overflow-hidden">
-                          <div
-                            className={`w-full rounded-full transition-all motion-reduce:transition-none ${colorBarraFranja}`}
-                            style={{ height: `${claridad}%` }}
-                          />
-                        </div>
-                        {franja.esNoche ? (
-                          <Moon className="w-2.5 h-2.5 opacity-75" aria-hidden="true" />
-                        ) : (
-                          <Sun className="w-2.5 h-2.5 opacity-45" aria-hidden="true" />
-                        )}
-                        <span className="text-[9px] font-mono leading-none opacity-80">
-                          {franja.horaLocal}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+              <div className="text-xs opacity-80 font-mono flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  {fechaTexto} · {ev.resumen}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onSeleccionarFecha(ev.fechaPico)}
+                  aria-label={`Ver ${ev.titulo} en el mapa celeste`}
+                  className="inline-flex items-center gap-1 min-h-9 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 no-underline hover:opacity-100 cursor-pointer font-sans font-medium transition-colors"
+                >
+                  Ver en mapa <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
+                </button>
               </div>
+              <p className="text-[11px] opacity-65">{ev.detalle}</p>
             </div>
-          )}
-        </>
-      )}
-
-      {!cargando && aviso && <p className="text-xs opacity-70 font-mono">{aviso}</p>}
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -4028,9 +3987,549 @@ export function calcularTransitoCuerpo(
 }
 ````
 
+## File: src/index.css
+````css
+@import "tailwindcss";
+
+/* Sistema tipográfico astronómico (fuentes locales vía @fontsource-variable) */
+@theme {
+  --font-display: 'Space Grotesk Variable', system-ui, sans-serif;
+  --font-sans: 'Inter Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  /* Filtro Rojo: ningún acento del navegador puede salir del espectro rojo */
+  .tema-rojo {
+    accent-color: #dc2626;
+  }
+
+  .tema-rojo *:focus-visible {
+    outline-color: #dc2626;
+  }
+
+  .tema-rojo ::selection {
+    background-color: #7f1d1d;
+    color: #f87171;
+  }
+
+  button,
+  a,
+  input,
+  [role="slider"] {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer utilities {
+  .tarjeta-3d {
+    transform-style: preserve-3d;
+    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 240ms ease,
+      border-color 240ms ease,
+      opacity 200ms ease;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .tarjeta-3d:hover {
+      transform: perspective(900px) translateY(-2px) rotateX(1.2deg);
+    }
+  }
+
+  /* ── Estética HUD de observatorio ─────────────────────────────── */
+  .hud-esquinas {
+    position: relative;
+  }
+
+  /* Esquinas técnicas discretas (marcas de retícula en las 4 esquinas) */
+  .hud-esquinas::before {
+    content: '';
+    position: absolute;
+    inset: 6px;
+    pointer-events: none;
+    border-radius: inherit;
+    --hud-l: 12px;
+    --hud-g: 1.5px;
+    background:
+      linear-gradient(var(--hud-color), var(--hud-color)) top left / var(--hud-l) var(--hud-g) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) top left / var(--hud-g) var(--hud-l) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) top right / var(--hud-l) var(--hud-g) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) top right / var(--hud-g) var(--hud-l) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) bottom left / var(--hud-l) var(--hud-g) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) bottom left / var(--hud-g) var(--hud-l) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) bottom right / var(--hud-l) var(--hud-g) no-repeat,
+      linear-gradient(var(--hud-color), var(--hud-color)) bottom right / var(--hud-g) var(--hud-l) no-repeat;
+  }
+
+  /* Oscuro: brillo cian tenue */
+  .hud-oscuro {
+    --hud-color: rgb(34 211 238 / 0.45);
+    box-shadow:
+      0 0 0 1px rgb(34 211 238 / 0.04),
+      0 0 24px -12px rgb(34 211 238 / 0.35),
+      0 20px 25px -5px rgb(0 0 0 / 0.3);
+  }
+
+  /* Claro: acabado limpio de instrumento */
+  .hud-claro {
+    --hud-color: rgb(71 85 105 / 0.45);
+  }
+
+  /* Rojo: líneas finas rojo oscuro, sin brillo */
+  .hud-rojo {
+    --hud-color: rgb(153 27 27 / 0.9);
+  }
+
+  /* Rejilla técnica tenue para fondos de instrumentos */
+  .hud-rejilla {
+    background-image:
+      linear-gradient(to right, color-mix(in srgb, currentColor 7%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in srgb, currentColor 7%, transparent) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  /* Icono de brújula con oscilación sutil */
+  .brujula-icono-animada {
+    animation: brujula-oscilar 4.5s ease-in-out infinite;
+    transform-origin: center;
+  }
+
+  .alineacion-pulso {
+    animation: alineacion-pulso 1.6s ease-in-out infinite;
+  }
+
+  /* Deslizadores HUD: usan currentColor para respetar los 3 temas */
+  .rango-hud {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    height: 2.5rem;
+    background: transparent;
+    cursor: pointer;
+    touch-action: pan-y;
+  }
+
+  .rango-hud::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: color-mix(in srgb, currentColor 30%, transparent);
+  }
+
+  .rango-hud::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: color-mix(in srgb, currentColor 30%, transparent);
+  }
+
+  .rango-hud::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px;
+    height: 22px;
+    margin-top: -9px;
+    border-radius: 9999px;
+    background: currentColor;
+    border: 3px solid color-mix(in srgb, currentColor 35%, black);
+  }
+
+  .rango-hud::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 9999px;
+    background: currentColor;
+    border: 3px solid color-mix(in srgb, currentColor 35%, black);
+  }
+}
+
+@keyframes brujula-oscilar {
+  0%,
+  100% {
+    transform: rotate(-14deg);
+  }
+  50% {
+    transform: rotate(14deg);
+  }
+}
+
+@keyframes alineacion-pulso {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tarjeta-3d,
+  .tarjeta-3d:hover {
+    transform: none;
+    transition: none;
+  }
+
+  .brujula-icono-animada,
+  .alineacion-pulso {
+    animation: none;
+  }
+}
+````
+
+## File: README.md
+````markdown
+# ✨ SkyProject
+
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-Strict-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vite.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![Capacitor](https://img.shields.io/badge/Capacitor-8-119EFF?style=for-the-badge&logo=capacitor&logoColor=white)](https://capacitorjs.com/)
+[![Vitest](https://img.shields.io/badge/Vitest-Tested-6E9F18?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Offline First](https://img.shields.io/badge/Architecture-Offline--First-10B981?style=for-the-badge)](#arquitectura-y-decisiones-técnicas)
+
+Aplicación web **offline-first** (`v1.0.0`) de astronomía observacional para planificar salidas nocturnas y explorar la bóveda celeste en tiempo real. Calcula efemérides planetarias, posiciones estelares, objetos del catálogo Messier, próximos eventos astronómicos y previsión meteorológica por capas de nubosidad para cualquier ubicación y fecha.
+
+---
+
+## 🚀 Funcionalidades principales
+
+- **Navbar responsive y navegación unificada (`Navbar`):** barra superior adaptable con acceso directo al Observatorio, Guía de uso, Brújula 3D, selector rápido de ubicación/GPS y cambio de tema visual.
+- **Mapa celeste interactivo (`<canvas>`) con doble vista y control por teclado:**
+  - **2D Planisferio:** proyección polar del cielo con rejilla de altitud (30° y 60°), puntos cardinales e inspección de astros por puntero o toque.
+  - **3D Bóveda:** proyección hemisférica interactiva con rotación libre mediante arrastre (ratón/táctil) y teclado (`ArrowLeft`, `ArrowRight`, `ArrowUp`, `ArrowDown`, `R`/`Home`).
+  - Renderizado de **33 estrellas brillantes** con colores espectrales, líneas de constelaciones (Orión, Osa Mayor, Casiopea), **12 objetos Messier**, Luna y planetas (incluidos los anillos de Saturno), además de trayectorias ±6h y retícula de selección.
+- **Buscador global de astros con autoenfoque 3D:** búsqueda instantánea por nombre, constelación o código Messier con navegación por teclado (`combobox`/`listbox`), activación automática de la capa Messier y centrado suave en la bóveda 3D.
+- **Reproductor Time-Lapse y control temporal:** atajos rápidos (`Ahora`, `Esta noche 23:30`, `+1h`), selector manual y simulación animada del movimiento celeste a `+15 min/s` o `+1 h/s`.
+- **Brújula Astronómica 3D (`Compass3DModal`):** herramienta de apuntado celeste en tiempo real con soporte para sensores reales del dispositivo (`DeviceOrientationEvent`) y modo simulación interactivo para escritorio o pruebas en interior.
+- **Guía del Observatorio (`AstronomyGuide`):** documentación integrada paso a paso con diagramas SVG interactivos sobre coordenadas horizontales (altitud y acimut), fases crepusculares y planificación de sesiones.
+- **Motor astronómico local (`astronomy-engine`):**
+  - Altitud, acimut, orientación cardinal, magnitud aparente, visibilidad sobre el horizonte y efemérides de tránsito (salida, culminación y puesta).
+  - Precesión de coordenadas desde época **J2000** a la fecha exacta de observación.
+  - Cálculo del estado solar y fase del crepúsculo (*Día*, *Civil*, *Náutico*, *Astronómico* y *Noche astronómica*).
+- **Esfera lunar dinámica (`MoonPhase3D`):** representación SVG vectorial de la fase lunar real a partir del ángulo de fase, con sombreado de limbo y mares lunares adaptados al tema activo.
+- **Meteorología astronómica y Ventana Óptima de 12 h (Open-Meteo API):**
+  - Consulta sincronizada en **UTC** hasta 14 días vista con desglose de nubosidad baja (< 3 km), media (3–8 km) y alta (> 8 km), viento, humedad, temperatura y veredicto automático (*Excelente*, *Aceptable* o *Desfavorable*).
+  - **Ventana de las próximas 12 h:** barra interactiva de claridad hora a hora con indicador día/noche y salto directo al cielo de esa franja en un clic.
+  - Caché en `localStorage` (TTL de 1 hora) con *fallback* automático sin conexión.
+- **Calendario de próximos eventos celestes:** próximas lluvias de estrellas (THZ y radiante) y eclipses lunares y solares calculados para las coordenadas del observador, con salto directo en un clic al mapa en la fecha del pico.
+- **Gestor de observatorios favoritos y GPS:** geolocalización del dispositivo con mensajes de error específicos, edición manual validada y guardado persistente de hasta 8 ubicaciones favoritas en `localStorage`.
+- **Tres temas visuales, accesibilidad WCAG 2.1 AA y soporte móvil (Capacitor):** `Oscuro`, `Claro` y **Filtro Rojo** para preservar la adaptación ocular nocturna, respeto a `prefers-reduced-motion`, áreas seguras (`safe-area-inset`) y sincronización dinámica de `<meta name="theme-color">`.
+
+---
+
+## 📸 Capturas recomendadas
+
+> Sustituye las rutas siguientes por tus capturas reales dentro de `docs/screenshots/` (recomendado: ancho de `1280px` en formato `.webp` o `.png`).
+
+| Vista | Descripción recomendada para la captura |
+| :--- | :--- |
+| ![Vista principal en modo oscuro](docs/screenshots/vista-principal-oscuro.png) | **Vista principal (Tema Oscuro):** mapa celeste en 2D/3D, panel meteorológico con ventana de 12 h y tarjetas del Sistema Solar con la esfera lunar `MoonPhase3D`. |
+| ![Bóveda 3D interactiva](docs/screenshots/boveda-3d.png) | **Modo 3D Bóveda:** cúpula rotada mostrando constelaciones, objetos Messier, trayectoria ±6h y barra de inspección fija. |
+| ![Modo Filtro Rojo](docs/screenshots/filtro-rojo-nocturno.png) | **Tema Filtro Rojo:** interfaz completa en modo de visión nocturna junto a la Brújula 3D y el panel de próximos eventos celestes. |
+
+---
+
+## 🛠️ Stack tecnológico
+
+| Categoría | Tecnología | Uso en el proyecto |
+| :--- | :--- | :--- |
+| **Frontend** | React 19 + TypeScript (modo estricto) | UI reactiva y tipado exhaustivo sin `any` |
+| **Build & Estilos** | Vite 8 + Tailwind CSS v4 | Bundling ultrarrápido y diseño *responsive* |
+| **Astronomía** | `astronomy-engine` | Efemérides, precesión J2000 y eclipses 100% en local |
+| **Meteorología** | Open-Meteo API | Previsión horaria en UTC con caché en `localStorage` |
+| **Iconografía** | `lucide-react` | Iconos vectoriales ligeros |
+| **Testing** | Vitest | Tests unitarios del motor astronómico, eventos y caché meteo |
+| **Móvil (preparado)** | Capacitor 8 | Empaquetado nativo futuro (Android / iOS) |
+| **Calidad de código** | ESLint 10 + `typescript-eslint` | Reglas de React Hooks y análisis estático |
+
+---
+
+## 📜 Scripts disponibles
+
+| Comando | Descripción |
+| :--- | :--- |
+| `npm run dev` | Inicia el servidor de desarrollo local con Vite |
+| `npm run build` | Comprueba tipos con TypeScript (`tsc -b`) y genera el bundle de producción |
+| `npm run preview` | Previsualiza localmente el build de producción |
+| `npm run lint` | Ejecuta ESLint sobre todo el proyecto |
+| `npm test` | Ejecuta la batería de tests unitarios con Vitest (`vitest run`) |
+
+---
+
+## 🏗️ Arquitectura y decisiones técnicas
+
+```text
+sky_project/
+├── src/
+│   ├── components/
+│   │   ├── Navbar.tsx                # Barra de navegación responsive, GPS, tema y acceso a Brújula 3D
+│   │   ├── SkyMap.tsx                # Canvas interactivo 2D Planisferio y 3D Bóveda (Pointer + Teclado)
+│   │   ├── Compass3DModal.tsx        # Brújula Astronómica 3D con DeviceOrientationEvent y modo simulación
+│   │   ├── AstronomyGuide.tsx        # Guía del Observatorio con diagramas SVG interactivos
+│   │   ├── MoonPhase3D.tsx           # Esfera lunar SVG basada en el ángulo de fase real
+│   │   ├── StarfieldBackground.tsx   # Fondo estelar en canvas con soporte prefers-reduced-motion
+│   │   ├── WeatherPanel.tsx          # Panel meteorológico, nubosidad por capas y Ventana Óptima de 12 h
+│   │   └── EventsPanel.tsx           # Próximas lluvias de estrellas y eclipses locales
+│   ├── core/
+│   │   ├── __tests__/
+│   │   │   └── astronomy.test.ts     # Batería de tests unitarios con Vitest
+│   │   ├── skyCalculator.ts          # Cálculos astronómicos, precesión J2000, tránsitos y validación
+│   │   ├── eventsCalculator.ts       # Búsqueda de eclipses visibles y cálculo de lluvias anuales
+│   │   └── weatherService.ts         # Cliente Open-Meteo en UTC, caché local y fallback offline
+│   ├── data/
+│   │   ├── brightStars.ts            # Catálogo de 33 estrellas brillantes y trazos de constelaciones
+│   │   ├── messierCatalog.ts         # Catálogo de 12 objetos de cielo profundo (nebulosas, cúmulos, galaxias)
+│   │   └── meteorShowers.ts          # Calendario de 9 lluvias de estrellas anuales
+│   ├── types/
+│   │   └── astronomy.ts              # Contratos e interfaces TypeScript centralizadas
+│   ├── App.tsx                       # Estado principal, buscador, Time-Lapse, favoritos, GPS y temas
+│   └── main.tsx                      # Punto de entrada de React
+├── capacitor.config.ts               # Configuración base de Capacitor para empaquetado móvil
+├── GEMINI.md                         # Reglas de arquitectura y estándares del proyecto
+└── AGENTS.md                         # Guía de convenciones, verificación y commits
+```
+````
+
+## File: src/components/WeatherPanel.tsx
+````typescript
+import { Cloud, Droplets, Moon, Sun, Thermometer, Wind } from 'lucide-react';
+import type { CondicionesMeteo, TemaVisual } from '../types/astronomy';
+
+interface WeatherPanelProps {
+  meteo: CondicionesMeteo | null;
+  cargando: boolean;
+  aviso: string | null;
+  tema: TemaVisual;
+  claseTarjeta: string;
+  onSeleccionarHora: (fecha: Date) => void;
+}
+
+const ESTILOS_VEREDICTO_OSCURO: Record<CondicionesMeteo['veredicto'], string> = {
+  Excelente: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400',
+  Aceptable: 'border-amber-500/40 bg-amber-500/15 text-amber-400',
+  Desfavorable: 'border-rose-500/40 bg-rose-500/15 text-rose-400',
+};
+
+const ESTILOS_VEREDICTO_CLARO: Record<CondicionesMeteo['veredicto'], string> = {
+  Excelente: 'border-emerald-600/40 bg-emerald-500/15 text-emerald-700',
+  Aceptable: 'border-amber-600/40 bg-amber-500/15 text-amber-700',
+  Desfavorable: 'border-rose-600/40 bg-rose-500/15 text-rose-700',
+};
+
+const COLORES_BARRA_OSCURO: Record<CondicionesMeteo['veredicto'], string> = {
+  Excelente: 'bg-emerald-400',
+  Aceptable: 'bg-amber-400',
+  Desfavorable: 'bg-rose-400',
+};
+
+const COLORES_BARRA_CLARO: Record<CondicionesMeteo['veredicto'], string> = {
+  Excelente: 'bg-emerald-600',
+  Aceptable: 'bg-amber-500',
+  Desfavorable: 'bg-rose-600',
+};
+
+const COLORES_BARRA_ROJO: Record<CondicionesMeteo['veredicto'], string> = {
+  Excelente: 'bg-red-500',
+  Aceptable: 'bg-red-700',
+  Desfavorable: 'bg-red-900',
+};
+
+function obtenerEstiloVeredicto(tema: TemaVisual, veredicto: CondicionesMeteo['veredicto']): string {
+  if (tema === 'rojo') return 'border-red-600 bg-red-950/50 text-red-500';
+  if (tema === 'claro') return ESTILOS_VEREDICTO_CLARO[veredicto];
+  return ESTILOS_VEREDICTO_OSCURO[veredicto];
+}
+
+function obtenerColorBarraFranja(
+  tema: TemaVisual,
+  veredicto: CondicionesMeteo['veredicto']
+): string {
+  if (tema === 'rojo') return COLORES_BARRA_ROJO[veredicto];
+  if (tema === 'claro') return COLORES_BARRA_CLARO[veredicto];
+  return COLORES_BARRA_OSCURO[veredicto];
+}
+
+export function WeatherPanel({
+  meteo,
+  cargando,
+  aviso,
+  tema,
+  claseTarjeta,
+  onSeleccionarHora,
+}: Readonly<WeatherPanelProps>) {
+  const colorBarra =
+    tema === 'rojo' ? 'bg-red-600' : tema === 'claro' ? 'bg-sky-600' : 'bg-sky-400';
+
+  return (
+    <section className={`p-4 rounded-2xl border space-y-3 ${claseTarjeta}`}>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75 flex items-center gap-2">
+          <Cloud className="w-4 h-4" aria-hidden="true" /> Condiciones del Cielo
+        </h2>
+
+        {meteo && (
+          <span
+            className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${obtenerEstiloVeredicto(
+              tema,
+              meteo.veredicto
+            )}`}
+          >
+            {meteo.veredicto}
+          </span>
+        )}
+      </div>
+
+      {cargando && (
+        <p role="status" aria-live="polite" className="text-xs opacity-70 font-mono">
+          Consultando Open-Meteo...
+        </p>
+      )}
+
+      {!cargando && meteo && (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono opacity-75">
+            <span>Pronóstico: {meteo.horaPronostico}</span>
+            {meteo.esCache && (
+              <span className="px-2 py-0.5 rounded-full border border-current/25">
+                Desde caché
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center font-mono text-xs pt-1">
+            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
+              <Cloud className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" aria-hidden="true" />
+              <div className="font-bold text-sm">{meteo.nubesTotal}%</div>
+              <div className="text-[10px] opacity-65">Nubes</div>
+            </div>
+            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
+              <Wind className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" aria-hidden="true" />
+              <div className="font-bold text-sm">{meteo.vientoKmh}</div>
+              <div className="text-[10px] opacity-65">km/h</div>
+            </div>
+            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
+              <Droplets className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" aria-hidden="true" />
+              <div className="font-bold text-sm">{meteo.humedad}%</div>
+              <div className="text-[10px] opacity-65">Humedad</div>
+            </div>
+            <div className="p-2 rounded-xl border border-current/15 bg-current/5 transition-colors hover:border-current/30">
+              <Thermometer className="w-3.5 h-3.5 mx-auto mb-1 opacity-75" aria-hidden="true" />
+              <div className="font-bold text-sm">{meteo.temperatura}°</div>
+              <div className="text-[10px] opacity-65">Temp.</div>
+            </div>
+          </div>
+
+          <div className="space-y-1.5 text-xs font-mono pt-1">
+            {[
+              { etiqueta: 'Nubes bajas (< 3 km)', valor: meteo.nubesBajas },
+              { etiqueta: 'Nubes medias (3-8 km)', valor: meteo.nubesMedias },
+              { etiqueta: 'Nubes altas (> 8 km)', valor: meteo.nubesAltas },
+            ].map((capa) => (
+              <div key={capa.etiqueta} className="space-y-1">
+                <div className="flex justify-between opacity-80">
+                  <span>{capa.etiqueta}</span>
+                  <span>{capa.valor}%</span>
+                </div>
+                <div
+                  role="progressbar"
+                  aria-label={capa.etiqueta}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={capa.valor}
+                  className="w-full h-1.5 rounded-full bg-current/15 overflow-hidden"
+                >
+                  <div
+                    className={`h-full rounded-full transition-all motion-reduce:transition-none ${colorBarra}`}
+                    style={{ width: `${capa.valor}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {meteo.proximasHoras.length > 0 && (
+            <div className="pt-2 border-t border-current/15 space-y-2">
+              <div className="flex items-center justify-between gap-2 text-[11px] font-mono">
+                <span className="uppercase tracking-wider font-semibold opacity-75">
+                  Ventana de las próximas 12 h
+                </span>
+                <span className="opacity-60">Claridad · clic para saltar</span>
+              </div>
+
+              <div className="overflow-x-auto pb-1 -mx-1 px-1">
+                <div className="grid grid-cols-12 gap-1 min-w-[432px] sm:min-w-0">
+                  {meteo.proximasHoras.map((franja, indice) => {
+                    const claridad = Math.min(100, Math.max(0, 100 - franja.nubesTotal));
+                    const colorBarraFranja = obtenerColorBarraFranja(tema, franja.veredicto);
+                    const esHoraActual = indice === 0;
+                    const claseFranjaActiva = esHoraActual
+                      ? 'border-current/40 bg-current/10'
+                      : 'border-current/15 bg-current/5 hover:border-current/35 hover:bg-current/10';
+
+                    return (
+                      <button
+                        key={franja.fechaISO}
+                        type="button"
+                        onClick={() => {
+                          const fecha = new Date(franja.fechaISO);
+                          if (!Number.isNaN(fecha.getTime())) {
+                            onSeleccionarHora(fecha);
+                          }
+                        }}
+                        title={`${franja.horaLocal} · Claridad ${claridad}% (Nubes ${franja.nubesTotal}%) · Viento ${franja.vientoKmh} km/h · ${franja.veredicto} · ${franja.esNoche ? 'Noche' : 'Día'}`}
+                        aria-label={`Ver cielo a las ${franja.horaLocal}, claridad ${claridad}%, ${franja.veredicto}, ${franja.esNoche ? 'noche' : 'día'}`}
+                        className={`flex flex-col items-center gap-1 py-1.5 px-0.5 rounded-lg border cursor-pointer transition-colors motion-reduce:transition-none ${claseFranjaActiva}`}
+                      >
+                        <div className="w-2.5 h-11 rounded-full bg-current/10 flex items-end overflow-hidden">
+                          <div
+                            className={`w-full rounded-full transition-all motion-reduce:transition-none ${colorBarraFranja}`}
+                            style={{ height: `${claridad}%` }}
+                          />
+                        </div>
+                        {franja.esNoche ? (
+                          <Moon className="w-2.5 h-2.5 opacity-75" aria-hidden="true" />
+                        ) : (
+                          <Sun className="w-2.5 h-2.5 opacity-45" aria-hidden="true" />
+                        )}
+                        <span className="text-[9px] font-mono leading-none opacity-80">
+                          {franja.horaLocal}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {!cargando && aviso && (
+        <p role="status" aria-live="polite" className="text-xs opacity-70 font-mono">
+          {aviso}
+        </p>
+      )}
+    </section>
+  );
+}
+````
+
 ## File: src/components/SkyMap.tsx
 ````typescript
-import { useEffect, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Globe, Compass, RotateCcw, X } from 'lucide-react';
 import type {
   AstroSeleccionado,
@@ -4723,6 +5222,8 @@ export function SkyMap({
   const arrastreRef = useRef<{
     activo: boolean;
     pointerId: number;
+    inicioX: number;
+    inicioY: number;
     ultimoX: number;
     ultimoY: number;
     movido: boolean;
@@ -4825,10 +5326,13 @@ export function SkyMap({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const size = 560;
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
+    const tamanoBuffer = Math.round(size * dpr);
+    if (canvas.width !== tamanoBuffer || canvas.height !== tamanoBuffer) {
+      canvas.width = tamanoBuffer;
+      canvas.height = tamanoBuffer;
+    }
 
     const cx = size / 2;
     const cy = size / 2;
@@ -4842,6 +5346,7 @@ export function SkyMap({
 
     const dibujarEscena = (fasePulso: number) => {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, size, size);
       const interactivos: ObjetoHover[] = [];
 
       if (modoVista === '2d') {
@@ -4947,10 +5452,13 @@ export function SkyMap({
       arrastreRef.current = {
         activo: true,
         pointerId: e.pointerId,
+        inicioX: e.clientX,
+        inicioY: e.clientY,
         ultimoX: e.clientX,
         ultimoY: e.clientY,
         movido: false,
       };
+      return;
     }
     inspeccionarPuntero(e);
   };
@@ -4960,7 +5468,7 @@ export function SkyMap({
     if (modoVista === '3d' && arrastre && arrastre.activo && arrastre.pointerId === e.pointerId) {
       const dx = e.clientX - arrastre.ultimoX;
       const dy = e.clientY - arrastre.ultimoY;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+      if (Math.hypot(e.clientX - arrastre.inicioX, e.clientY - arrastre.inicioY) > 4) {
         arrastre.movido = true;
       }
       arrastre.ultimoX = e.clientX;
@@ -4988,6 +5496,10 @@ export function SkyMap({
     }
 
     if (fueArrastre) return;
+
+    if (modoVista === '3d') {
+      inspeccionarPuntero(e);
+    }
 
     const encontrado = buscarAstroEnPuntero(e);
     if (encontrado) {
@@ -5019,6 +5531,32 @@ export function SkyMap({
     }
   };
 
+  const manejarKeyDown = (e: KeyboardEvent<HTMLCanvasElement>) => {
+    if (modoVista !== '3d') return;
+
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      cancelarAnimacionCamara();
+      setCamara((prev) => ({ ...prev, rotAz: normalizarAcimut(prev.rotAz - 10) }));
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      cancelarAnimacionCamara();
+      setCamara((prev) => ({ ...prev, rotAz: normalizarAcimut(prev.rotAz + 10) }));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      cancelarAnimacionCamara();
+      setCamara((prev) => ({ ...prev, tilt: Math.min(85, prev.tilt + 5) }));
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      cancelarAnimacionCamara();
+      setCamara((prev) => ({ ...prev, tilt: Math.max(12, prev.tilt - 5) }));
+    } else if (e.key === 'r' || e.key === 'R' || e.key === 'Home') {
+      e.preventDefault();
+      cancelarAnimacionCamara();
+      setCamara(CAMARA_INICIAL);
+    }
+  };
+
   const claseBotonVista = (activo: boolean) => {
     if (!activo) return 'opacity-70 hover:opacity-100';
     if (tema === 'rojo') return 'bg-red-950 text-red-500 border border-red-600';
@@ -5030,24 +5568,30 @@ export function SkyMap({
     <div className="relative flex flex-col items-center justify-center space-y-3">
       {/* Controles de Vista 2D / 3D */}
       <div className="w-full flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-1 p-1 rounded-xl border border-current/20 bg-current/5">
+        <div
+          role="group"
+          aria-label="Modo de proyección del mapa"
+          className="flex items-center gap-1 p-1 rounded-xl border border-current/20 bg-current/5"
+        >
           <button
             type="button"
+            aria-pressed={modoVista === '2d'}
             onClick={() => setModoVista('2d')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors ${claseBotonVista(
+            className={`min-h-10 sm:min-h-8 flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium cursor-pointer transition-colors ${claseBotonVista(
               modoVista === '2d'
             )}`}
           >
-            <Compass className="w-3.5 h-3.5" /> 2D Planisferio
+            <Compass className="w-3.5 h-3.5" aria-hidden="true" /> 2D Planisferio
           </button>
           <button
             type="button"
+            aria-pressed={modoVista === '3d'}
             onClick={() => setModoVista('3d')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors ${claseBotonVista(
+            className={`min-h-10 sm:min-h-8 flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium cursor-pointer transition-colors ${claseBotonVista(
               modoVista === '3d'
             )}`}
           >
-            <Globe className="w-3.5 h-3.5" /> 3D Bóveda
+            <Globe className="w-3.5 h-3.5" aria-hidden="true" /> 3D Bóveda
           </button>
         </div>
 
@@ -5061,9 +5605,9 @@ export function SkyMap({
                   cancelarAnimacionCamara();
                   setCamara(CAMARA_INICIAL);
                 }}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer transition-colors"
+                className="min-h-10 sm:min-h-8 flex items-center gap-1 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer transition-colors"
               >
-                <RotateCcw className="w-3 h-3" /> Centrar
+                <RotateCcw className="w-3 h-3" aria-hidden="true" /> Centrar
               </button>
             </>
           ) : (
@@ -5074,12 +5618,14 @@ export function SkyMap({
 
       <canvas
         ref={canvasRef}
+        tabIndex={0}
         role="img"
         aria-label={
           modoVista === '3d'
             ? 'Bóveda celeste interactiva en 3D con estrellas, constelaciones, objetos Messier y planetas'
             : 'Mapa celeste interactivo con estrellas, constelaciones, objetos Messier y planetas'
         }
+        onKeyDown={manejarKeyDown}
         onPointerDown={manejarPointerDown}
         onPointerMove={manejarPointerMove}
         onPointerUp={manejarPointerUp}
@@ -5103,22 +5649,30 @@ export function SkyMap({
             aria-label="Quitar selección de astro"
             className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-current/25 hover:bg-current/10 cursor-pointer transition-colors"
           >
-            <X className="w-3 h-3" /> Limpiar
+            <X className="w-3 h-3" aria-hidden="true" /> Limpiar
           </button>
         </div>
       )}
 
-      {hoverInfo && (
-        <div
-          className={`px-4 py-2 rounded-xl border text-xs font-mono flex flex-wrap items-center gap-4 ${CLASES_TOOLTIP[tema]}`}
-        >
-          <span className="font-bold text-sm">{hoverInfo.nombre}</span>
-          <span className="opacity-80">{hoverInfo.subtitulo}</span>
-          <span>Alt: {hoverInfo.altitud}°</span>
-          <span>Acimut: {hoverInfo.acimut}°</span>
-          <span>Mag: {hoverInfo.magnitud}</span>
-        </div>
-      )}
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className={`w-full min-h-11 px-4 py-2 rounded-xl border text-xs font-mono flex flex-wrap items-center justify-center gap-x-4 gap-y-1 ${CLASES_TOOLTIP[tema]}`}
+      >
+        {hoverInfo ? (
+          <>
+            <span className="font-bold text-sm">{hoverInfo.nombre}</span>
+            <span className="opacity-80">{hoverInfo.subtitulo}</span>
+            <span>Alt: {hoverInfo.altitud}°</span>
+            <span>Acimut: {hoverInfo.acimut}°</span>
+            <span>Mag: {hoverInfo.magnitud}</span>
+          </>
+        ) : (
+          <span className="font-sans opacity-65 text-center">
+            Toca o pasa el cursor sobre un astro para ver sus coordenadas
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -5301,6 +5855,14 @@ export interface OrientacionBrujula {
   /** Cabeceo/inclinación del dispositivo en grados. */
   inclinacion: number;
 }
+
+export interface ObjetivoBrujula {
+  id: string;
+  nombre: string;
+  acimut: number;
+  altitud: number;
+  color: string;
+}
 ````
 
 ## File: src/App.tsx
@@ -5345,6 +5907,7 @@ import type {
   CondicionesMeteo,
   CuerpoCeleste,
   EfemeridesTransito,
+  ObjetivoBrujula,
   TemaVisual,
   Ubicacion,
   UbicacionFavorita,
@@ -5369,6 +5932,12 @@ const CLASES_CONTENEDOR: Record<TemaVisual, string> = {
   oscuro: 'bg-transparent text-slate-100',
   claro: 'bg-transparent text-slate-900',
   rojo: 'bg-transparent text-red-500',
+};
+
+const COLOR_TEMA_META: Record<TemaVisual, string> = {
+  oscuro: '#020617',
+  claro: '#dbeafe',
+  rojo: '#000000',
 };
 
 const CLASES_TARJETA: Record<TemaVisual, string> = {
@@ -5653,7 +6222,23 @@ export function App() {
   const [mostrarEtiquetasEstrellas, setMostrarEtiquetasEstrellas] = useState(true);
   const [mostrarMessier, setMostrarMessier] = useState(true);
 
-  const claveConsultaMeteo = `${fechaStr}|${ubicacion.latitud.toFixed(4)}|${ubicacion.longitud.toFixed(4)}`;
+  const coordenadasEstables = useMemo<Ubicacion>(
+    () => ({
+      latitud: ubicacion.latitud,
+      longitud: ubicacion.longitud,
+      altitud: ubicacion.altitud,
+      nombre: '',
+    }),
+    [ubicacion.latitud, ubicacion.longitud, ubicacion.altitud]
+  );
+
+  const fechaSeleccionada = useMemo(() => {
+    const fecha = new Date(fechaStr);
+    return Number.isNaN(fecha.getTime()) ? new Date() : fecha;
+  }, [fechaStr]);
+
+  const claveHoraUTC = fechaSeleccionada.toISOString().slice(0, 13);
+  const claveConsultaMeteo = `${claveHoraUTC}|${coordenadasEstables.latitud.toFixed(2)}|${coordenadasEstables.longitud.toFixed(2)}`;
   const [estadoMeteo, setEstadoMeteo] = useState<{
     clave: string;
     datos: CondicionesMeteo | null;
@@ -5677,6 +6262,10 @@ export function App() {
 
   useEffect(() => {
     guardarEnStorage(CLAVE_TEMA, tema);
+    const metaThemeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (metaThemeColor) {
+      metaThemeColor.content = COLOR_TEMA_META[tema];
+    }
   }, [tema]);
 
   useEffect(() => {
@@ -5712,15 +6301,14 @@ export function App() {
     };
   }, [reproduciendo, velocidadMinPorSeg]);
 
-  const fechaSeleccionada = useMemo(() => {
-    const fecha = new Date(fechaStr);
-    return Number.isNaN(fecha.getTime()) ? new Date() : fecha;
-  }, [fechaStr]);
-
   useEffect(() => {
     const controller = new AbortController();
     const temporizador = window.setTimeout(() => {
-      obtenerCondicionesMeteo(fechaSeleccionada, ubicacion, controller.signal)
+      obtenerCondicionesMeteo(
+        new Date(`${claveHoraUTC}:00:00Z`),
+        coordenadasEstables,
+        controller.signal
+      )
         .then(({ datos, aviso }) => {
           if (controller.signal.aborted) return;
           setEstadoMeteo({ clave: claveConsultaMeteo, datos, aviso });
@@ -5740,26 +6328,26 @@ export function App() {
       window.clearTimeout(temporizador);
       controller.abort();
     };
-  }, [claveConsultaMeteo, fechaSeleccionada, ubicacion]);
+  }, [claveConsultaMeteo, claveHoraUTC, coordenadasEstables]);
 
   const estadoSolar = useMemo(
-    () => calcularEstadoSolar(fechaSeleccionada, ubicacion),
-    [fechaSeleccionada, ubicacion]
+    () => calcularEstadoSolar(fechaSeleccionada, coordenadasEstables),
+    [fechaSeleccionada, coordenadasEstables]
   );
 
   const cuerpos = useMemo(
-    () => calcularCielo(fechaSeleccionada, ubicacion),
-    [fechaSeleccionada, ubicacion]
+    () => calcularCielo(fechaSeleccionada, coordenadasEstables),
+    [fechaSeleccionada, coordenadasEstables]
   );
 
   const estrellas = useMemo(
-    () => calcularEstrellas(fechaSeleccionada, ubicacion),
-    [fechaSeleccionada, ubicacion]
+    () => calcularEstrellas(fechaSeleccionada, coordenadasEstables),
+    [fechaSeleccionada, coordenadasEstables]
   );
 
   const messier = useMemo(
-    () => calcularMessier(fechaSeleccionada, ubicacion),
-    [fechaSeleccionada, ubicacion]
+    () => calcularMessier(fechaSeleccionada, coordenadasEstables),
+    [fechaSeleccionada, coordenadasEstables]
   );
 
   const resultadosBusqueda = useMemo<ResultadoBusquedaAstro[]>(() => {
@@ -5839,17 +6427,17 @@ export function App() {
   const trayectoriaAstro = useMemo(
     () =>
       astroSeleccionado
-        ? calcularTrayectoriaAstro(astroSeleccionado, fechaSeleccionada, ubicacion)
+        ? calcularTrayectoriaAstro(astroSeleccionado, fechaSeleccionada, coordenadasEstables)
         : [],
-    [astroSeleccionado, fechaSeleccionada, ubicacion]
+    [astroSeleccionado, fechaSeleccionada, coordenadasEstables]
   );
 
   const transitoSeleccionado: EfemeridesTransito | null = useMemo(
     () =>
       astroSeleccionado && astroSeleccionado.categoria === 'cuerpo'
-        ? calcularTransitoCuerpo(astroSeleccionado.id, fechaSeleccionada, ubicacion)
+        ? calcularTransitoCuerpo(astroSeleccionado.id, fechaSeleccionada, coordenadasEstables)
         : null,
-    [astroSeleccionado, fechaSeleccionada, ubicacion]
+    [astroSeleccionado, fechaSeleccionada, coordenadasEstables]
   );
 
   const diaSeleccionado = fechaStr.slice(0, 10);
@@ -5857,8 +6445,43 @@ export function App() {
   const eventos = useMemo(() => {
     const fechaDia = new Date(`${diaSeleccionado}T12:00:00`);
     const baseValida = Number.isNaN(fechaDia.getTime()) ? new Date() : fechaDia;
-    return calcularProximosEventos(baseValida, ubicacion);
-  }, [diaSeleccionado, ubicacion]);
+    return calcularProximosEventos(baseValida, coordenadasEstables);
+  }, [diaSeleccionado, coordenadasEstables]);
+
+  const objetivoBrujula = useMemo<ObjetivoBrujula | null>(() => {
+    if (!astroSeleccionado) return null;
+    if (astroSeleccionado.categoria === 'cuerpo') {
+      const cuerpo = cuerpos.find((c) => c.id === astroSeleccionado.id);
+      if (!cuerpo || cuerpo.altitud <= 0 || !Number.isFinite(cuerpo.acimut)) return null;
+      return {
+        id: cuerpo.id,
+        nombre: cuerpo.nombre,
+        acimut: cuerpo.acimut,
+        altitud: cuerpo.altitud,
+        color: cuerpo.color,
+      };
+    }
+    if (astroSeleccionado.categoria === 'estrella') {
+      const estrella = estrellas.find((e) => e.id === astroSeleccionado.id);
+      if (!estrella || estrella.altitud <= 0 || !Number.isFinite(estrella.acimut)) return null;
+      return {
+        id: `estrella-${estrella.id}`,
+        nombre: estrella.nombre,
+        acimut: estrella.acimut,
+        altitud: estrella.altitud,
+        color: '#fde68a',
+      };
+    }
+    const objMessier = messier.find((m) => m.id === astroSeleccionado.id);
+    if (!objMessier || objMessier.altitud <= 0 || !Number.isFinite(objMessier.acimut)) return null;
+    return {
+      id: `messier-${objMessier.id}`,
+      nombre: `${objMessier.id} · ${objMessier.nombre}`,
+      acimut: objMessier.acimut,
+      altitud: objMessier.altitud,
+      color: '#34d399',
+    };
+  }, [astroSeleccionado, cuerpos, estrellas, messier]);
 
   const actualizarCampoUbicacion = (campo: keyof FormularioUbicacion, valor: string) => {
     const siguienteForm = { ...formUbicacion, [campo]: valor };
@@ -6009,8 +6632,16 @@ export function App() {
         });
         setCargandoGPS(false);
       },
-      () => {
-        setErrorGPS('No se pudo obtener el GPS. Revisa los permisos o inténtalo de nuevo.');
+      (err) => {
+        if (err.code === 1) {
+          setErrorGPS('Permiso de ubicación denegado. Actívalo en los ajustes del navegador.');
+        } else if (err.code === 2) {
+          setErrorGPS('Señal GPS no disponible en este momento.');
+        } else if (err.code === 3) {
+          setErrorGPS('Tiempo de espera agotado al obtener la ubicación GPS.');
+        } else {
+          setErrorGPS('No se pudo obtener el GPS. Revisa los permisos o inténtalo de nuevo.');
+        }
         setCargandoGPS(false);
       },
       { enableHighAccuracy: false, timeout: 10000 }
@@ -6045,7 +6676,9 @@ export function App() {
   const claseEsquemaInput = tema !== 'claro' ? '[color-scheme:dark]' : '';
 
   return (
-    <div className={`tema-${tema} relative min-h-screen transition-colors duration-300 ${clasesContenedor}`}>
+    <div
+      className={`tema-${tema} relative min-h-screen transition-colors duration-300 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] ${clasesContenedor}`}
+    >
       <StarfieldBackground tema={tema} />
       <Navbar
         tema={tema}
@@ -6071,27 +6704,27 @@ export function App() {
 
         {/* Panel desplegable de Ubicación */}
         {editandoUbicacion && (
-          <section className={`p-4 rounded-2xl border ${clasesTarjeta} space-y-3`}>
+          <section id="panel-ubicacion" className={`p-4 rounded-2xl border ${clasesTarjeta} space-y-3`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="font-semibold text-sm flex items-center gap-2">
-                <MapPin className="w-4 h-4" /> Configurar punto de observación
+                <MapPin className="w-4 h-4" aria-hidden="true" /> Configurar punto de observación
               </h2>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={guardarUbicacionFavorita}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-current/30 hover:bg-current/10 cursor-pointer transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 min-h-10 sm:min-h-8 rounded-lg text-xs font-medium border border-current/30 hover:bg-current/10 cursor-pointer transition-colors"
                 >
-                  <Star className="w-3.5 h-3.5" />
+                  <Star className="w-3.5 h-3.5" aria-hidden="true" />
                   Guardar en favoritos
                 </button>
                 <button
                   type="button"
                   onClick={detectarGPS}
                   disabled={cargandoGPS}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-current/30 hover:bg-current/10 cursor-pointer disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-3 py-1.5 min-h-10 sm:min-h-8 rounded-lg text-xs font-medium border border-current/30 hover:bg-current/10 cursor-pointer disabled:opacity-50"
                 >
-                  <Crosshair className="w-3.5 h-3.5" />
+                  <Crosshair className="w-3.5 h-3.5" aria-hidden="true" />
                   {cargandoGPS ? 'Obteniendo GPS...' : 'Usar GPS del dispositivo'}
                 </button>
               </div>
@@ -6122,51 +6755,66 @@ export function App() {
                   type="text"
                   value={formUbicacion.nombre}
                   onChange={(e) => actualizarCampoUbicacion('nombre', e.target.value)}
-                  className={`w-full px-3 py-1.5 rounded-lg border border-current/25 bg-transparent ${claseEsquemaInput}`}
+                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent ${claseEsquemaInput}`}
                 />
               </label>
               <label className="space-y-1">
                 <span className="text-xs opacity-70">Latitud (°N)</span>
                 <input
                   type="number"
+                  inputMode="decimal"
                   min={-90}
                   max={90}
                   step="0.0001"
+                  aria-invalid={Boolean(erroresUbicacion.latitud)}
+                  aria-describedby={erroresUbicacion.latitud ? 'error-latitud' : undefined}
                   value={formUbicacion.latitud}
                   onChange={(e) => actualizarCampoUbicacion('latitud', e.target.value)}
-                  className={`w-full px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
                 />
                 {erroresUbicacion.latitud && (
-                  <span className="block text-[11px] opacity-90">{erroresUbicacion.latitud}</span>
+                  <span id="error-latitud" className="block text-[11px] opacity-90">
+                    {erroresUbicacion.latitud}
+                  </span>
                 )}
               </label>
               <label className="space-y-1">
                 <span className="text-xs opacity-70">Longitud (°E)</span>
                 <input
                   type="number"
+                  inputMode="decimal"
                   min={-180}
                   max={180}
                   step="0.0001"
+                  aria-invalid={Boolean(erroresUbicacion.longitud)}
+                  aria-describedby={erroresUbicacion.longitud ? 'error-longitud' : undefined}
                   value={formUbicacion.longitud}
                   onChange={(e) => actualizarCampoUbicacion('longitud', e.target.value)}
-                  className={`w-full px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
                 />
                 {erroresUbicacion.longitud && (
-                  <span className="block text-[11px] opacity-90">{erroresUbicacion.longitud}</span>
+                  <span id="error-longitud" className="block text-[11px] opacity-90">
+                    {erroresUbicacion.longitud}
+                  </span>
                 )}
               </label>
               <label className="space-y-1">
                 <span className="text-xs opacity-70">Altitud (metros)</span>
                 <input
                   type="number"
+                  inputMode="decimal"
                   min={-500}
                   max={9000}
+                  aria-invalid={Boolean(erroresUbicacion.altitud)}
+                  aria-describedby={erroresUbicacion.altitud ? 'error-altitud' : undefined}
                   value={formUbicacion.altitud}
                   onChange={(e) => actualizarCampoUbicacion('altitud', e.target.value)}
-                  className={`w-full px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
                 />
                 {erroresUbicacion.altitud && (
-                  <span className="block text-[11px] opacity-90">{erroresUbicacion.altitud}</span>
+                  <span id="error-altitud" className="block text-[11px] opacity-90">
+                    {erroresUbicacion.altitud}
+                  </span>
                 )}
               </label>
             </div>
@@ -6175,7 +6823,7 @@ export function App() {
               <div className="pt-2 border-t border-current/15 space-y-2">
                 <div className="flex items-center justify-between text-xs opacity-75">
                   <span className="flex items-center gap-1.5 font-medium">
-                    <Star className="w-3.5 h-3.5" /> Observatorios favoritos
+                    <Star className="w-3.5 h-3.5" aria-hidden="true" /> Observatorios favoritos
                   </span>
                   <span className="font-mono">
                     {favoritos.length}/{MAX_FAVORITOS}
@@ -6201,7 +6849,7 @@ export function App() {
                           title={`${fav.nombre} (${fav.latitud}°, ${fav.longitud}° · ${fav.altitud}m)`}
                           className="pl-3 pr-2 py-1 cursor-pointer flex items-center gap-1.5 font-medium"
                         >
-                          <MapPin className="w-3 h-3 opacity-75 shrink-0" />
+                          <MapPin className="w-3 h-3 opacity-75 shrink-0" aria-hidden="true" />
                           <span>{fav.nombre}</span>
                         </button>
                         <button
@@ -6211,7 +6859,7 @@ export function App() {
                           title="Eliminar favorito"
                           className="pr-2.5 pl-1 py-1 opacity-60 hover:opacity-100 cursor-pointer"
                         >
-                          <X className="w-3 h-3" />
+                          <X className="w-3 h-3" aria-hidden="true" />
                         </button>
                       </div>
                     );
@@ -6237,31 +6885,35 @@ export function App() {
               className={`p-4 rounded-2xl border ${clasesTarjeta} flex flex-wrap items-center justify-between gap-4`}
             >
               <div className="flex flex-wrap items-center gap-3">
-                <Calendar className="w-5 h-5 opacity-75" />
+                <Calendar className="w-5 h-5 opacity-75" aria-hidden="true" />
                 <input
                   type="datetime-local"
+                  aria-label="Fecha y hora de observación"
                   value={fechaStr}
                   onChange={(e) => manejarCambioFecha(e.target.value)}
-                  className={`px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono text-sm ${claseEsquemaInput}`}
+                  className={`w-full sm:w-auto min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono text-sm ${claseEsquemaInput}`}
                 />
-                <div className="flex items-center gap-1.5 text-xs">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
                   <button
+                    type="button"
                     onClick={() => ajustarTiempo('ahora')}
-                    className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
+                    className="min-h-10 sm:min-h-8 px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
                   >
                     Ahora
                   </button>
                   <button
+                    type="button"
                     onClick={() => ajustarTiempo('noche')}
-                    className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
+                    className="min-h-10 sm:min-h-8 px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
                   >
                     Esta noche 23:30
                   </button>
                   <button
+                    type="button"
                     onClick={() => ajustarTiempo('mas1h')}
-                    className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 flex items-center gap-1 cursor-pointer"
+                    className="min-h-10 sm:min-h-8 px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 flex items-center gap-1 cursor-pointer"
                   >
-                    <Clock className="w-3 h-3" /> +1h
+                    <Clock className="w-3 h-3" aria-hidden="true" /> +1h
                   </button>
                 </div>
                 {/* Control de Time-Lapse */}
@@ -6270,19 +6922,23 @@ export function App() {
                     type="button"
                     onClick={() => setReproduciendo((prev) => !prev)}
                     aria-pressed={reproduciendo}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                    className={`min-h-10 sm:min-h-8 flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
                       tema,
                       reproduciendo
                     )}`}
                   >
-                    {reproduciendo ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    {reproduciendo ? (
+                      <Pause className="w-3.5 h-3.5" aria-hidden="true" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5" aria-hidden="true" />
+                    )}
                     {reproduciendo ? 'Pausa' : 'Play'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setVelocidadMinPorSeg(15)}
                     aria-pressed={velocidadMinPorSeg === 15}
-                    className={`px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                    className={`min-h-10 sm:min-h-8 px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
                       tema,
                       velocidadMinPorSeg === 15
                     )}`}
@@ -6293,7 +6949,7 @@ export function App() {
                     type="button"
                     onClick={() => setVelocidadMinPorSeg(60)}
                     aria-pressed={velocidadMinPorSeg === 60}
-                    className={`px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                    className={`min-h-10 sm:min-h-8 px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
                       tema,
                       velocidadMinPorSeg === 60
                     )}`}
@@ -6304,9 +6960,9 @@ export function App() {
                 {estadoSolar && (
                   <span className="text-xs font-mono px-2.5 py-1 rounded-full border border-current/20 bg-current/5 flex items-center gap-1.5">
                     {estadoSolar.altitudSol >= 0 ? (
-                      <Sun className="w-3.5 h-3.5" />
+                      <Sun className="w-3.5 h-3.5" aria-hidden="true" />
                     ) : (
-                      <Moon className="w-3.5 h-3.5" />
+                      <Moon className="w-3.5 h-3.5" aria-hidden="true" />
                     )}
                     {estadoSolar.fase} (Sol {estadoSolar.altitudSol}°)
                   </span>
@@ -6314,11 +6970,11 @@ export function App() {
               </div>
 
               {/* Capas del Mapa */}
-              <div className="flex flex-wrap items-center gap-3 text-xs">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="opacity-70 flex items-center gap-1">
-                  <Layers className="w-3.5 h-3.5" /> Capas:
+                  <Layers className="w-3.5 h-3.5" aria-hidden="true" /> Capas:
                 </span>
-                <label className="flex items-center gap-1.5 cursor-pointer">
+                <label className="flex items-center gap-1.5 cursor-pointer min-h-10 sm:min-h-8 px-2.5 py-1 rounded-lg border border-current/20 hover:bg-current/10 transition-colors">
                   <input
                     type="checkbox"
                     checked={mostrarConstelaciones}
@@ -6326,7 +6982,7 @@ export function App() {
                   />
                   <span>Constelaciones</span>
                 </label>
-                <label className="flex items-center gap-1.5 cursor-pointer">
+                <label className="flex items-center gap-1.5 cursor-pointer min-h-10 sm:min-h-8 px-2.5 py-1 rounded-lg border border-current/20 hover:bg-current/10 transition-colors">
                   <input
                     type="checkbox"
                     checked={mostrarEtiquetasEstrellas}
@@ -6334,7 +6990,7 @@ export function App() {
                   />
                   <span>Estrellas</span>
                 </label>
-                <label className="flex items-center gap-1.5 cursor-pointer">
+                <label className="flex items-center gap-1.5 cursor-pointer min-h-10 sm:min-h-8 px-2.5 py-1 rounded-lg border border-current/20 hover:bg-current/10 transition-colors">
                   <input
                     type="checkbox"
                     checked={mostrarMessier}
@@ -6358,7 +7014,10 @@ export function App() {
                     {/* Buscador global de astros */}
                     <div ref={buscadorRef} className="relative w-full sm:w-72">
                       <div className="relative flex items-center">
-                        <Search className="w-3.5 h-3.5 opacity-60 absolute left-2.5 pointer-events-none" />
+                        <Search
+                          className="w-3.5 h-3.5 opacity-60 absolute left-2.5 pointer-events-none"
+                          aria-hidden="true"
+                        />
                         <input
                           type="text"
                           role="combobox"
@@ -6395,7 +7054,7 @@ export function App() {
                             aria-label="Limpiar búsqueda de astros"
                             className="absolute right-2 opacity-60 hover:opacity-100 cursor-pointer"
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <X className="w-3.5 h-3.5" aria-hidden="true" />
                           </button>
                         )}
                       </div>
@@ -6563,7 +7222,7 @@ export function App() {
 
                             <div className="text-xs flex flex-wrap items-center justify-between gap-2 opacity-85 font-mono">
                               <span className="flex items-center gap-1">
-                                <Compass className="w-3.5 h-3.5" />
+                                <Compass className="w-3.5 h-3.5" aria-hidden="true" />
                                 {obj.direccion} ({obj.acimut}°)
                               </span>
                               <span>Alt: {obj.altitud}°</span>
@@ -6600,7 +7259,12 @@ export function App() {
       </div>
 
       {brujulaAbierta && (
-        <Compass3DModal tema={tema} cuerpos={cuerpos} onCerrar={cerrarBrujula} />
+        <Compass3DModal
+          tema={tema}
+          cuerpos={cuerpos}
+          objetivoSeleccionado={objetivoBrujula}
+          onCerrar={cerrarBrujula}
+        />
       )}
     </div>
   );

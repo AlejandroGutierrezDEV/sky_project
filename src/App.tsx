@@ -1,4 +1,12 @@
-import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent } from 'react';
+import {
+  useState,
+  useMemo,
+  useEffect,
+  useRef,
+  useCallback,
+  type FormEvent,
+  type KeyboardEvent,
+} from 'react';
 import {
   Compass,
   Moon,
@@ -50,6 +58,7 @@ const CLAVE_TEMA = 'skyproject_tema';
 const CLAVE_FAVORITOS = 'skyproject_favoritos_v1';
 const MAX_FAVORITOS = 8;
 const MAX_RESULTADOS_BUSQUEDA = 6;
+const MAX_NOMBRE_UBICACION = 80;
 const UMBRAL_COORD_DUPLICADA = 0.01;
 
 const UBICACION_INICIAL: Ubicacion = {
@@ -122,6 +131,7 @@ function esUbicacionValida(valor: unknown): valor is Ubicacion {
   const obj = valor as Record<string, unknown>;
   return (
     typeof obj.nombre === 'string' &&
+    obj.nombre.length <= MAX_NOMBRE_UBICACION &&
     typeof obj.latitud === 'number' &&
     Number.isFinite(obj.latitud) &&
     obj.latitud >= -90 &&
@@ -239,12 +249,18 @@ function validarFormularioUbicacion(form: FormularioUbicacion): {
   return {
     errores,
     ubicacionValida: {
-      nombre: form.nombre,
+      nombre: form.nombre.slice(0, MAX_NOMBRE_UBICACION),
       latitud: lat,
       longitud: lon,
       altitud: alt,
     },
   };
+}
+
+function obtenerClaseBotonAplicar(tema: TemaVisual): string {
+  if (tema === 'rojo') return 'border-red-600 bg-red-950/70 text-red-400 hover:bg-red-950';
+  if (tema === 'claro') return 'border-sky-600 bg-sky-600 text-white hover:bg-sky-700';
+  return 'border-sky-500/60 bg-sky-600 text-white hover:bg-sky-500';
 }
 
 function obtenerClaseErrorInline(tema: TemaVisual): string {
@@ -334,6 +350,8 @@ export function App() {
   const [avisoFavorito, setAvisoFavorito] = useState<string | null>(null);
   const [cargandoGPS, setCargandoGPS] = useState(false);
   const [errorGPS, setErrorGPS] = useState<string | null>(null);
+  const gpsRequestIdRef = useRef<number>(0);
+  const altitudActualRef = useRef<number>(ubicacion.altitud);
 
   const [fechaStr, setFechaStr] = useState<string>(() => formatearFechaParaInput(new Date()));
   const [reproduciendo, setReproduciendo] = useState(false);
@@ -382,12 +400,21 @@ export function App() {
 
   const cargandoMeteo = estadoMeteo.clave !== claveConsultaMeteo;
 
-  const { errores: erroresUbicacion } = useMemo(
+  const { errores: erroresUbicacion, ubicacionValida: ubicacionFormularioValida } = useMemo(
     () => validarFormularioUbicacion(formUbicacion),
     [formUbicacion]
   );
 
+  const hayErroresUbicacion = Object.keys(erroresUbicacion).length > 0;
+  const ubicacionSinCambios =
+    ubicacionFormularioValida !== null &&
+    ubicacionFormularioValida.nombre === ubicacion.nombre &&
+    ubicacionFormularioValida.latitud === ubicacion.latitud &&
+    ubicacionFormularioValida.longitud === ubicacion.longitud &&
+    ubicacionFormularioValida.altitud === ubicacion.altitud;
+
   useEffect(() => {
+    altitudActualRef.current = ubicacion.altitud;
     guardarEnStorage(CLAVE_UBICACION, JSON.stringify(ubicacion));
   }, [ubicacion]);
 
@@ -563,15 +590,14 @@ export function App() {
     [astroSeleccionado, fechaSeleccionada, coordenadasEstables]
   );
 
-  const transitoSeleccionado: EfemeridesTransito | null = useMemo(
-    () =>
-      astroSeleccionado && astroSeleccionado.categoria === 'cuerpo'
-        ? calcularTransitoCuerpo(astroSeleccionado.id, fechaSeleccionada, coordenadasEstables)
-        : null,
-    [astroSeleccionado, fechaSeleccionada, coordenadasEstables]
-  );
-
   const diaSeleccionado = fechaStr.slice(0, 10);
+
+  const transitoSeleccionado: EfemeridesTransito | null = useMemo(() => {
+    if (!astroSeleccionado || astroSeleccionado.categoria !== 'cuerpo') return null;
+    const fechaDia = new Date(`${diaSeleccionado}T12:00:00`);
+    const baseValida = Number.isNaN(fechaDia.getTime()) ? new Date() : fechaDia;
+    return calcularTransitoCuerpo(astroSeleccionado.id, baseValida, coordenadasEstables);
+  }, [astroSeleccionado, diaSeleccionado, coordenadasEstables]);
 
   const eventos = useMemo(() => {
     const fechaDia = new Date(`${diaSeleccionado}T12:00:00`);
@@ -615,15 +641,29 @@ export function App() {
   }, [astroSeleccionado, cuerpos, estrellas, messier]);
 
   const actualizarCampoUbicacion = (campo: keyof FormularioUbicacion, valor: string) => {
-    const siguienteForm = { ...formUbicacion, [campo]: valor };
-    setFormUbicacion(siguienteForm);
+    const valorSanitizado =
+      campo === 'nombre' ? valor.slice(0, MAX_NOMBRE_UBICACION) : valor;
+    setFormUbicacion((prev) => ({ ...prev, [campo]: valorSanitizado }));
     setErrorGPS(null);
     setAvisoFavorito(null);
+  };
 
-    const { ubicacionValida } = validarFormularioUbicacion(siguienteForm);
-    if (ubicacionValida) {
-      setUbicacion(ubicacionValida);
-    }
+  const aplicarUbicacionManual = (evento: FormEvent<HTMLFormElement>) => {
+    evento.preventDefault();
+    setErrorGPS(null);
+    setAvisoFavorito(null);
+    const { ubicacionValida } = validarFormularioUbicacion(formUbicacion);
+    if (!ubicacionValida) return;
+
+    gpsRequestIdRef.current += 1;
+    setCargandoGPS(false);
+    setUbicacion(ubicacionValida);
+    setFormUbicacion({
+      nombre: ubicacionValida.nombre,
+      latitud: String(ubicacionValida.latitud),
+      longitud: String(ubicacionValida.longitud),
+      altitud: String(ubicacionValida.altitud),
+    });
   };
 
   const guardarUbicacionFavorita = () => {
@@ -658,6 +698,8 @@ export function App() {
   };
 
   const cargarUbicacionFavorita = (fav: UbicacionFavorita) => {
+    gpsRequestIdRef.current += 1;
+    setCargandoGPS(false);
     setErrorGPS(null);
     setAvisoFavorito(null);
     const seleccionada: Ubicacion = {
@@ -737,33 +779,34 @@ export function App() {
       setErrorGPS('Tu navegador no soporta geolocalización.');
       return;
     }
+    const requestId = ++gpsRequestIdRef.current;
     setCargandoGPS(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        if (requestId !== gpsRequestIdRef.current) return;
         const lat = Number(pos.coords.latitude.toFixed(4));
         const lon = Number(pos.coords.longitude.toFixed(4));
-        setUbicacion((prev) => {
-          const alt =
-            pos.coords.altitude !== null && Number.isFinite(pos.coords.altitude)
-              ? Math.min(9000, Math.max(-500, Math.round(pos.coords.altitude)))
-              : prev.altitud;
-          const nuevaUbicacion: Ubicacion = {
-            latitud: lat,
-            longitud: lon,
-            altitud: alt,
-            nombre: 'Ubicación GPS Actual',
-          };
-          setFormUbicacion({
-            nombre: nuevaUbicacion.nombre,
-            latitud: String(nuevaUbicacion.latitud),
-            longitud: String(nuevaUbicacion.longitud),
-            altitud: String(nuevaUbicacion.altitud),
-          });
-          return nuevaUbicacion;
+        const alt =
+          pos.coords.altitude !== null && Number.isFinite(pos.coords.altitude)
+            ? Math.min(9000, Math.max(-500, Math.round(pos.coords.altitude)))
+            : altitudActualRef.current;
+        const nuevaUbicacion: Ubicacion = {
+          latitud: lat,
+          longitud: lon,
+          altitud: alt,
+          nombre: 'Ubicación GPS Actual',
+        };
+        setUbicacion(nuevaUbicacion);
+        setFormUbicacion({
+          nombre: nuevaUbicacion.nombre,
+          latitud: String(nuevaUbicacion.latitud),
+          longitud: String(nuevaUbicacion.longitud),
+          altitud: String(nuevaUbicacion.altitud),
         });
         setCargandoGPS(false);
       },
       (err) => {
+        if (requestId !== gpsRequestIdRef.current) return;
         if (err.code === 1) {
           setErrorGPS('Permiso de ubicación denegado. Actívalo en los ajustes del navegador.');
         } else if (err.code === 2) {
@@ -879,76 +922,90 @@ export function App() {
               </p>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-sm">
-              <label className="space-y-1">
-                <span className="text-xs opacity-70">Nombre del lugar</span>
-                <input
-                  type="text"
-                  value={formUbicacion.nombre}
-                  onChange={(e) => actualizarCampoUbicacion('nombre', e.target.value)}
-                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent ${claseEsquemaInput}`}
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs opacity-70">Latitud (°N)</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min={-90}
-                  max={90}
-                  step="0.0001"
-                  aria-invalid={Boolean(erroresUbicacion.latitud)}
-                  aria-describedby={erroresUbicacion.latitud ? 'error-latitud' : undefined}
-                  value={formUbicacion.latitud}
-                  onChange={(e) => actualizarCampoUbicacion('latitud', e.target.value)}
-                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
-                />
-                {erroresUbicacion.latitud && (
-                  <span id="error-latitud" className="block text-[11px] opacity-90">
-                    {erroresUbicacion.latitud}
-                  </span>
-                )}
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs opacity-70">Longitud (°E)</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min={-180}
-                  max={180}
-                  step="0.0001"
-                  aria-invalid={Boolean(erroresUbicacion.longitud)}
-                  aria-describedby={erroresUbicacion.longitud ? 'error-longitud' : undefined}
-                  value={formUbicacion.longitud}
-                  onChange={(e) => actualizarCampoUbicacion('longitud', e.target.value)}
-                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
-                />
-                {erroresUbicacion.longitud && (
-                  <span id="error-longitud" className="block text-[11px] opacity-90">
-                    {erroresUbicacion.longitud}
-                  </span>
-                )}
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs opacity-70">Altitud (metros)</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min={-500}
-                  max={9000}
-                  aria-invalid={Boolean(erroresUbicacion.altitud)}
-                  aria-describedby={erroresUbicacion.altitud ? 'error-altitud' : undefined}
-                  value={formUbicacion.altitud}
-                  onChange={(e) => actualizarCampoUbicacion('altitud', e.target.value)}
-                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
-                />
-                {erroresUbicacion.altitud && (
-                  <span id="error-altitud" className="block text-[11px] opacity-90">
-                    {erroresUbicacion.altitud}
-                  </span>
-                )}
-              </label>
-            </div>
+            <form onSubmit={aplicarUbicacionManual} className="space-y-3" noValidate>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-sm">
+                <label className="space-y-1">
+                  <span className="text-xs opacity-70">Nombre del lugar</span>
+                  <input
+                    type="text"
+                    maxLength={MAX_NOMBRE_UBICACION}
+                    value={formUbicacion.nombre}
+                    onChange={(e) => actualizarCampoUbicacion('nombre', e.target.value)}
+                    className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent ${claseEsquemaInput}`}
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs opacity-70">Latitud (°N)</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={-90}
+                    max={90}
+                    step="0.0001"
+                    aria-invalid={Boolean(erroresUbicacion.latitud)}
+                    aria-describedby={erroresUbicacion.latitud ? 'error-latitud' : undefined}
+                    value={formUbicacion.latitud}
+                    onChange={(e) => actualizarCampoUbicacion('latitud', e.target.value)}
+                    className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  />
+                  {erroresUbicacion.latitud && (
+                    <span id="error-latitud" className="block text-[11px] opacity-90">
+                      {erroresUbicacion.latitud}
+                    </span>
+                  )}
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs opacity-70">Longitud (°E)</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={-180}
+                    max={180}
+                    step="0.0001"
+                    aria-invalid={Boolean(erroresUbicacion.longitud)}
+                    aria-describedby={erroresUbicacion.longitud ? 'error-longitud' : undefined}
+                    value={formUbicacion.longitud}
+                    onChange={(e) => actualizarCampoUbicacion('longitud', e.target.value)}
+                    className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  />
+                  {erroresUbicacion.longitud && (
+                    <span id="error-longitud" className="block text-[11px] opacity-90">
+                      {erroresUbicacion.longitud}
+                    </span>
+                  )}
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs opacity-70">Altitud (metros)</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={-500}
+                    max={9000}
+                    aria-invalid={Boolean(erroresUbicacion.altitud)}
+                    aria-describedby={erroresUbicacion.altitud ? 'error-altitud' : undefined}
+                    value={formUbicacion.altitud}
+                    onChange={(e) => actualizarCampoUbicacion('altitud', e.target.value)}
+                    className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  />
+                  {erroresUbicacion.altitud && (
+                    <span id="error-altitud" className="block text-[11px] opacity-90">
+                      {erroresUbicacion.altitud}
+                    </span>
+                  )}
+                </label>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={hayErroresUbicacion || ubicacionSinCambios}
+                  className={`min-h-10 sm:min-h-8 px-3.5 py-1.5 rounded-lg text-xs font-medium border cursor-pointer transition-colors motion-reduce:transition-none disabled:opacity-45 disabled:cursor-not-allowed ${obtenerClaseBotonAplicar(
+                    tema
+                  )}`}
+                >
+                  Aplicar ubicación
+                </button>
+              </div>
+            </form>
 
             {favoritos.length > 0 && (
               <div className="pt-2 border-t border-current/15 space-y-2">
