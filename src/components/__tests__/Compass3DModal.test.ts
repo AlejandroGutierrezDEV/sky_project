@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { calcularOrientacionDesdeSensores } from '../Compass3DModal';
+import {
+  aplicarDeclinacionMagnetica,
+  calcularOrientacionDesdeSensores,
+} from '../Compass3DModal';
 
 /** Distancia angular mínima entre dos rumbos en grados [0, 180]. */
 function errorAngular(a: number, b: number): number {
@@ -95,5 +98,14 @@ describe('Orientación 3D de la Brújula Astronómica (W3C Z-X\'-Y\'\')', () => 
     const landscapeSecNorte = calcularOrientacionDesdeSensores(270, 0, 90, 270);
     expect(errorAngular(landscapeSecNorte.rumbo, 0)).toBeLessThan(0.01);
     expect(landscapeSecNorte.altitudApuntado).toBeCloseTo(0, 2);
+  });
+
+  it('aplica la declinación magnética al rumbo magnético manteniendo normalización [0, 360)', () => {
+    expect(aplicarDeclinacionMagnetica(0, 1.5)).toBeCloseTo(1.5, 4);
+    expect(aplicarDeclinacionMagnetica(359, 2.5)).toBeCloseTo(1.5, 4);
+    expect(aplicarDeclinacionMagnetica(1, -3.5)).toBeCloseTo(357.5, 4);
+    expect(aplicarDeclinacionMagnetica(180, -12.5)).toBeCloseTo(167.5, 4);
+    expect(aplicarDeclinacionMagnetica(Number.NaN, 1.5)).toBe(0);
+    expect(aplicarDeclinacionMagnetica(90, Number.NaN)).toBeCloseTo(90, 4);
   });
 });

@@ -1,5 +1,10 @@
-import { Cloud, Droplets, Moon, Sun, Thermometer, Wind } from 'lucide-react';
-import type { CondicionesMeteo, TemaVisual } from '../types/astronomy';
+import { Cloud, Droplets, Eye, Moon, Sun, Thermometer, Wind } from 'lucide-react';
+import type {
+  CalidadCieloCalculada,
+  CondicionesMeteo,
+  EscalaBortle,
+  TemaVisual,
+} from '../types/astronomy';
 
 interface WeatherPanelProps {
   meteo: CondicionesMeteo | null;
@@ -8,6 +13,8 @@ interface WeatherPanelProps {
   tema: TemaVisual;
   claseTarjeta: string;
   onSeleccionarHora: (fecha: Date) => void;
+  calidadCielo?: CalidadCieloCalculada;
+  bortle?: EscalaBortle;
 }
 
 const ESTILOS_VEREDICTO_OSCURO: Record<CondicionesMeteo['veredicto'], string> = {
@@ -20,6 +27,27 @@ const ESTILOS_VEREDICTO_CLARO: Record<CondicionesMeteo['veredicto'], string> = {
   Excelente: 'border-emerald-600/40 bg-emerald-500/15 text-emerald-700',
   Aceptable: 'border-amber-600/40 bg-amber-500/15 text-amber-700',
   Desfavorable: 'border-rose-600/40 bg-rose-500/15 text-rose-700',
+};
+
+const ESTILOS_CALIDAD_OSCURO: Record<CalidadCieloCalculada['veredicto'], string> = {
+  Excelente: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400',
+  Bueno: 'border-sky-500/40 bg-sky-500/15 text-sky-300',
+  Regular: 'border-amber-500/40 bg-amber-500/15 text-amber-400',
+  Malo: 'border-rose-500/40 bg-rose-500/15 text-rose-400',
+};
+
+const ESTILOS_CALIDAD_CLARO: Record<CalidadCieloCalculada['veredicto'], string> = {
+  Excelente: 'border-emerald-600/40 bg-emerald-500/15 text-emerald-700',
+  Bueno: 'border-sky-600/40 bg-sky-500/15 text-sky-700',
+  Regular: 'border-amber-600/40 bg-amber-500/15 text-amber-700',
+  Malo: 'border-rose-600/40 bg-rose-500/15 text-rose-700',
+};
+
+const ESTILOS_CALIDAD_ROJO: Record<CalidadCieloCalculada['veredicto'], string> = {
+  Excelente: 'border-red-600 bg-red-950/60 text-red-400',
+  Bueno: 'border-red-700 bg-red-950/45 text-red-500',
+  Regular: 'border-red-800 bg-black text-red-500',
+  Malo: 'border-red-900 bg-black text-red-600',
 };
 
 const COLORES_BARRA_OSCURO: Record<CondicionesMeteo['veredicto'], string> = {
@@ -46,6 +74,15 @@ function obtenerEstiloVeredicto(tema: TemaVisual, veredicto: CondicionesMeteo['v
   return ESTILOS_VEREDICTO_OSCURO[veredicto];
 }
 
+function obtenerEstiloCalidad(
+  tema: TemaVisual,
+  veredicto: CalidadCieloCalculada['veredicto']
+): string {
+  if (tema === 'rojo') return ESTILOS_CALIDAD_ROJO[veredicto];
+  if (tema === 'claro') return ESTILOS_CALIDAD_CLARO[veredicto];
+  return ESTILOS_CALIDAD_OSCURO[veredicto];
+}
+
 function obtenerColorBarraFranja(
   tema: TemaVisual,
   veredicto: CondicionesMeteo['veredicto']
@@ -62,6 +99,8 @@ export function WeatherPanel({
   tema,
   claseTarjeta,
   onSeleccionarHora,
+  calidadCielo,
+  bortle,
 }: Readonly<WeatherPanelProps>) {
   const colorBarra =
     tema === 'rojo' ? 'bg-red-600' : tema === 'claro' ? 'bg-sky-600' : 'bg-sky-400';
@@ -73,17 +112,47 @@ export function WeatherPanel({
           <Cloud className="w-4 h-4" aria-hidden="true" /> Condiciones del Cielo
         </h2>
 
-        {meteo && (
+        {calidadCielo ? (
           <span
-            className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${obtenerEstiloVeredicto(
+            className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${obtenerEstiloCalidad(
               tema,
-              meteo.veredicto
+              calidadCielo.veredicto
             )}`}
           >
-            {meteo.veredicto}
+            {calidadCielo.veredicto}
           </span>
+        ) : (
+          meteo && (
+            <span
+              className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${obtenerEstiloVeredicto(
+                tema,
+                meteo.veredicto
+              )}`}
+            >
+              {meteo.veredicto}
+            </span>
+          )
         )}
       </div>
+
+      {calidadCielo && (
+        <div className="p-2.5 rounded-xl border border-current/15 bg-current/5 space-y-1.5 text-xs">
+          <p className="flex items-start gap-1.5 leading-snug opacity-90">
+            <Eye className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-75" aria-hidden="true" />
+            <span>{calidadCielo.motivoPrincipal}</span>
+          </p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] opacity-80">
+            <span>NELM: {calidadCielo.magnitudLimiteVisible.toFixed(1)} mag</span>
+            {bortle !== undefined && <span>Bortle {bortle}</span>}
+            <span>
+              Luna:{' '}
+              {calidadCielo.penalizacionLunar > 0
+                ? `-${calidadCielo.penalizacionLunar.toFixed(1)} mag`
+                : 'sin penalización'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {cargando && (
         <p role="status" aria-live="polite" className="text-xs opacity-70 font-mono">

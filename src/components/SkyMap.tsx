@@ -4,6 +4,7 @@ import type {
   AstroSeleccionado,
   CategoriaAstro,
   CuerpoCeleste,
+  EscalaBortle,
   EstrellaCalculada,
   MessierCalculado,
   ModoMapa,
@@ -26,6 +27,8 @@ interface SkyMapProps {
   trayectoria: PuntoTrayectoria[];
   onSeleccionarAstro: (astro: AstroSeleccionado | null) => void;
   contadorFoco?: number;
+  magnitudLimiteVisible?: number;
+  bortle?: EscalaBortle;
 }
 
 interface Camara3D {
@@ -374,12 +377,17 @@ function dibujarEstrellas(
   proyectarFn: (alt: number, az: number) => PuntoProyectado,
   paleta: PaletaMapa,
   tema: TemaVisual,
-  interactivos: ObjetoHover[]
+  interactivos: ObjetoHover[],
+  magnitudLimiteVisible?: number
 ) {
   const mapaEstrellas = new Map<string, { pos: PuntoProyectado; data: EstrellaCalculada }>();
+  const limiteMagnitud =
+    typeof magnitudLimiteVisible === 'number' && Number.isFinite(magnitudLimiteVisible)
+      ? magnitudLimiteVisible
+      : Number.POSITIVE_INFINITY;
 
   for (const est of estrellas) {
-    if (est.altitud > -5) {
+    if (est.altitud > -5 && est.magnitud <= limiteMagnitud) {
       mapaEstrellas.set(est.id, { pos: proyectarFn(est.altitud, est.acimut), data: est });
     }
   }
@@ -688,6 +696,8 @@ export function SkyMap({
   trayectoria,
   onSeleccionarAstro,
   contadorFoco = 0,
+  magnitudLimiteVisible,
+  bortle,
 }: Readonly<SkyMapProps>) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const escenaBaseRef = useRef<CacheEscenaCanvas | null>(null);
@@ -811,6 +821,7 @@ export function SkyMap({
       mostrarEtiquetasEstrellas,
       mostrarMessier,
       trayectoria,
+      magnitudLimiteVisible,
     }),
     [
       cuerpos,
@@ -823,6 +834,7 @@ export function SkyMap({
       mostrarEtiquetasEstrellas,
       mostrarMessier,
       trayectoria,
+      magnitudLimiteVisible,
     ]
   );
 
@@ -886,7 +898,8 @@ export function SkyMap({
       proyectarFn,
       paleta,
       tema,
-      interactivos
+      interactivos,
+      magnitudLimiteVisible
     );
 
     if (mostrarMessier) {
@@ -909,6 +922,7 @@ export function SkyMap({
     mostrarEtiquetasEstrellas,
     mostrarMessier,
     trayectoria,
+    magnitudLimiteVisible,
   ]);
 
   // Effect 2: Composición desde el canvas cacheado y animación de la retícula de selección
@@ -1157,7 +1171,16 @@ export function SkyMap({
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {typeof magnitudLimiteVisible === 'number' && Number.isFinite(magnitudLimiteVisible) && (
+            <span
+              title="Magnitud límite visible estimada según escala Bortle y brillo lunar"
+              className="px-2 py-0.5 rounded-lg border border-current/20 bg-current/5 font-mono text-[11px] opacity-85"
+            >
+              NELM ≤ {magnitudLimiteVisible.toFixed(1)} mag
+              {bortle !== undefined ? ` · B${bortle}` : ''}
+            </span>
+          )}
           {modoMapa === '3D' ? (
             <>
               <span className="opacity-65 hidden sm:inline">Arrastra para rotar el cielo</span>
