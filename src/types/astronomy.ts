@@ -173,3 +173,11 @@ export interface OrientacionBrujula {
   /** Cabeceo/inclinación del dispositivo en grados. */
   inclinacion: number;
 }
+
+export interface ObjetivoBrujula {
+  id: string;
+  nombre: string;
+  acimut: number;
+  altitud: number;
+  color: string;
+}

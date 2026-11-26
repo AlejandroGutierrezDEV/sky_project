@@ -38,6 +38,7 @@ import type {
   CondicionesMeteo,
   CuerpoCeleste,
   EfemeridesTransito,
+  ObjetivoBrujula,
   TemaVisual,
   Ubicacion,
   UbicacionFavorita,
@@ -346,7 +347,23 @@ export function App() {
   const [mostrarEtiquetasEstrellas, setMostrarEtiquetasEstrellas] = useState(true);
   const [mostrarMessier, setMostrarMessier] = useState(true);
 
-  const claveConsultaMeteo = `${fechaStr}|${ubicacion.latitud.toFixed(4)}|${ubicacion.longitud.toFixed(4)}`;
+  const coordenadasEstables = useMemo<Ubicacion>(
+    () => ({
+      latitud: ubicacion.latitud,
+      longitud: ubicacion.longitud,
+      altitud: ubicacion.altitud,
+      nombre: '',
+    }),
+    [ubicacion.latitud, ubicacion.longitud, ubicacion.altitud]
+  );
+
+  const fechaSeleccionada = useMemo(() => {
+    const fecha = new Date(fechaStr);
+    return Number.isNaN(fecha.getTime()) ? new Date() : fecha;
+  }, [fechaStr]);
+
+  const claveHoraUTC = fechaSeleccionada.toISOString().slice(0, 13);
+  const claveConsultaMeteo = `${claveHoraUTC}|${coordenadasEstables.latitud.toFixed(2)}|${coordenadasEstables.longitud.toFixed(2)}`;
   const [estadoMeteo, setEstadoMeteo] = useState<{
     clave: string;
     datos: CondicionesMeteo | null;
@@ -405,15 +422,14 @@ export function App() {
     };
   }, [reproduciendo, velocidadMinPorSeg]);
 
-  const fechaSeleccionada = useMemo(() => {
-    const fecha = new Date(fechaStr);
-    return Number.isNaN(fecha.getTime()) ? new Date() : fecha;
-  }, [fechaStr]);
-
   useEffect(() => {
     const controller = new AbortController();
     const temporizador = window.setTimeout(() => {
-      obtenerCondicionesMeteo(fechaSeleccionada, ubicacion, controller.signal)
+      obtenerCondicionesMeteo(
+        new Date(`${claveHoraUTC}:00:00Z`),
+        coordenadasEstables,
+        controller.signal
+      )
         .then(({ datos, aviso }) => {
           if (controller.signal.aborted) return;
           setEstadoMeteo({ clave: claveConsultaMeteo, datos, aviso });
@@ -433,26 +449,26 @@ export function App() {
       window.clearTimeout(temporizador);
       controller.abort();
     };
-  }, [claveConsultaMeteo, fechaSeleccionada, ubicacion]);
+  }, [claveConsultaMeteo, claveHoraUTC, coordenadasEstables]);
 
   const estadoSolar = useMemo(
-    () => calcularEstadoSolar(fechaSeleccionada, ubicacion),
-    [fechaSeleccionada, ubicacion]
+    () => calcularEstadoSolar(fechaSeleccionada, coordenadasEstables),
+    [fechaSeleccionada, coordenadasEstables]
   );
 
   const cuerpos = useMemo(
-    () => calcularCielo(fechaSeleccionada, ubicacion),
-    [fechaSeleccionada, ubicacion]
+    () => calcularCielo(fechaSeleccionada, coordenadasEstables),
+    [fechaSeleccionada, coordenadasEstables]
   );
 
   const estrellas = useMemo(
-    () => calcularEstrellas(fechaSeleccionada, ubicacion),
-    [fechaSeleccionada, ubicacion]
+    () => calcularEstrellas(fechaSeleccionada, coordenadasEstables),
+    [fechaSeleccionada, coordenadasEstables]
   );
 
   const messier = useMemo(
-    () => calcularMessier(fechaSeleccionada, ubicacion),
-    [fechaSeleccionada, ubicacion]
+    () => calcularMessier(fechaSeleccionada, coordenadasEstables),
+    [fechaSeleccionada, coordenadasEstables]
   );
 
   const resultadosBusqueda = useMemo<ResultadoBusquedaAstro[]>(() => {
@@ -532,17 +548,17 @@ export function App() {
   const trayectoriaAstro = useMemo(
     () =>
       astroSeleccionado
-        ? calcularTrayectoriaAstro(astroSeleccionado, fechaSeleccionada, ubicacion)
+        ? calcularTrayectoriaAstro(astroSeleccionado, fechaSeleccionada, coordenadasEstables)
         : [],
-    [astroSeleccionado, fechaSeleccionada, ubicacion]
+    [astroSeleccionado, fechaSeleccionada, coordenadasEstables]
   );
 
   const transitoSeleccionado: EfemeridesTransito | null = useMemo(
     () =>
       astroSeleccionado && astroSeleccionado.categoria === 'cuerpo'
-        ? calcularTransitoCuerpo(astroSeleccionado.id, fechaSeleccionada, ubicacion)
+        ? calcularTransitoCuerpo(astroSeleccionado.id, fechaSeleccionada, coordenadasEstables)
         : null,
-    [astroSeleccionado, fechaSeleccionada, ubicacion]
+    [astroSeleccionado, fechaSeleccionada, coordenadasEstables]
   );
 
   const diaSeleccionado = fechaStr.slice(0, 10);
@@ -550,8 +566,43 @@ export function App() {
   const eventos = useMemo(() => {
     const fechaDia = new Date(`${diaSeleccionado}T12:00:00`);
     const baseValida = Number.isNaN(fechaDia.getTime()) ? new Date() : fechaDia;
-    return calcularProximosEventos(baseValida, ubicacion);
-  }, [diaSeleccionado, ubicacion]);
+    return calcularProximosEventos(baseValida, coordenadasEstables);
+  }, [diaSeleccionado, coordenadasEstables]);
+
+  const objetivoBrujula = useMemo<ObjetivoBrujula | null>(() => {
+    if (!astroSeleccionado) return null;
+    if (astroSeleccionado.categoria === 'cuerpo') {
+      const cuerpo = cuerpos.find((c) => c.id === astroSeleccionado.id);
+      if (!cuerpo || cuerpo.altitud <= 0 || !Number.isFinite(cuerpo.acimut)) return null;
+      return {
+        id: cuerpo.id,
+        nombre: cuerpo.nombre,
+        acimut: cuerpo.acimut,
+        altitud: cuerpo.altitud,
+        color: cuerpo.color,
+      };
+    }
+    if (astroSeleccionado.categoria === 'estrella') {
+      const estrella = estrellas.find((e) => e.id === astroSeleccionado.id);
+      if (!estrella || estrella.altitud <= 0 || !Number.isFinite(estrella.acimut)) return null;
+      return {
+        id: `estrella-${estrella.id}`,
+        nombre: estrella.nombre,
+        acimut: estrella.acimut,
+        altitud: estrella.altitud,
+        color: '#fde68a',
+      };
+    }
+    const objMessier = messier.find((m) => m.id === astroSeleccionado.id);
+    if (!objMessier || objMessier.altitud <= 0 || !Number.isFinite(objMessier.acimut)) return null;
+    return {
+      id: `messier-${objMessier.id}`,
+      nombre: `${objMessier.id} · ${objMessier.nombre}`,
+      acimut: objMessier.acimut,
+      altitud: objMessier.altitud,
+      color: '#34d399',
+    };
+  }, [astroSeleccionado, cuerpos, estrellas, messier]);
 
   const actualizarCampoUbicacion = (campo: keyof FormularioUbicacion, valor: string) => {
     const siguienteForm = { ...formUbicacion, [campo]: valor };
@@ -1293,7 +1344,12 @@ export function App() {
       </div>
 
       {brujulaAbierta && (
-        <Compass3DModal tema={tema} cuerpos={cuerpos} onCerrar={cerrarBrujula} />
+        <Compass3DModal
+          tema={tema}
+          cuerpos={cuerpos}
+          objetivoSeleccionado={objetivoBrujula}
+          onCerrar={cerrarBrujula}
+        />
       )}
     </div>
   );
