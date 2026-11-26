@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { Globe, Compass, RotateCcw, X } from 'lucide-react';
+import { Bookmark, BookmarkCheck, Globe, Compass, RotateCcw, X } from 'lucide-react';
 import type {
   AstroSeleccionado,
   CategoriaAstro,
@@ -15,6 +15,8 @@ import type {
   TipoObjetoMessier,
 } from '../types/astronomy';
 import { obtenerNombreConstelacionIAU } from '../data/constelacionesIAU';
+import type { EntradaObjetivoSesion } from '../hooks/usePlanificadorSesion';
+import { formatearDec, formatearRA } from '../utils/exportarSesion';
 
 interface SkyMapProps {
   cuerpos: CuerpoCeleste[];
@@ -34,6 +36,9 @@ interface SkyMapProps {
   magnitudLimiteVisible?: number;
   bortle?: EscalaBortle;
   instrumentoActivo?: InstrumentoObservacion | 'Todos';
+  objetivoDetalleSeleccionado?: EntradaObjetivoSesion | null;
+  esObjetivoEnSesion?: boolean;
+  onToggleObjetivo?: (astro: EntradaObjetivoSesion) => void;
 }
 
 interface Camara3D {
@@ -912,6 +917,9 @@ export function SkyMap({
   magnitudLimiteVisible,
   bortle,
   instrumentoActivo = 'Todos',
+  objetivoDetalleSeleccionado = null,
+  esObjetivoEnSesion = false,
+  onToggleObjetivo,
 }: Readonly<SkyMapProps>) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const escenaBaseRef = useRef<CacheEscenaCanvas | null>(null);
@@ -1422,6 +1430,13 @@ export function SkyMap({
     return 'bg-sky-600 text-white';
   };
 
+  const claseBotonObjetivo = (activo: boolean) => {
+    if (!activo) return 'border-current/30 hover:bg-current/10';
+    if (tema === 'rojo') return 'border-red-500 bg-red-950/80 text-red-300';
+    if (tema === 'claro') return 'border-sky-600 bg-sky-600 text-white hover:bg-sky-700';
+    return 'border-cyan-400/70 bg-cyan-500/20 text-cyan-200 hover:bg-cyan-500/30';
+  };
+
   return (
     <div className="relative flex flex-col items-center justify-center space-y-3">
       {/* Controles de Vista 2D / 3D */}
@@ -1512,17 +1527,54 @@ export function SkyMap({
 
       {astroSeleccionado && (
         <div
-          className={`px-3.5 py-1.5 rounded-xl border text-xs flex flex-wrap items-center gap-3 ${CLASES_TOOLTIP[tema]}`}
+          className={`w-full px-3.5 py-2.5 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2.5 ${CLASES_TOOLTIP[tema]}`}
         >
-          <span className="font-semibold">Trayectoria ±6h: {astroSeleccionado.nombre}</span>
-          <button
-            type="button"
-            onClick={() => onSeleccionarAstro(null)}
-            aria-label="Quitar selección de astro"
-            className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-current/25 hover:bg-current/10 cursor-pointer transition-colors"
-          >
-            <X className="w-3 h-3" aria-hidden="true" /> Limpiar
-          </button>
+          <div className="min-w-0 space-y-0.5">
+            <div className="font-semibold flex flex-wrap items-center gap-2">
+              <span>Trayectoria ±6h: {astroSeleccionado.nombre}</span>
+              {objetivoDetalleSeleccionado && (
+                <span className="font-mono text-[11px] opacity-80">
+                  Mag {objetivoDetalleSeleccionado.magnitud.toFixed(1)}
+                </span>
+              )}
+            </div>
+            {objetivoDetalleSeleccionado && (
+              <div className="font-mono text-[11px] opacity-75 flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
+                {objetivoDetalleSeleccionado.constelacion && (
+                  <span>{objetivoDetalleSeleccionado.constelacion}</span>
+                )}
+                <span>AR {formatearRA(objetivoDetalleSeleccionado.raHoras)}</span>
+                <span>Dec {formatearDec(objetivoDetalleSeleccionado.decGrados)}</span>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {objetivoDetalleSeleccionado && onToggleObjetivo && (
+              <button
+                type="button"
+                aria-pressed={esObjetivoEnSesion}
+                onClick={() => onToggleObjetivo(objetivoDetalleSeleccionado)}
+                className={`min-h-10 sm:min-h-8 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-medium cursor-pointer transition-colors motion-reduce:transition-none ${claseBotonObjetivo(
+                  esObjetivoEnSesion
+                )}`}
+              >
+                {esObjetivoEnSesion ? (
+                  <BookmarkCheck className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                ) : (
+                  <Bookmark className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                )}
+                <span>Objetivo esta noche</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onSeleccionarAstro(null)}
+              aria-label="Quitar selección de astro"
+              className="min-h-10 sm:min-h-8 flex items-center gap-1 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer transition-colors motion-reduce:transition-none"
+            >
+              <X className="w-3.5 h-3.5" aria-hidden="true" /> Limpiar
+            </button>
+          </div>
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react';
-import { BookOpen, Compass, Crosshair, Eye, MapPin, Menu, Moon, Sun, Telescope, X } from 'lucide-react';
+import { BookOpen, ClipboardList, Compass, Crosshair, Eye, MapPin, Menu, Moon, Sun, Telescope, X } from 'lucide-react';
 import type { TemaVisual, Ubicacion, VistaActiva } from '../types/astronomy';
 
 interface NavbarProps {
@@ -8,6 +8,8 @@ interface NavbarProps {
   vistaActiva: VistaActiva;
   onCambiarVista: (vista: VistaActiva) => void;
   onAbrirBrujula: () => void;
+  onAbrirPlanificador: () => void;
+  totalObjetivosSesion: number;
   ubicacion: Ubicacion;
   panelUbicacionAbierto: boolean;
   onAlternarUbicacion: () => void;
@@ -93,6 +95,8 @@ export function Navbar({
   vistaActiva,
   onCambiarVista,
   onAbrirBrujula,
+  onAbrirPlanificador,
+  totalObjetivosSesion,
   ubicacion,
   panelUbicacionAbierto,
   onAlternarUbicacion,
@@ -121,6 +125,11 @@ export function Navbar({
   const abrirBrujula = () => {
     setMenuAbierto(false);
     onAbrirBrujula();
+  };
+
+  const abrirPlanificador = () => {
+    setMenuAbierto(false);
+    onAbrirPlanificador();
   };
 
   const selectorTema = (compacto: boolean) => (
@@ -242,6 +251,30 @@ export function Navbar({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Acceso directo al Planificador de sesión nocturna */}
+          <button
+            type="button"
+            onClick={abrirPlanificador}
+            aria-haspopup="dialog"
+            aria-label={
+              totalObjetivosSesion > 0
+                ? `Abrir planificador de sesión nocturna (${totalObjetivosSesion} objetivos)`
+                : 'Abrir planificador de sesión nocturna'
+            }
+            title="Abrir el planificador de sesión nocturna"
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 min-h-11 md:min-h-9 rounded-full border text-xs font-semibold cursor-pointer transition-colors ${obtenerClaseBotonBrujula(
+              tema
+            )}`}
+          >
+            <ClipboardList className="w-4 h-4 shrink-0" aria-hidden="true" />
+            <span className="font-display hidden sm:inline">Sesión</span>
+            {totalObjetivosSesion > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-current/15 font-mono text-[10px] leading-none">
+                {totalObjetivosSesion}
+              </span>
+            )}
+          </button>
+
           {/* Acceso directo a la Brújula 3D (siempre visible) */}
           <button
             type="button"

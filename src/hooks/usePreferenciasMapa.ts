@@ -13,6 +13,7 @@ export const CLAVES_DATOS_LOCALES: readonly string[] = [
   'skyproject_favoritos_v1',
   'skyproject_tema',
   'skyproject_meteo_cache_v3',
+  'skyproject_planificador_sesion_v1',
 ];
 
 export const PREFERENCIAS_POR_DEFECTO: PreferenciasVisualizacion = {

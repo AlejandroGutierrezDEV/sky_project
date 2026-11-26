@@ -8,6 +8,8 @@ import {
   type KeyboardEvent,
 } from 'react';
 import {
+  Bookmark,
+  BookmarkCheck,
   Compass,
   Moon,
   Sun,
@@ -40,7 +42,15 @@ import { MoonPhase3D } from './components/MoonPhase3D';
 import { Navbar } from './components/Navbar';
 import { AstronomyGuide } from './components/AstronomyGuide';
 import { Compass3DModal } from './components/Compass3DModal';
+import {
+  HojaImpresionSesion,
+  PlanificadorSesionModal,
+} from './components/PlanificadorSesionModal';
 import { usePreferenciasMapa } from './hooks/usePreferenciasMapa';
+import {
+  usePlanificadorSesion,
+  type EntradaObjetivoSesion,
+} from './hooks/usePlanificadorSesion';
 import {
   FILTROS_CATALOGO_POR_DEFECTO,
   useFiltrosCatalogo,
@@ -63,7 +73,9 @@ import type {
   EfemeridesTransito,
   EscalaBortle,
   FiltrosCatalogo,
+  MetadatosExportacionSesion,
   ObjetivoBrujula,
+  ObjetivoPlanificado,
   TemaVisual,
   Ubicacion,
   UbicacionFavorita,
@@ -411,6 +423,39 @@ function obtenerClaseAvisoExito(tema: TemaVisual): string {
   return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300';
 }
 
+function obtenerClaseBotonObjetivoPlaneta(tema: TemaVisual, activo: boolean): string {
+  if (!activo) return 'border-current/25 hover:bg-current/10';
+  if (tema === 'rojo') return 'border-red-500 bg-red-950/80 text-red-300';
+  if (tema === 'claro') return 'border-sky-600 bg-sky-600 text-white hover:bg-sky-700';
+  return 'border-cyan-400/70 bg-cyan-500/20 text-cyan-200 hover:bg-cyan-500/30';
+}
+
+function obtenerConstelacionEstrella(idEstrella: string): string {
+  const partes = idEstrella.trim().split(/\s+/);
+  const sufijo = partes[partes.length - 1] ?? '';
+  if (sufijo.length === 3) {
+    return obtenerNombreConstelacionIAU(sufijo.toUpperCase());
+  }
+  return '—';
+}
+
+function construirObjetivoPlaneta(cuerpo: CuerpoCeleste): EntradaObjetivoSesion | null {
+  if (cuerpo.tipo !== 'planeta') return null;
+  if (typeof cuerpo.raHoras !== 'number' || typeof cuerpo.decGrados !== 'number') return null;
+  return {
+    id: `planeta-${cuerpo.id}`,
+    codigo: cuerpo.nombre,
+    nombre: cuerpo.nombre,
+    categoria: 'planeta',
+    magnitud: cuerpo.magnitud,
+    constelacion: cuerpo.constelacionIAU
+      ? obtenerNombreConstelacionIAU(cuerpo.constelacionIAU)
+      : 'Eclíptica',
+    raHoras: cuerpo.raHoras,
+    decGrados: cuerpo.decGrados,
+  };
+}
+
 export function App() {
   const [ubicacion, setUbicacion] = useState<Ubicacion>(leerUbicacionGuardada);
   const [formUbicacion, setFormUbicacion] = useState<FormularioUbicacion>(() => ({
@@ -444,6 +489,7 @@ export function App() {
   const [tema, setTema] = useState<TemaVisual>(leerTemaGuardado);
   const [vistaActiva, setVistaActiva] = useState<VistaActiva>('observatorio');
   const [brujulaAbierta, setBrujulaAbierta] = useState(false);
+  const [planificadorAbierto, setPlanificadorAbierto] = useState(false);
   const {
     preferencias,
     toggleCapa,
@@ -641,6 +687,65 @@ export function App() {
     magnitudLimiteVisible: calidadCielo.magnitudLimiteVisible,
     filtros: filtrosCatalogo,
   });
+
+  const {
+    objetivosPlanificados,
+    idsEnSesion,
+    totalObjetivos: totalObjetivosSesion,
+    toggleObjetivo,
+    marcarObservado,
+    actualizarNota,
+    limpiarSesion,
+  } = usePlanificadorSesion({
+    latitud: coordenadasEstables.latitud,
+    longitud: coordenadasEstables.longitud,
+    fechaReferencia: fechaSeleccionada,
+  });
+
+  const metadatosSesion = useMemo<MetadatosExportacionSesion>(
+    () => ({
+      ubicacionNombre: ubicacion.nombre || 'Observatorio sin nombre',
+      bortle: bortleActual,
+      faseLunar: datosLunares.faseNombre,
+      fecha: fechaSeleccionada,
+    }),
+    [ubicacion.nombre, bortleActual, datosLunares.faseNombre, fechaSeleccionada]
+  );
+
+  const objetivoDetalleSeleccionado = useMemo<EntradaObjetivoSesion | null>(() => {
+    if (!astroSeleccionado) return null;
+    if (astroSeleccionado.categoria === 'messier') {
+      const obj = messierCompletos.find((m) => m.id === astroSeleccionado.id);
+      if (!obj) return null;
+      return {
+        id: `messier-${obj.id}`,
+        codigo: obj.id,
+        nombre: obj.nombreComun ?? obj.nombreNGC,
+        categoria: 'messier',
+        magnitud: obj.magnitud,
+        constelacion: obtenerNombreConstelacionIAU(obj.constelacionIAU),
+        raHoras: obj.raHoras,
+        decGrados: obj.decGrados,
+      };
+    }
+    if (astroSeleccionado.categoria === 'estrella') {
+      const estrella = estrellasCompletas.find((e) => e.id === astroSeleccionado.id);
+      if (!estrella) return null;
+      return {
+        id: `estrella-${estrella.id}`,
+        codigo: estrella.nombre ?? estrella.id,
+        nombre: estrella.nombre ? `${estrella.nombre} (${estrella.id})` : estrella.id,
+        categoria: 'estrella',
+        magnitud: estrella.magnitud,
+        constelacion: obtenerConstelacionEstrella(estrella.id),
+        raHoras: estrella.raHoras,
+        decGrados: estrella.decGrados,
+      };
+    }
+    const cuerpo = cuerpos.find((c) => c.id === astroSeleccionado.id);
+    if (!cuerpo) return null;
+    return construirObjetivoPlaneta(cuerpo);
+  }, [astroSeleccionado, messierCompletos, estrellasCompletas, cuerpos]);
 
   const resultadosBusqueda = useMemo<ResultadoBusquedaAstro[]>(() => {
     const consulta = normalizarTextoBusqueda(busquedaAstro);
@@ -921,6 +1026,7 @@ export function App() {
     omitirGuardadoFavoritosRef.current = favoritos.length > 0;
 
     resetearDatosLocales();
+    limpiarSesion();
 
     gpsRequestIdRef.current += 1;
     setCargandoGPS(false);
@@ -1070,6 +1176,45 @@ export function App() {
 
   const abrirBrujula = () => setBrujulaAbierta(true);
   const cerrarBrujula = useCallback(() => setBrujulaAbierta(false), []);
+  const abrirPlanificador = () => setPlanificadorAbierto(true);
+  const cerrarPlanificador = useCallback(() => setPlanificadorAbierto(false), []);
+
+  const localizarObjetivoEnMapa = useCallback(
+    (objetivo: ObjetivoPlanificado) => {
+      setVistaActiva('observatorio');
+      if (objetivo.categoria === 'messier') {
+        const idOriginal = objetivo.id.replace(/^messier-/, '');
+        if (!preferencias.capas.messier) {
+          toggleCapa('messier', true);
+        }
+        setFiltrosCatalogo(FILTROS_CATALOGO_POR_DEFECTO);
+        setAstroSeleccionado({
+          id: idOriginal,
+          nombre: `${objetivo.codigo} · ${objetivo.nombre}`,
+          categoria: 'messier',
+        });
+      } else if (objetivo.categoria === 'estrella') {
+        const idOriginal = objetivo.id.replace(/^estrella-/, '');
+        if (!preferencias.capas.estrellas) {
+          toggleCapa('estrellas', true);
+        }
+        setAstroSeleccionado({
+          id: idOriginal,
+          nombre: objetivo.codigo,
+          categoria: 'estrella',
+        });
+      } else {
+        const idOriginal = objetivo.id.replace(/^planeta-/, '');
+        setAstroSeleccionado({
+          id: idOriginal,
+          nombre: objetivo.nombre,
+          categoria: 'cuerpo',
+        });
+      }
+      setContadorFoco((prev) => prev + 1);
+    },
+    [preferencias.capas.estrellas, preferencias.capas.messier, toggleCapa]
+  );
 
   const clasesContenedor = CLASES_CONTENEDOR[tema];
   const clasesTarjeta = CLASES_TARJETA[tema];
@@ -1077,22 +1222,25 @@ export function App() {
   const claseEsquemaInput = tema !== 'claro' ? '[color-scheme:dark]' : '';
 
   return (
-    <div
-      className={`tema-${tema} relative min-h-screen transition-colors duration-300 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] ${clasesContenedor}`}
-    >
-      <StarfieldBackground tema={tema} />
-      <Navbar
-        tema={tema}
-        onCambiarTema={setTema}
-        vistaActiva={vistaActiva}
-        onCambiarVista={cambiarVista}
-        onAbrirBrujula={abrirBrujula}
-        ubicacion={ubicacion}
-        panelUbicacionAbierto={editandoUbicacion}
-        onAlternarUbicacion={() => setEditandoUbicacion((prev) => !prev)}
-        onDetectarGPS={detectarGPS}
-        cargandoGPS={cargandoGPS}
-      />
+    <>
+      <div
+        className={`no-imprimir tema-${tema} relative min-h-screen transition-colors duration-300 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] ${clasesContenedor}`}
+      >
+        <StarfieldBackground tema={tema} />
+        <Navbar
+          tema={tema}
+          onCambiarTema={setTema}
+          vistaActiva={vistaActiva}
+          onCambiarVista={cambiarVista}
+          onAbrirBrujula={abrirBrujula}
+          onAbrirPlanificador={abrirPlanificador}
+          totalObjetivosSesion={totalObjetivosSesion}
+          ubicacion={ubicacion}
+          panelUbicacionAbierto={editandoUbicacion}
+          onAlternarUbicacion={() => setEditandoUbicacion((prev) => !prev)}
+          onDetectarGPS={detectarGPS}
+          cargandoGPS={cargandoGPS}
+        />
       <div className="max-w-7xl mx-auto space-y-6 p-4 md:p-6">
         {errorGPS && !editandoUbicacion && (
           <p
@@ -1615,6 +1763,13 @@ export function App() {
                     magnitudLimiteVisible={magnitudLimiteEfectiva}
                     bortle={bortleActual}
                     instrumentoActivo={filtrosCatalogo.instrumento}
+                    objetivoDetalleSeleccionado={objetivoDetalleSeleccionado}
+                    esObjetivoEnSesion={
+                      objetivoDetalleSeleccionado
+                        ? idsEnSesion.has(objetivoDetalleSeleccionado.id)
+                        : false
+                    }
+                    onToggleObjetivo={toggleObjetivo}
                   />
                 </div>
 
@@ -1668,76 +1823,104 @@ export function App() {
                     const estaSeleccionado =
                       astroSeleccionado?.categoria === 'cuerpo' && astroSeleccionado.id === obj.id;
                     const claseSeleccion = estaSeleccionado ? obtenerClaseTarjetaSeleccionada(tema) : '';
+                    const objetivoPlaneta = construirObjetivoPlaneta(obj);
+                    const estaEnPlanificador =
+                      objetivoPlaneta !== null && idsEnSesion.has(objetivoPlaneta.id);
 
                     return (
-                      <button
+                      <div
                         key={obj.id}
-                        type="button"
-                        aria-pressed={estaSeleccionado}
-                        onClick={() =>
-                          setAstroSeleccionado((prev) =>
-                            prev?.categoria === 'cuerpo' && prev.id === obj.id
-                              ? null
-                              : { id: obj.id, nombre: obj.nombre, categoria: 'cuerpo' }
-                          )
-                        }
-                        className={`w-full text-left cursor-pointer tarjeta-3d p-3.5 rounded-xl border ${clasesTarjeta} ${claseHoverTarjeta} ${claseSeleccion} ${
+                        className={`w-full tarjeta-3d rounded-xl border ${clasesTarjeta} ${claseHoverTarjeta} ${claseSeleccion} ${
                           estaSeleccionado ? 'opacity-100' : visibilidad.opacidad
                         }`}
                       >
-                        <div className="flex items-center gap-3.5">
-                          {esLunaConFase && (
-                            <MoonPhase3D
-                              iluminacion={obj.iluminacion ?? 0}
-                              faseLunar={obj.faseLunar ?? ''}
-                              anguloFase={obj.anguloFase}
-                              tema={tema}
-                            />
-                          )}
+                        <button
+                          type="button"
+                          aria-pressed={estaSeleccionado}
+                          onClick={() =>
+                            setAstroSeleccionado((prev) =>
+                              prev?.categoria === 'cuerpo' && prev.id === obj.id
+                                ? null
+                                : { id: obj.id, nombre: obj.nombre, categoria: 'cuerpo' }
+                            )
+                          }
+                          className="w-full text-left cursor-pointer p-3.5"
+                        >
+                          <div className="flex items-center gap-3.5">
+                            {esLunaConFase && (
+                              <MoonPhase3D
+                                iluminacion={obj.iluminacion ?? 0}
+                                faseLunar={obj.faseLunar ?? ''}
+                                anguloFase={obj.anguloFase}
+                                tema={tema}
+                              />
+                            )}
 
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-2 mb-1.5">
-                              <span className="font-bold flex items-center gap-2">
-                                <span
-                                  className="w-2.5 h-2.5 rounded-full inline-block shrink-0"
-                                  style={{ backgroundColor: tema === 'rojo' ? '#ef4444' : obj.color }}
-                                />
-                                {obj.nombre}
-                              </span>
-                              <span className="text-xs px-2 py-0.5 rounded-full border border-current/25 shrink-0">
-                                {visibilidad.etiqueta}
-                              </span>
-                            </div>
-
-                            <div className="text-xs flex flex-wrap items-center justify-between gap-2 opacity-85 font-mono">
-                              <span className="flex items-center gap-1">
-                                <Compass className="w-3.5 h-3.5" aria-hidden="true" />
-                                {obj.direccion} ({obj.acimut}°)
-                              </span>
-                              <span>Alt: {obj.altitud}°</span>
-                              <span>Mag: {obj.magnitud}</span>
-                              {obj.faseLunar && (
-                                <span>
-                                  {obj.faseLunar} ({obj.iluminacion}%)
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-2 mb-1.5">
+                                <span className="font-bold flex items-center gap-2">
+                                  <span
+                                    className="w-2.5 h-2.5 rounded-full inline-block shrink-0"
+                                    style={{ backgroundColor: tema === 'rojo' ? '#ef4444' : obj.color }}
+                                  />
+                                  {obj.nombre}
                                 </span>
-                              )}
+                                <span className="text-xs px-2 py-0.5 rounded-full border border-current/25 shrink-0">
+                                  {visibilidad.etiqueta}
+                                </span>
+                              </div>
+
+                              <div className="text-xs flex flex-wrap items-center justify-between gap-2 opacity-85 font-mono">
+                                <span className="flex items-center gap-1">
+                                  <Compass className="w-3.5 h-3.5" aria-hidden="true" />
+                                  {obj.direccion} ({obj.acimut}°)
+                                </span>
+                                <span>Alt: {obj.altitud}°</span>
+                                <span>Mag: {obj.magnitud}</span>
+                                {obj.faseLunar && (
+                                  <span>
+                                    {obj.faseLunar} ({obj.iluminacion}%)
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        {estaSeleccionado && transitoSeleccionado && (
-                          <div className="mt-2.5 pt-2 border-t border-current/15 text-xs font-mono flex flex-wrap items-center justify-between gap-2 opacity-90">
-                            <span>Salida: {formatearHoraLocal(transitoSeleccionado.salida)}</span>
-                            <span>
-                              Culminación: {formatearHoraLocal(transitoSeleccionado.culminacion)}
-                              {transitoSeleccionado.alturaMaxima !== null
-                                ? ` (${transitoSeleccionado.alturaMaxima}°)`
-                                : ''}
-                            </span>
-                            <span>Puesta: {formatearHoraLocal(transitoSeleccionado.puesta)}</span>
+                          {estaSeleccionado && transitoSeleccionado && (
+                            <div className="mt-2.5 pt-2 border-t border-current/15 text-xs font-mono flex flex-wrap items-center justify-between gap-2 opacity-90">
+                              <span>Salida: {formatearHoraLocal(transitoSeleccionado.salida)}</span>
+                              <span>
+                                Culminación: {formatearHoraLocal(transitoSeleccionado.culminacion)}
+                                {transitoSeleccionado.alturaMaxima !== null
+                                  ? ` (${transitoSeleccionado.alturaMaxima}°)`
+                                  : ''}
+                              </span>
+                              <span>Puesta: {formatearHoraLocal(transitoSeleccionado.puesta)}</span>
+                            </div>
+                          )}
+                        </button>
+
+                        {objetivoPlaneta && (
+                          <div className="px-3.5 pb-3 pt-0 flex justify-end">
+                            <button
+                              type="button"
+                              aria-pressed={estaEnPlanificador}
+                              onClick={() => toggleObjetivo(objetivoPlaneta)}
+                              className={`min-h-9 sm:min-h-8 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none ${obtenerClaseBotonObjetivoPlaneta(
+                                tema,
+                                estaEnPlanificador
+                              )}`}
+                            >
+                              {estaEnPlanificador ? (
+                                <BookmarkCheck className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                              ) : (
+                                <Bookmark className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                              )}
+                              <span>Objetivo esta noche</span>
+                            </button>
                           </div>
                         )}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -1756,7 +1939,26 @@ export function App() {
           onCerrar={cerrarBrujula}
         />
       )}
-    </div>
+
+      {planificadorAbierto && (
+        <PlanificadorSesionModal
+          tema={tema}
+          objetivos={objetivosPlanificados}
+          metadatos={metadatosSesion}
+          onMarcarObservado={marcarObservado}
+          onActualizarNota={actualizarNota}
+          onEliminarObjetivo={toggleObjetivo}
+          onLimpiarSesion={limpiarSesion}
+          onLocalizarEnMapa={localizarObjetivoEnMapa}
+          onCerrar={cerrarPlanificador}
+        />
+      )}
+      </div>
+      <HojaImpresionSesion
+        objetivos={objetivosPlanificados}
+        metadatos={metadatosSesion}
+      />
+    </>
   );
 }
 

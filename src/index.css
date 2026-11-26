@@ -195,3 +195,156 @@
     animation: none;
   }
 }
+
+/* ── Hoja imprimible de observación nocturna (PDF vía window.print) ── */
+.hoja-impresion-sesion {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .no-imprimir {
+    display: none !important;
+  }
+
+  .hoja-impresion-sesion {
+    display: block !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: var(--font-sans);
+    font-size: 10pt;
+    line-height: 1.35;
+  }
+
+  .hoja-impresion-cabecera {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12pt;
+    border-bottom: 1.5pt solid #000000;
+    padding-bottom: 6pt;
+    margin-bottom: 10pt;
+  }
+
+  .hoja-impresion-cabecera h1 {
+    font-family: var(--font-display);
+    font-size: 16pt;
+    font-weight: 700;
+    margin: 0;
+    color: #000000;
+  }
+
+  .hoja-impresion-subtitulo {
+    font-size: 9pt;
+    margin: 2pt 0 0 0;
+    color: #222222;
+  }
+
+  .hoja-impresion-progreso {
+    font-family: var(--font-mono);
+    font-size: 10pt;
+    font-weight: 700;
+    border: 1pt solid #000000;
+    padding: 3pt 8pt;
+    white-space: nowrap;
+  }
+
+  .hoja-impresion-metadatos {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8pt;
+    margin: 0 0 12pt 0;
+    padding: 6pt 8pt;
+    border: 0.75pt solid #000000;
+  }
+
+  .hoja-impresion-metadatos dt {
+    font-size: 7.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #333333;
+  }
+
+  .hoja-impresion-metadatos dd {
+    margin: 1pt 0 0 0;
+    font-weight: 600;
+    font-size: 9.5pt;
+    color: #000000;
+  }
+
+  .hoja-impresion-tabla {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9pt;
+  }
+
+  .hoja-impresion-tabla thead {
+    display: table-header-group;
+  }
+
+  .hoja-impresion-tabla tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .hoja-impresion-tabla th,
+  .hoja-impresion-tabla td {
+    border: 0.6pt solid #000000;
+    padding: 4.5pt 6pt;
+    text-align: left;
+    vertical-align: top;
+    color: #000000;
+  }
+
+  .hoja-impresion-tabla th {
+    background: #eeeeee !important;
+    font-weight: 700;
+    font-size: 8.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .hoja-impresion-tabla .col-check {
+    width: 28pt;
+    text-align: center;
+    font-size: 12pt;
+    line-height: 1;
+  }
+
+  .hoja-impresion-tabla .col-astro {
+    font-weight: 700;
+  }
+
+  .hoja-impresion-tabla .col-num {
+    text-align: right;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+
+  .hoja-impresion-tabla .col-mono {
+    font-family: var(--font-mono);
+    font-size: 8.5pt;
+    white-space: nowrap;
+  }
+
+  .hoja-impresion-vacia {
+    border: 0.75pt dashed #000000;
+    padding: 16pt;
+    text-align: center;
+    font-style: italic;
+  }
+}
