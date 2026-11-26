@@ -20,6 +20,7 @@ import {
   Pause,
   Search,
   Star,
+  Trash2,
   X,
 } from 'lucide-react';
 import {
@@ -40,6 +41,7 @@ import { MoonPhase3D } from './components/MoonPhase3D';
 import { Navbar } from './components/Navbar';
 import { AstronomyGuide } from './components/AstronomyGuide';
 import { Compass3DModal } from './components/Compass3DModal';
+import { usePreferenciasMapa } from './hooks/usePreferenciasMapa';
 import type {
   AstroSeleccionado,
   CategoriaAstro,
@@ -336,6 +338,23 @@ function obtenerClaseChipFavorito(tema: TemaVisual, activo: boolean): string {
   return 'border-sky-400/70 bg-sky-500/15 text-sky-200';
 }
 
+function obtenerClaseBotonRestablecer(tema: TemaVisual, confirmando: boolean): string {
+  if (confirmando) {
+    if (tema === 'rojo') return 'border-red-500 bg-red-950 text-red-300 hover:bg-red-900/80';
+    if (tema === 'claro') return 'border-rose-600 bg-rose-600 text-white hover:bg-rose-700';
+    return 'border-rose-500 bg-rose-600/90 text-white hover:bg-rose-500';
+  }
+  if (tema === 'rojo') return 'border-red-800/80 text-red-400 hover:bg-red-950/60';
+  if (tema === 'claro') return 'border-rose-300 text-rose-700 hover:bg-rose-50';
+  return 'border-rose-500/40 text-rose-300 hover:bg-rose-500/15';
+}
+
+function obtenerClaseAvisoExito(tema: TemaVisual): string {
+  if (tema === 'rojo') return 'border-red-600 bg-red-950/40 text-red-400';
+  if (tema === 'claro') return 'border-emerald-300 bg-emerald-50 text-emerald-700';
+  return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300';
+}
+
 export function App() {
   const [ubicacion, setUbicacion] = useState<Ubicacion>(leerUbicacionGuardada);
   const [formUbicacion, setFormUbicacion] = useState<FormularioUbicacion>(() => ({
@@ -367,9 +386,18 @@ export function App() {
   const [tema, setTema] = useState<TemaVisual>(leerTemaGuardado);
   const [vistaActiva, setVistaActiva] = useState<VistaActiva>('observatorio');
   const [brujulaAbierta, setBrujulaAbierta] = useState(false);
-  const [mostrarConstelaciones, setMostrarConstelaciones] = useState(true);
-  const [mostrarEtiquetasEstrellas, setMostrarEtiquetasEstrellas] = useState(true);
-  const [mostrarMessier, setMostrarMessier] = useState(true);
+  const {
+    preferencias,
+    toggleCapa,
+    setModoMapa,
+    resetearDatosLocales,
+  } = usePreferenciasMapa();
+  const [confirmandoReset, setConfirmandoReset] = useState(false);
+  const [avisoReset, setAvisoReset] = useState<string | null>(null);
+  const timeoutResetRef = useRef<number | null>(null);
+  const omitirGuardadoUbicacionRef = useRef(true);
+  const omitirGuardadoTemaRef = useRef(true);
+  const omitirGuardadoFavoritosRef = useRef(true);
 
   const coordenadasEstables = useMemo<Ubicacion>(
     () => ({
@@ -415,20 +443,40 @@ export function App() {
 
   useEffect(() => {
     altitudActualRef.current = ubicacion.altitud;
+    if (omitirGuardadoUbicacionRef.current) {
+      omitirGuardadoUbicacionRef.current = false;
+      return;
+    }
     guardarEnStorage(CLAVE_UBICACION, JSON.stringify(ubicacion));
   }, [ubicacion]);
 
   useEffect(() => {
-    guardarEnStorage(CLAVE_TEMA, tema);
     const metaThemeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
     if (metaThemeColor) {
       metaThemeColor.content = COLOR_TEMA_META[tema];
     }
+    if (omitirGuardadoTemaRef.current) {
+      omitirGuardadoTemaRef.current = false;
+      return;
+    }
+    guardarEnStorage(CLAVE_TEMA, tema);
   }, [tema]);
 
   useEffect(() => {
+    if (omitirGuardadoFavoritosRef.current) {
+      omitirGuardadoFavoritosRef.current = false;
+      return;
+    }
     guardarEnStorage(CLAVE_FAVORITOS, JSON.stringify(favoritos));
   }, [favoritos]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutResetRef.current !== null) {
+        window.clearTimeout(timeoutResetRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!buscadorAbierto) return;
@@ -722,9 +770,50 @@ export function App() {
     setFavoritos((prev) => prev.filter((fav) => fav.id !== id));
   };
 
+  const manejarRestablecerDatosLocales = () => {
+    if (!confirmandoReset) {
+      setAvisoReset(null);
+      setConfirmandoReset(true);
+      if (timeoutResetRef.current !== null) {
+        window.clearTimeout(timeoutResetRef.current);
+      }
+      timeoutResetRef.current = window.setTimeout(() => {
+        setConfirmandoReset(false);
+        timeoutResetRef.current = null;
+      }, 3000);
+      return;
+    }
+
+    if (timeoutResetRef.current !== null) {
+      window.clearTimeout(timeoutResetRef.current);
+      timeoutResetRef.current = null;
+    }
+    setConfirmandoReset(false);
+    omitirGuardadoUbicacionRef.current = ubicacion !== UBICACION_INICIAL;
+    omitirGuardadoTemaRef.current = tema !== 'oscuro';
+    omitirGuardadoFavoritosRef.current = favoritos.length > 0;
+
+    resetearDatosLocales();
+
+    gpsRequestIdRef.current += 1;
+    setCargandoGPS(false);
+    setErrorGPS(null);
+    setAvisoFavorito(null);
+    setUbicacion(UBICACION_INICIAL);
+    setFormUbicacion({
+      nombre: UBICACION_INICIAL.nombre,
+      latitud: String(UBICACION_INICIAL.latitud),
+      longitud: String(UBICACION_INICIAL.longitud),
+      altitud: String(UBICACION_INICIAL.altitud),
+    });
+    setFavoritos([]);
+    setTema('oscuro');
+    setAvisoReset('Datos locales restablecidos a los valores iniciales.');
+  };
+
   const seleccionarResultadoBusqueda = (resultado: ResultadoBusquedaAstro) => {
-    if (resultado.categoria === 'messier' && !mostrarMessier) {
-      setMostrarMessier(true);
+    if (resultado.categoria === 'messier' && !preferencias.capas.messier) {
+      toggleCapa('messier', true);
     }
     setAstroSeleccionado({
       id: resultado.id,
@@ -1055,6 +1144,40 @@ export function App() {
                 </div>
               </div>
             )}
+
+            <div className="pt-3 border-t border-current/15 flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-0.5 text-xs">
+                <p className="font-medium">Restablecer datos locales</p>
+                <p className="opacity-70">
+                  Borra ubicación, favoritos, tema y preferencias del mapa guardadas en este navegador.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={manejarRestablecerDatosLocales}
+                aria-label={
+                  confirmandoReset
+                    ? 'Confirmar borrado de ubicación, favoritos y preferencias guardadas'
+                    : 'Restablecer ubicación, favoritos y preferencias guardadas'
+                }
+                className={`min-h-10 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border cursor-pointer transition-colors motion-reduce:transition-none ${obtenerClaseBotonRestablecer(
+                  tema,
+                  confirmandoReset
+                )}`}
+              >
+                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                {confirmandoReset ? '¿Confirmar borrado?' : 'Restablecer datos'}
+              </button>
+            </div>
+
+            {avisoReset && (
+              <p
+                role="status"
+                className={`text-xs px-3 py-2 rounded-lg border ${obtenerClaseAvisoExito(tema)}`}
+              >
+                {avisoReset}
+              </p>
+            )}
           </section>
         )}
 
@@ -1165,24 +1288,24 @@ export function App() {
                 <label className="flex items-center gap-1.5 cursor-pointer min-h-10 sm:min-h-8 px-2.5 py-1 rounded-lg border border-current/20 hover:bg-current/10 transition-colors">
                   <input
                     type="checkbox"
-                    checked={mostrarConstelaciones}
-                    onChange={(e) => setMostrarConstelaciones(e.target.checked)}
+                    checked={preferencias.capas.constelaciones}
+                    onChange={(e) => toggleCapa('constelaciones', e.target.checked)}
                   />
                   <span>Constelaciones</span>
                 </label>
                 <label className="flex items-center gap-1.5 cursor-pointer min-h-10 sm:min-h-8 px-2.5 py-1 rounded-lg border border-current/20 hover:bg-current/10 transition-colors">
                   <input
                     type="checkbox"
-                    checked={mostrarEtiquetasEstrellas}
-                    onChange={(e) => setMostrarEtiquetasEstrellas(e.target.checked)}
+                    checked={preferencias.capas.estrellas}
+                    onChange={(e) => toggleCapa('estrellas', e.target.checked)}
                   />
                   <span>Estrellas</span>
                 </label>
                 <label className="flex items-center gap-1.5 cursor-pointer min-h-10 sm:min-h-8 px-2.5 py-1 rounded-lg border border-current/20 hover:bg-current/10 transition-colors">
                   <input
                     type="checkbox"
-                    checked={mostrarMessier}
-                    onChange={(e) => setMostrarMessier(e.target.checked)}
+                    checked={preferencias.capas.messier}
+                    onChange={(e) => toggleCapa('messier', e.target.checked)}
                   />
                   <span>Messier</span>
                 </label>
@@ -1309,9 +1432,11 @@ export function App() {
                     estrellas={estrellas}
                     messier={messier}
                     tema={tema}
-                    mostrarConstelaciones={mostrarConstelaciones}
-                    mostrarEtiquetasEstrellas={mostrarEtiquetasEstrellas}
-                    mostrarMessier={mostrarMessier}
+                    modoMapa={preferencias.modoMapa}
+                    onCambiarModoMapa={setModoMapa}
+                    mostrarConstelaciones={preferencias.capas.constelaciones}
+                    mostrarEtiquetasEstrellas={preferencias.capas.estrellas}
+                    mostrarMessier={preferencias.capas.messier}
                     astroSeleccionado={astroSeleccionado}
                     trayectoria={trayectoriaAstro}
                     onSeleccionarAstro={setAstroSeleccionado}
