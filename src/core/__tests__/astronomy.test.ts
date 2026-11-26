@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as Astronomy from 'astronomy-engine';
 import {
   calcularCielo,
   calcularEstadoSolar,
@@ -295,6 +296,44 @@ describe('Eventos astronómicos (eventsCalculator)', () => {
     expect(eclipseTotal?.titulo).toBe('Eclipse Lunar Total');
     expect(eclipseTotal?.resumen).toMatch(/^Oscurecimiento: \d+%$/);
   });
+
+  it('incluye un eclipse solar con aviso de no visibilidad si todos los próximos ocurren bajo el horizonte', () => {
+    const fechaBase = new Date('2026-06-01T12:00:00Z');
+    const fechaEclipseNocturno = new Date('2026-06-05T02:00:00Z');
+
+    const spySolar = vi.spyOn(Astronomy, 'SearchLocalSolarEclipse').mockImplementation((fecha) => {
+      const base = fecha instanceof Date ? fecha : new Date(fecha.toString());
+      const fechaEvento =
+        base.getTime() <= fechaEclipseNocturno.getTime()
+          ? fechaEclipseNocturno
+          : new Date(base.getTime() + 180 * 24 * 60 * 60 * 1000);
+      const tiempo = Astronomy.MakeTime(fechaEvento);
+      const evento: Astronomy.EclipseEvent = { time: tiempo, altitude: -14.5 };
+      return {
+        kind: Astronomy.EclipseKind.Partial,
+        obscuration: 0.42,
+        partial_begin: evento,
+        total_begin: undefined,
+        peak: evento,
+        total_end: undefined,
+        partial_end: evento,
+      };
+    });
+
+    try {
+      const eventos = calcularProximosEventos(fechaBase, VALENCIA);
+      const eclipseSolar = eventos.find((ev) => ev.titulo.includes('Eclipse Solar'));
+
+      expect(spySolar).toHaveBeenCalledTimes(16);
+      expect(eclipseSolar).toBeDefined();
+      expect(eclipseSolar?.titulo).toBe('Eclipse Solar Parcial');
+      expect(eclipseSolar?.detalle).toBe(
+        'No visible desde tu ubicación (Sol bajo el horizonte: -14.5°)'
+      );
+    } finally {
+      spySolar.mockRestore();
+    }
+  });
 });
 
 describe('Servicio meteorológico (weatherService)', () => {
@@ -313,12 +352,15 @@ describe('Servicio meteorológico (weatherService)', () => {
   it('usa la caché válida de localStorage sin invocar fetch y genera 12 franjas en proximasHoras', async () => {
     const fechaUTC = new Date('2026-06-15T20:00:00Z');
     const hourly = crearHourlySintetico(fechaUTC, 24);
+    const ahora = Date.now();
     mockStorage.setItem(
-      'skyproject_meteo_cache_v2',
+      'skyproject_meteo_cache_v3',
       JSON.stringify({
-        claveUbicacion: '39.47,-0.38',
-        timestamp: Date.now(),
-        hourly,
+        '39.47,-0.38': {
+          timestamp: ahora,
+          ultimoAcceso: ahora,
+          hourly,
+        },
       })
     );
 
@@ -339,7 +381,7 @@ describe('Servicio meteorológico (weatherService)', () => {
   it('se recupera de forma segura ante JSON corrupto en localStorage y consulta Open-Meteo en UTC', async () => {
     const fechaUTC = new Date('2026-06-15T21:00:00Z');
     const hourly = crearHourlySintetico(fechaUTC, 18);
-    mockStorage.setItem('skyproject_meteo_cache_v2', '{json-corrupto');
+    mockStorage.setItem('skyproject_meteo_cache_v3', '{json-corrupto');
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -357,5 +399,96 @@ describe('Servicio meteorológico (weatherService)', () => {
     expect(resultado.datos?.esCache).toBe(false);
     expect(resultado.datos?.horaPronostico).toBe('2026-06-15 21:00 UTC');
     expect(resultado.datos?.proximasHoras).toHaveLength(12);
+  });
+
+  it('rechaza respuestas de Open-Meteo con NaN o Infinity sin guardarlas ni propagar NaN', async () => {
+    const fechaUTC = new Date('2026-06-15T21:00:00Z');
+    const hourlyConNaN = crearHourlySintetico(fechaUTC, 12);
+    hourlyConNaN.cloud_cover[0] = Number.NaN;
+
+    const hourlyConInfinito = crearHourlySintetico(fechaUTC, 12);
+    hourlyConInfinito.wind_speed_10m[0] = Number.POSITIVE_INFINITY;
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hourly: hourlyConNaN }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hourly: hourlyConInfinito }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resNaN = await obtenerCondicionesMeteo(fechaUTC, VALENCIA);
+    expect(resNaN.datos).toBeNull();
+    expect(resNaN.aviso).toBe('No se pudo obtener la previsión meteorológica.');
+
+    const resInfinito = await obtenerCondicionesMeteo(fechaUTC, VALENCIA);
+    expect(resInfinito.datos).toBeNull();
+    expect(resInfinito.aviso).toBe('No se pudo obtener la previsión meteorológica.');
+    expect(mockStorage.getItem('skyproject_meteo_cache_v3')).toBeNull();
+  });
+
+  it('conserva múltiples ubicaciones con expulsión LRU al superar 5 y mantiene fallback offline', async () => {
+    const fechaUTC = new Date('2026-06-15T20:00:00Z');
+    const hourly = crearHourlySintetico(fechaUTC, 18);
+
+    let reloj = 1_700_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      reloj += 1000;
+      return reloj;
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ hourly }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ubicaciones: Ubicacion[] = [
+      { latitud: 39.47, longitud: -0.38, altitud: 150, nombre: 'Valencia' },
+      { latitud: 40.42, longitud: -3.7, altitud: 650, nombre: 'Madrid' },
+      { latitud: 41.39, longitud: 2.17, altitud: 12, nombre: 'Barcelona' },
+      { latitud: 37.39, longitud: -5.98, altitud: 7, nombre: 'Sevilla' },
+      { latitud: 28.47, longitud: -16.25, altitud: 2390, nombre: 'Teide' },
+      { latitud: 43.26, longitud: -2.93, altitud: 19, nombre: 'Bilbao' },
+    ];
+
+    // Carga las 5 primeras ubicaciones
+    for (let i = 0; i < 5; i++) {
+      const res = await obtenerCondicionesMeteo(fechaUTC, ubicaciones[i]);
+      expect(res.datos?.esCache).toBe(false);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+
+    // Reutiliza la primera ubicación desde caché para refrescar su ultimoAcceso (LRU)
+    const resReutilizada = await obtenerCondicionesMeteo(fechaUTC, ubicaciones[0]);
+    expect(resReutilizada.datos?.esCache).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+
+    // Añade una sexta ubicación: debe expulsar a Madrid (índice 1) y conservar Valencia (índice 0)
+    const resSexta = await obtenerCondicionesMeteo(fechaUTC, ubicaciones[5]);
+    expect(resSexta.datos?.esCache).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+
+    const cacheGuardada = JSON.parse(
+      mockStorage.getItem('skyproject_meteo_cache_v3') ?? '{}'
+    ) as Record<string, unknown>;
+    const claves = Object.keys(cacheGuardada);
+    expect(claves).toHaveLength(5);
+    expect(claves).toContain('39.47,-0.38');
+    expect(claves).toContain('43.26,-2.93');
+    expect(claves).not.toContain('40.42,-3.70');
+
+    // Expira el TTL (> 1 hora) y simula fallo de red: debe responder con fallback offline
+    reloj += 2 * 60 * 60 * 1000;
+    fetchMock.mockRejectedValueOnce(new Error('Sin conexión'));
+
+    const resOffline = await obtenerCondicionesMeteo(fechaUTC, ubicaciones[0]);
+    expect(resOffline.datos).not.toBeNull();
+    expect(resOffline.datos?.esCache).toBe(true);
+    expect(resOffline.aviso).toBe('Sin conexión: mostrando datos guardados en caché.');
   });
 });
