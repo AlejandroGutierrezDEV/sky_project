@@ -183,3 +183,16 @@ export interface ObjetivoBrujula {
   altitud: number;
   color: string;
 }
+
+export type ModoMapa = '2D' | '3D';
+
+export interface CapasMapa {
+  constelaciones: boolean;
+  estrellas: boolean;
+  messier: boolean;
+}
+
+export interface PreferenciasVisualizacion {
+  modoMapa: ModoMapa;
+  capas: CapasMapa;
+}

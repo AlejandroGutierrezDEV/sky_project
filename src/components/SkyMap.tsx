@@ -6,6 +6,7 @@ import type {
   CuerpoCeleste,
   EstrellaCalculada,
   MessierCalculado,
+  ModoMapa,
   PuntoTrayectoria,
   TemaVisual,
 } from '../types/astronomy';
@@ -16,6 +17,8 @@ interface SkyMapProps {
   estrellas: EstrellaCalculada[];
   messier: MessierCalculado[];
   tema: TemaVisual;
+  modoMapa: ModoMapa;
+  onCambiarModoMapa: (modo: ModoMapa) => void;
   mostrarConstelaciones: boolean;
   mostrarEtiquetasEstrellas: boolean;
   mostrarMessier: boolean;
@@ -24,8 +27,6 @@ interface SkyMapProps {
   onSeleccionarAstro: (astro: AstroSeleccionado | null) => void;
   contadorFoco?: number;
 }
-
-type ModoVista = '2d' | '3d';
 
 interface Camara3D {
   rotAz: number;
@@ -678,6 +679,8 @@ export function SkyMap({
   estrellas,
   messier,
   tema,
+  modoMapa,
+  onCambiarModoMapa,
   mostrarConstelaciones,
   mostrarEtiquetasEstrellas,
   mostrarMessier,
@@ -688,7 +691,6 @@ export function SkyMap({
 }: Readonly<SkyMapProps>) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const escenaBaseRef = useRef<CacheEscenaCanvas | null>(null);
-  const [modoVista, setModoVista] = useState<ModoVista>('2d');
   const [camara, setCamara] = useState<Camara3D>(CAMARA_INICIAL);
   const [hoverInfo, setHoverInfo] = useState<ObjetoHover | null>(null);
 
@@ -722,7 +724,7 @@ export function SkyMap({
   };
 
   useEffect(() => {
-    if (modoVista !== '3d' || !astroSeleccionado) return;
+    if (modoMapa !== '3D' || !astroSeleccionado) return;
 
     const { cuerpos: listaCuerpos, estrellas: listaEstrellas, messier: listaMessier } =
       datosAstrosRef.current;
@@ -795,7 +797,7 @@ export function SkyMap({
         animacionCamaraRef.current = 0;
       }
     };
-  }, [astroSeleccionado, modoVista, contadorFoco]);
+  }, [astroSeleccionado, modoMapa, contadorFoco]);
 
   const claveEscenaBase = useMemo(
     () => ({
@@ -803,7 +805,7 @@ export function SkyMap({
       estrellas,
       messier,
       tema,
-      modoVista,
+      modoMapa,
       camara,
       mostrarConstelaciones,
       mostrarEtiquetasEstrellas,
@@ -815,7 +817,7 @@ export function SkyMap({
       estrellas,
       messier,
       tema,
-      modoVista,
+      modoMapa,
       camara,
       mostrarConstelaciones,
       mostrarEtiquetasEstrellas,
@@ -857,7 +859,7 @@ export function SkyMap({
     const paleta = PALETAS[tema];
 
     const proyectarFn =
-      modoVista === '2d'
+      modoMapa === '2D'
         ? (alt: number, az: number) => proyectar2D(alt, az, cx, cy, radio)
         : (alt: number, az: number) => proyectar3D(alt, az, cx, cy, size, camara);
 
@@ -865,7 +867,7 @@ export function SkyMap({
     ctxBase.clearRect(0, 0, size, size);
     const interactivos: ObjetoHover[] = [];
 
-    if (modoVista === '2d') {
+    if (modoMapa === '2D') {
       dibujarBaseMapa2D(ctxBase, size, cx, cy, radio, paleta);
       ctxBase.save();
       ctxBase.beginPath();
@@ -901,7 +903,7 @@ export function SkyMap({
     estrellas,
     messier,
     tema,
-    modoVista,
+    modoMapa,
     camara,
     mostrarConstelaciones,
     mostrarEtiquetasEstrellas,
@@ -924,7 +926,7 @@ export function SkyMap({
       canvas.height = tamanoBuffer;
     }
 
-    const { tema: temaActual, modoVista: modoActual } = claveEscenaBase;
+    const { tema: temaActual, modoMapa: modoActual } = claveEscenaBase;
 
     const dibujarFrame = (fasePulso: number) => {
       const base = escenaBaseRef.current;
@@ -936,7 +938,7 @@ export function SkyMap({
 
       if (astroSeleccionado) {
         ctx.save();
-        if (modoActual === '2d') {
+        if (modoActual === '2D') {
           ctx.beginPath();
           ctx.arc(size / 2, size / 2, size / 2 - 36, 0, Math.PI * 2);
           ctx.clip();
@@ -1006,7 +1008,7 @@ export function SkyMap({
   };
 
   const manejarPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
-    if (modoVista === '3d') {
+    if (modoMapa === '3D') {
       cancelarAnimacionCamara();
       e.currentTarget.setPointerCapture(e.pointerId);
       arrastreRef.current = {
@@ -1025,7 +1027,7 @@ export function SkyMap({
 
   const manejarPointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
     const arrastre = arrastreRef.current;
-    if (modoVista === '3d' && arrastre && arrastre.activo && arrastre.pointerId === e.pointerId) {
+    if (modoMapa === '3D' && arrastre && arrastre.activo && arrastre.pointerId === e.pointerId) {
       const dx = e.clientX - arrastre.ultimoX;
       const dy = e.clientY - arrastre.ultimoY;
       if (Math.hypot(e.clientX - arrastre.inicioX, e.clientY - arrastre.inicioY) > 4) {
@@ -1057,7 +1059,7 @@ export function SkyMap({
 
     if (fueArrastre) return;
 
-    if (modoVista === '3d') {
+    if (modoMapa === '3D') {
       inspeccionarPuntero(e);
     }
 
@@ -1092,7 +1094,7 @@ export function SkyMap({
   };
 
   const manejarKeyDown = (e: KeyboardEvent<HTMLCanvasElement>) => {
-    if (modoVista !== '3d') return;
+    if (modoMapa !== '3D') return;
 
     if (e.key === 'ArrowLeft') {
       e.preventDefault();
@@ -1135,20 +1137,20 @@ export function SkyMap({
         >
           <button
             type="button"
-            aria-pressed={modoVista === '2d'}
-            onClick={() => setModoVista('2d')}
+            aria-pressed={modoMapa === '2D'}
+            onClick={() => onCambiarModoMapa('2D')}
             className={`min-h-10 sm:min-h-8 flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium cursor-pointer transition-colors ${claseBotonVista(
-              modoVista === '2d'
+              modoMapa === '2D'
             )}`}
           >
             <Compass className="w-3.5 h-3.5" aria-hidden="true" /> 2D Planisferio
           </button>
           <button
             type="button"
-            aria-pressed={modoVista === '3d'}
-            onClick={() => setModoVista('3d')}
+            aria-pressed={modoMapa === '3D'}
+            onClick={() => onCambiarModoMapa('3D')}
             className={`min-h-10 sm:min-h-8 flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium cursor-pointer transition-colors ${claseBotonVista(
-              modoVista === '3d'
+              modoMapa === '3D'
             )}`}
           >
             <Globe className="w-3.5 h-3.5" aria-hidden="true" /> 3D Bóveda
@@ -1156,7 +1158,7 @@ export function SkyMap({
         </div>
 
         <div className="flex items-center gap-2">
-          {modoVista === '3d' ? (
+          {modoMapa === '3D' ? (
             <>
               <span className="opacity-65 hidden sm:inline">Arrastra para rotar el cielo</span>
               <button
@@ -1181,7 +1183,7 @@ export function SkyMap({
         tabIndex={0}
         role="img"
         aria-label={
-          modoVista === '3d'
+          modoMapa === '3D'
             ? 'Bóveda celeste interactiva en 3D con estrellas, constelaciones, objetos Messier y planetas'
             : 'Mapa celeste interactivo con estrellas, constelaciones, objetos Messier y planetas'
         }
@@ -1194,7 +1196,7 @@ export function SkyMap({
           if (!arrastreRef.current?.activo) setHoverInfo(null);
         }}
         className={`w-full max-w-140 aspect-square rounded-2xl shadow-2xl ${
-          modoVista === '3d' ? 'cursor-grab active:cursor-grabbing touch-none' : 'cursor-crosshair'
+          modoMapa === '3D' ? 'cursor-grab active:cursor-grabbing touch-none' : 'cursor-crosshair'
         }`}
       />
 

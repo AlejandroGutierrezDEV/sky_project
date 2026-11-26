@@ -38,6 +38,8 @@ public/
   favicon.svg
 src/
   components/
+    __tests__/
+      Compass3DModal.test.ts
     AstronomyGuide.tsx
     Compass3DModal.tsx
     EventsPanel.tsx
@@ -76,6 +78,109 @@ vite.config.ts
 ````
 
 # Files
+
+## File: src/components/__tests__/Compass3DModal.test.ts
+````typescript
+import { describe, expect, it } from 'vitest';
+import { calcularOrientacionDesdeSensores } from '../Compass3DModal';
+
+/** Distancia angular mínima entre dos rumbos en grados [0, 180]. */
+function errorAngular(a: number, b: number): number {
+  return Math.abs(((((a - b) % 360) + 540) % 360) - 180);
+}
+
+describe('Orientación 3D de la Brújula Astronómica (W3C Z-X\'-Y\'\')', () => {
+  it('mantiene rumbo estable y altitud real al levantar el móvil apuntando al cielo (40°–85°)', () => {
+    const casosNorte = [
+      { beta: 90, altEsperada: 0 },
+      { beta: 130, altEsperada: 40 },
+      { beta: 150, altEsperada: 60 },
+      { beta: 175, altEsperada: 85 },
+    ];
+
+    for (const { beta, altEsperada } of casosNorte) {
+      const res = calcularOrientacionDesdeSensores(0, beta, 0, 0);
+      expect(errorAngular(res.rumbo, 0)).toBeLessThan(0.01);
+      expect(res.altitudApuntado).toBeCloseTo(altEsperada, 2);
+    }
+
+    // Apuntando al Este (90°) a +45° y +85° de elevación (sin salto de 180° cerca del cenit)
+    const este45 = calcularOrientacionDesdeSensores(270, 135, 0, 0);
+    expect(errorAngular(este45.rumbo, 90)).toBeLessThan(0.01);
+    expect(este45.altitudApuntado).toBeCloseTo(45, 2);
+
+    const este85 = calcularOrientacionDesdeSensores(270, 175, 0, 0);
+    expect(errorAngular(este85.rumbo, 90)).toBeLessThan(0.01);
+    expect(este85.altitudApuntado).toBeCloseTo(85, 2);
+  });
+
+  it('evita el salto de 180° por Gimbal Lock ante parametrizaciones equivalentes de Euler', () => {
+    const directo = calcularOrientacionDesdeSensores(0, 135, 0, 0);
+    const equivalenteEuler = calcularOrientacionDesdeSensores(180, 45, 180, 0);
+
+    expect(errorAngular(directo.rumbo, equivalenteEuler.rumbo)).toBeLessThan(0.01);
+    expect(directo.altitudApuntado).toBeCloseTo(45, 2);
+    expect(equivalenteEuler.altitudApuntado).toBeCloseTo(45, 2);
+  });
+
+  it('usa el vector superior de respaldo cuando el teléfono está plano o casi plano', () => {
+    const casosPlanos = [
+      { alpha: 0, rumboEsperado: 0 },
+      { alpha: 270, rumboEsperado: 90 },
+      { alpha: 180, rumboEsperado: 180 },
+      { alpha: 90, rumboEsperado: 270 },
+    ];
+
+    for (const { alpha, rumboEsperado } of casosPlanos) {
+      const res = calcularOrientacionDesdeSensores(alpha, 0, 0, 0);
+      expect(errorAngular(res.rumbo, rumboEsperado)).toBeLessThan(0.01);
+      expect(res.altitudApuntado).toBeCloseTo(-90, 2);
+    }
+
+    // Casi plano (beta = 5°, proyección horizontal ~0.087 < 0.15) mirando al Este
+    const casiPlanoEste = calcularOrientacionDesdeSensores(270, 5, 0, 0);
+    expect(errorAngular(casiPlanoEste.rumbo, 90)).toBeLessThan(0.01);
+    expect(casiPlanoEste.altitudApuntado).toBeCloseTo(-85, 2);
+  });
+
+  it('mantiene continuidad del rumbo en todo el barrido desde plano (0°) hasta el cenit (180°)', () => {
+    // alpha = 315° corresponde a mirar hacia el Noreste (45°)
+    for (let beta = 0; beta <= 180; beta += 5) {
+      const res = calcularOrientacionDesdeSensores(315, beta, 0, 0);
+      expect(errorAngular(res.rumbo, 45)).toBeLessThan(0.01);
+      expect(res.altitudApuntado).toBeCloseTo(beta - 90, 2);
+    }
+  });
+
+  it('compensa correctamente la rotación de pantalla (0°, 90°, 180°, 270°) en modo plano y levantado', () => {
+    // Teléfono plano mirando al Norte en cada orientación de pantalla
+    expect(errorAngular(calcularOrientacionDesdeSensores(0, 0, 0, 0).rumbo, 0)).toBeLessThan(0.01);
+    expect(errorAngular(calcularOrientacionDesdeSensores(90, 0, 0, 90).rumbo, 0)).toBeLessThan(0.01);
+    expect(errorAngular(calcularOrientacionDesdeSensores(180, 0, 0, 180).rumbo, 0)).toBeLessThan(0.01);
+    expect(errorAngular(calcularOrientacionDesdeSensores(270, 0, 0, 270).rumbo, 0)).toBeLessThan(0.01);
+
+    // Landscape-primary (90°) vertical mirando al Norte en el horizonte
+    const landscapeNorte = calcularOrientacionDesdeSensores(90, 0, -90, 90);
+    expect(errorAngular(landscapeNorte.rumbo, 0)).toBeLessThan(0.01);
+    expect(landscapeNorte.altitudApuntado).toBeCloseTo(0, 2);
+
+    // Landscape-primary (90°) apuntando al Sur a +30° de elevación
+    const landscapeSur30 = calcularOrientacionDesdeSensores(90, 180, 60, 90);
+    expect(errorAngular(landscapeSur30.rumbo, 180)).toBeLessThan(0.01);
+    expect(landscapeSur30.altitudApuntado).toBeCloseTo(30, 2);
+
+    // Landscape-primary (90°) apuntando casi al cenit (+85°) hacia el Norte
+    const landscapeNorte85 = calcularOrientacionDesdeSensores(270, 180, 5, 90);
+    expect(errorAngular(landscapeNorte85.rumbo, 0)).toBeLessThan(0.01);
+    expect(landscapeNorte85.altitudApuntado).toBeCloseTo(85, 2);
+
+    // Landscape-secondary (270°) vertical mirando al Norte en el horizonte
+    const landscapeSecNorte = calcularOrientacionDesdeSensores(270, 0, 90, 270);
+    expect(errorAngular(landscapeSecNorte.rumbo, 0)).toBeLessThan(0.01);
+    expect(landscapeSecNorte.altitudApuntado).toBeCloseTo(0, 2);
+  });
+});
+````
 
 ## File: src/components/AstronomyGuide.tsx
 ````typescript
@@ -1072,371 +1177,6 @@ export function StarfieldBackground({ tema }: Readonly<StarfieldBackgroundProps>
 }
 ````
 
-## File: src/core/__tests__/astronomy.test.ts
-````typescript
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  calcularCielo,
-  calcularEstadoSolar,
-  calcularEstrellas,
-  calcularMessier,
-  calcularTransitoCuerpo,
-  calcularTrayectoriaAstro,
-  esEntradaAstronomicaValida,
-} from '../skyCalculator';
-import { calcularProximosEventos } from '../eventsCalculator';
-import { obtenerCondicionesMeteo } from '../weatherService';
-import type { Ubicacion } from '../../types/astronomy';
-
-const VALENCIA: Ubicacion = {
-  latitud: 39.47,
-  longitud: -0.38,
-  altitud: 150,
-  nombre: 'Valencia',
-};
-
-function crearMockStorage(): Storage {
-  const almacen = new Map<string, string>();
-  return {
-    get length() {
-      return almacen.size;
-    },
-    clear() {
-      almacen.clear();
-    },
-    getItem(clave: string) {
-      return almacen.get(clave) ?? null;
-    },
-    key(indice: number) {
-      return Array.from(almacen.keys())[indice] ?? null;
-    },
-    removeItem(clave: string) {
-      almacen.delete(clave);
-    },
-    setItem(clave: string, valor: string) {
-      almacen.set(clave, valor);
-    },
-  };
-}
-
-function crearHourlySintetico(inicioUTC: Date, horas: number) {
-  const time: string[] = [];
-  const cloud_cover: number[] = [];
-  const cloud_cover_low: number[] = [];
-  const cloud_cover_mid: number[] = [];
-  const cloud_cover_high: number[] = [];
-  const relative_humidity_2m: number[] = [];
-  const wind_speed_10m: number[] = [];
-  const temperature_2m: number[] = [];
-
-  for (let i = 0; i < horas; i++) {
-    const fecha = new Date(inicioUTC.getTime() + i * 3_600_000);
-    const anio = fecha.getUTCFullYear();
-    const mes = String(fecha.getUTCMonth() + 1).padStart(2, '0');
-    const dia = String(fecha.getUTCDate()).padStart(2, '0');
-    const hora = String(fecha.getUTCHours()).padStart(2, '0');
-    time.push(`${anio}-${mes}-${dia}T${hora}:00`);
-    cloud_cover.push(10 + (i % 5) * 5);
-    cloud_cover_low.push(5);
-    cloud_cover_mid.push(10);
-    cloud_cover_high.push(15);
-    relative_humidity_2m.push(60);
-    wind_speed_10m.push(12);
-    temperature_2m.push(18.4);
-  }
-
-  return {
-    time,
-    cloud_cover,
-    cloud_cover_low,
-    cloud_cover_mid,
-    cloud_cover_high,
-    relative_humidity_2m,
-    wind_speed_10m,
-    temperature_2m,
-  };
-}
-
-describe('Validación defensiva (esEntradaAstronomicaValida)', () => {
-  const fechaValida = new Date('2026-06-15T22:00:00Z');
-
-  it('acepta fechas y coordenadas dentro de los límites exactos', () => {
-    expect(esEntradaAstronomicaValida(fechaValida, VALENCIA)).toBe(true);
-    expect(
-      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: -90, longitud: -180 })
-    ).toBe(true);
-    expect(
-      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: 90, longitud: 180 })
-    ).toBe(true);
-  });
-
-  it('rechaza fechas inválidas', () => {
-    expect(esEntradaAstronomicaValida(new Date('invalid'), VALENCIA)).toBe(false);
-  });
-
-  it('rechaza latitudes y longitudes fuera de rango', () => {
-    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: -90.01 })).toBe(false);
-    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: 90.01 })).toBe(false);
-    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, longitud: -180.01 })).toBe(false);
-    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, longitud: 180.01 })).toBe(false);
-  });
-
-  it('rechaza altitudes no finitas (NaN e Infinity)', () => {
-    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, altitud: Number.NaN })).toBe(
-      false
-    );
-    expect(
-      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, altitud: Number.POSITIVE_INFINITY })
-    ).toBe(false);
-    expect(
-      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, altitud: Number.NEGATIVE_INFINITY })
-    ).toBe(false);
-  });
-});
-
-describe('Motor astronómico (skyCalculator)', () => {
-  describe('calcularEstadoSolar', () => {
-    it('clasifica correctamente Día al mediodía y Noche astronómica de madrugada en Valencia', () => {
-      const mediodia = calcularEstadoSolar(new Date('2026-03-21T12:00:00Z'), VALENCIA);
-      expect(mediodia).not.toBeNull();
-      expect(mediodia?.fase).toBe('Día');
-      expect(mediodia?.altitudSol).toBeGreaterThan(0);
-
-      const noche = calcularEstadoSolar(new Date('2026-03-21T01:00:00Z'), VALENCIA);
-      expect(noche).not.toBeNull();
-      expect(noche?.fase).toBe('Noche astronómica');
-      expect(noche?.altitudSol).toBeLessThan(-18);
-    });
-
-    it('clasifica crepúsculo civil/náutico/astronómico tras la puesta de sol', () => {
-      const fasesCrepusculo = new Set([
-        'Crepúsculo civil',
-        'Crepúsculo náutico',
-        'Crepúsculo astronómico',
-      ]);
-      const atardecer = calcularEstadoSolar(new Date('2026-03-21T18:45:00Z'), VALENCIA);
-      expect(atardecer).not.toBeNull();
-      expect(fasesCrepusculo.has(atardecer?.fase ?? '')).toBe(true);
-    });
-
-    it('devuelve null ante entradas inválidas', () => {
-      expect(calcularEstadoSolar(new Date('invalid'), VALENCIA)).toBeNull();
-      expect(
-        calcularEstadoSolar(new Date('2026-03-21T12:00:00Z'), { ...VALENCIA, latitud: 95 })
-      ).toBeNull();
-    });
-  });
-
-  describe('calcularCielo', () => {
-    it('devuelve los 8 cuerpos ordenados descendentemente por altitud con fase lunar solo en la Luna', () => {
-      const cuerpos = calcularCielo(new Date('2026-03-21T22:00:00Z'), VALENCIA);
-      expect(cuerpos).toHaveLength(8);
-
-      for (let i = 1; i < cuerpos.length; i++) {
-        expect(cuerpos[i - 1].altitud).toBeGreaterThanOrEqual(cuerpos[i].altitud);
-      }
-
-      const luna = cuerpos.find((c) => c.tipo === 'luna');
-      expect(luna).toBeDefined();
-      expect(luna?.faseLunar).toBeDefined();
-      expect(luna?.anguloFase).toBeTypeOf('number');
-
-      const planetas = cuerpos.filter((c) => c.tipo === 'planeta');
-      expect(planetas).toHaveLength(7);
-      for (const planeta of planetas) {
-        expect(planeta.faseLunar).toBeUndefined();
-        expect(planeta.anguloFase).toBeUndefined();
-      }
-    });
-  });
-
-  describe('calcularEstrellas y calcularMessier', () => {
-    it('aplica precesión J2000 situando a Polaris cerca de la latitud del observador en el hemisferio norte', () => {
-      const fecha = new Date('2026-03-21T22:00:00Z');
-      const estrellas = calcularEstrellas(fecha, VALENCIA);
-      const polaris = estrellas.find((e) => e.id === 'polaris');
-
-      expect(polaris).toBeDefined();
-      expect(Math.abs((polaris?.altitud ?? 0) - VALENCIA.latitud)).toBeLessThan(1.5);
-    });
-
-    it('aplica umbral de visibilidad > 0° en estrellas y > 10° en objetos Messier', () => {
-      const fecha = new Date('2026-03-21T22:00:00Z');
-      const estrellas = calcularEstrellas(fecha, VALENCIA);
-      const messier = calcularMessier(fecha, VALENCIA);
-
-      expect(estrellas.length).toBeGreaterThan(0);
-      for (const estrella of estrellas) {
-        if (estrella.altitud > 0.1) expect(estrella.visible).toBe(true);
-        if (estrella.altitud < -0.1) expect(estrella.visible).toBe(false);
-      }
-
-      expect(messier.length).toBeGreaterThan(0);
-      for (const obj of messier) {
-        if (obj.altitud > 10.1) expect(obj.visible).toBe(true);
-        if (obj.altitud < 9.9) expect(obj.visible).toBe(false);
-      }
-    });
-  });
-
-  describe('calcularTrayectoriaAstro y calcularTransitoCuerpo', () => {
-    const fecha = new Date('2026-03-21T22:00:00Z');
-
-    it('devuelve 25 puntos (-6h a +6h cada 30 min) para cuerpo, estrella y objeto Messier válidos', () => {
-      const trajLuna = calcularTrayectoriaAstro(
-        { id: 'Moon', nombre: 'Luna', categoria: 'cuerpo' },
-        fecha,
-        VALENCIA
-      );
-      const trajSirio = calcularTrayectoriaAstro(
-        { id: 'sirius', nombre: 'Sirio', categoria: 'estrella' },
-        fecha,
-        VALENCIA
-      );
-      const trajM31 = calcularTrayectoriaAstro(
-        { id: 'M31', nombre: 'M31 · Galaxia de Andrómeda', categoria: 'messier' },
-        fecha,
-        VALENCIA
-      );
-
-      expect(trajLuna).toHaveLength(25);
-      expect(trajSirio).toHaveLength(25);
-      expect(trajM31).toHaveLength(25);
-    });
-
-    it('devuelve array vacío para IDs inexistentes y tránsito vacío para cuerpos inexistentes', () => {
-      expect(
-        calcularTrayectoriaAstro(
-          { id: 'PlutonInexistente', nombre: 'Inexistente', categoria: 'cuerpo' },
-          fecha,
-          VALENCIA
-        )
-      ).toEqual([]);
-
-      expect(
-        calcularTrayectoriaAstro(
-          { id: 'estrella-falsa', nombre: 'Falsa', categoria: 'estrella' },
-          fecha,
-          VALENCIA
-        )
-      ).toEqual([]);
-
-      const transitoInvalido = calcularTransitoCuerpo('NoExiste', fecha, VALENCIA);
-      expect(transitoInvalido).toEqual({
-        salida: null,
-        culminacion: null,
-        puesta: null,
-        alturaMaxima: null,
-      });
-    });
-
-    it('calcula efemérides de tránsito válidas para un cuerpo existente', () => {
-      const transito = calcularTransitoCuerpo('Moon', fecha, VALENCIA);
-      expect(transito.culminacion).toBeInstanceOf(Date);
-      expect(transito.alturaMaxima).toBeTypeOf('number');
-    });
-  });
-});
-
-describe('Eventos astronómicos (eventsCalculator)', () => {
-  it('devuelve como máximo 6 eventos ordenados cronológicamente con diasRestantes >= 0', () => {
-    const fechaBase = new Date('2026-03-21T12:00:00Z');
-    const eventos = calcularProximosEventos(fechaBase, VALENCIA);
-
-    expect(eventos.length).toBeGreaterThan(0);
-    expect(eventos.length).toBeLessThanOrEqual(6);
-
-    for (let i = 0; i < eventos.length; i++) {
-      expect(eventos[i].diasRestantes).toBeGreaterThanOrEqual(0);
-      if (i > 0) {
-        expect(eventos[i].fechaPico.getTime()).toBeGreaterThanOrEqual(
-          eventos[i - 1].fechaPico.getTime()
-        );
-      }
-    }
-  });
-
-  it('diferencia eclipses lunares penumbrales frente a eclipses totales o parciales', () => {
-    // 25 de marzo de 2024: eclipse lunar penumbral
-    const eventosPenumbral = calcularProximosEventos(new Date('2024-03-20T12:00:00Z'), VALENCIA);
-    const eclipsePenumbral = eventosPenumbral.find((ev) => ev.titulo.includes('Eclipse Lunar'));
-    expect(eclipsePenumbral).toBeDefined();
-    expect(eclipsePenumbral?.titulo).toBe('Eclipse Lunar Penumbral');
-    expect(eclipsePenumbral?.resumen).toBe('Eclipse penumbral (oscurecimiento sutil)');
-
-    // 14 de marzo de 2025: eclipse lunar total
-    const eventosTotal = calcularProximosEventos(new Date('2025-03-01T12:00:00Z'), VALENCIA);
-    const eclipseTotal = eventosTotal.find((ev) => ev.titulo.includes('Eclipse Lunar'));
-    expect(eclipseTotal).toBeDefined();
-    expect(eclipseTotal?.titulo).toBe('Eclipse Lunar Total');
-    expect(eclipseTotal?.resumen).toMatch(/^Oscurecimiento: \d+%$/);
-  });
-});
-
-describe('Servicio meteorológico (weatherService)', () => {
-  let mockStorage: Storage;
-
-  beforeEach(() => {
-    mockStorage = crearMockStorage();
-    vi.stubGlobal('localStorage', mockStorage);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
-  it('usa la caché válida de localStorage sin invocar fetch y genera 12 franjas en proximasHoras', async () => {
-    const fechaUTC = new Date('2026-06-15T20:00:00Z');
-    const hourly = crearHourlySintetico(fechaUTC, 24);
-    mockStorage.setItem(
-      'skyproject_meteo_cache_v2',
-      JSON.stringify({
-        claveUbicacion: '39.47,-0.38',
-        timestamp: Date.now(),
-        hourly,
-      })
-    );
-
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-
-    const resultado = await obtenerCondicionesMeteo(fechaUTC, VALENCIA);
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(resultado.aviso).toBeNull();
-    expect(resultado.datos).not.toBeNull();
-    expect(resultado.datos?.esCache).toBe(true);
-    expect(resultado.datos?.horaPronostico).toBe('2026-06-15 20:00 UTC');
-    expect(resultado.datos?.proximasHoras).toHaveLength(12);
-    expect(resultado.datos?.proximasHoras[0].fechaISO).toBe('2026-06-15T20:00:00Z');
-  });
-
-  it('se recupera de forma segura ante JSON corrupto en localStorage y consulta Open-Meteo en UTC', async () => {
-    const fechaUTC = new Date('2026-06-15T21:00:00Z');
-    const hourly = crearHourlySintetico(fechaUTC, 18);
-    mockStorage.setItem('skyproject_meteo_cache_v2', '{json-corrupto');
-
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ hourly }),
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const resultado = await obtenerCondicionesMeteo(fechaUTC, VALENCIA);
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const urlLlamada = String(fetchMock.mock.calls[0][0]);
-    expect(urlLlamada).toContain('timezone=UTC');
-    expect(resultado.aviso).toBeNull();
-    expect(resultado.datos).not.toBeNull();
-    expect(resultado.datos?.esCache).toBe(false);
-    expect(resultado.datos?.horaPronostico).toBe('2026-06-15 21:00 UTC');
-    expect(resultado.datos?.proximasHoras).toHaveLength(12);
-  });
-});
-````
-
 ## File: src/data/brightStars.ts
 ````typescript
 import type { EstrellaCatalogo, LineaConstelacion } from '../types/astronomy';
@@ -1591,17 +1331,6 @@ export default defineConfig([
 }
 ````
 
-## File: vite.config.ts
-````typescript
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
-
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
-})
-````
-
 ## File: public/favicon.svg
 ````xml
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
@@ -1624,963 +1353,6 @@ export default defineConfig({
     </radialGradient>
   </defs>
 </svg>
-````
-
-## File: src/components/Compass3DModal.tsx
-````typescript
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent as EventoTecladoReact, PointerEvent as EventoPunteroReact } from 'react';
-import { Compass, Hand, Navigation, Smartphone, Target, X } from 'lucide-react';
-import type {
-  ConstructorOrientacionConPermiso,
-  CuerpoCeleste,
-  EstadoSensorBrujula,
-  EventoOrientacionDispositivo,
-  ObjetivoBrujula,
-  OrientacionBrujula,
-  TemaVisual,
-} from '../types/astronomy';
-
-interface Compass3DModalProps {
-  tema: TemaVisual;
-  cuerpos: CuerpoCeleste[];
-  objetivoSeleccionado?: ObjetivoBrujula | null;
-  onCerrar: () => void;
-}
-
-/* ── Utilidades angulares ─────────────────────────────────────────── */
-
-function normalizarAngulo(angulo: number): number {
-  return ((angulo % 360) + 360) % 360;
-}
-
-/** Diferencia por el camino más corto en el círculo, en el rango [-180, 180). */
-function diferenciaAngular(destino: number, origen: number): number {
-  return ((((destino - origen) % 360) + 540) % 360) - 180;
-}
-
-function limitar(valor: number, minimo: number, maximo: number): number {
-  return Math.min(maximo, Math.max(minimo, valor));
-}
-
-const DIRECCIONES = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'] as const;
-
-function direccionCardinal(rumbo: number): string {
-  return DIRECCIONES[Math.round(normalizarAngulo(rumbo) / 45) % 8];
-}
-
-function puntoPolar(angulo: number, radio: number): { x: number; y: number } {
-  const rad = (angulo * Math.PI) / 180;
-  return { x: CENTRO + Math.sin(rad) * radio, y: CENTRO - Math.cos(rad) * radio };
-}
-
-/* ── Geometría estática del disco (viewBox -20 -20 440 440) ──────── */
-
-const CENTRO = 200;
-const RADIO_ESFERA = 196;
-const RADIO_MARCADORES = 187;
-const RADIO_MARCAS = 175;
-const MARGEN_ALINEACION = 8;
-const INCLINACION_VISUAL_MAX = 65;
-
-interface MarcaGraduacion {
-  angulo: number;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  tipo: 'menor' | 'media' | 'mayor';
-}
-
-const MARCAS: MarcaGraduacion[] = Array.from({ length: 72 }, (_, i) => {
-  const angulo = i * 5;
-  const tipo: MarcaGraduacion['tipo'] = angulo % 45 === 0 ? 'mayor' : angulo % 15 === 0 ? 'media' : 'menor';
-  const largo = tipo === 'mayor' ? 16 : tipo === 'media' ? 11 : 5;
-  const exterior = puntoPolar(angulo, RADIO_MARCAS);
-  const interior = puntoPolar(angulo, RADIO_MARCAS - largo);
-  return { angulo, x1: exterior.x, y1: exterior.y, x2: interior.x, y2: interior.y, tipo };
-});
-
-interface EtiquetaDisco {
-  angulo: number;
-  texto: string;
-  x: number;
-  y: number;
-  tipo: 'cardinal' | 'intercardinal' | 'grado';
-}
-
-const ETIQUETAS: EtiquetaDisco[] = Array.from({ length: 24 }, (_, i) => {
-  const angulo = i * 15;
-  if (angulo % 90 === 0) {
-    const p = puntoPolar(angulo, 141);
-    return { angulo, texto: DIRECCIONES[angulo / 45], ...p, tipo: 'cardinal' as const };
-  }
-  if (angulo % 45 === 0) {
-    const p = puntoPolar(angulo, 143);
-    return { angulo, texto: DIRECCIONES[angulo / 45], ...p, tipo: 'intercardinal' as const };
-  }
-  const p = puntoPolar(angulo, 145);
-  return { angulo, texto: String(angulo), ...p, tipo: 'grado' as const };
-});
-
-/* ── Paletas por tema (Filtro Rojo: solo rojos sobre negro puro) ── */
-
-interface PaletaBrujula {
-  esfera: string;
-  esferaBorde: string;
-  capa: string;
-  marcaMenor: string;
-  marcaMayor: string;
-  texto: string;
-  textoSuave: string;
-  acento: string;
-  norte: string;
-  sur: string;
-  aro: string;
-  marcadorFijo: string | null;
-  claseBackdrop: string;
-  clasePanel: string;
-  claseAcento: string;
-  claseLectura: string;
-  claseBotonPrimario: string;
-  claseAviso: string;
-  claseEstadoOk: string;
-  claseEstadoAviso: string;
-}
-
-const PALETAS: Record<TemaVisual, PaletaBrujula> = {
-  oscuro: {
-    esfera: 'rgba(2,6,23,0.9)',
-    esferaBorde: 'rgba(34,211,238,0.5)',
-    capa: 'rgba(15,23,42,0.95)',
-    marcaMenor: 'rgba(148,163,184,0.55)',
-    marcaMayor: '#e2e8f0',
-    texto: '#e2e8f0',
-    textoSuave: '#94a3b8',
-    acento: '#22d3ee',
-    norte: '#f43f5e',
-    sur: '#64748b',
-    aro: 'rgba(34,211,238,0.3)',
-    marcadorFijo: null,
-    claseBackdrop: 'bg-slate-950/65',
-    clasePanel: 'bg-slate-950/90 border-cyan-400/25 text-slate-100 shadow-2xl shadow-black/60',
-    claseAcento: 'text-cyan-300',
-    claseLectura: 'bg-slate-950/90 border-cyan-400/40 text-slate-50',
-    claseBotonPrimario: 'bg-cyan-500/15 border-cyan-400/50 text-cyan-100 hover:bg-cyan-500/25',
-    claseAviso: 'border-cyan-400/50 bg-cyan-500/10 text-cyan-100',
-    claseEstadoOk: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-    claseEstadoAviso: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
-  },
-  claro: {
-    esfera: 'rgba(248,250,252,0.96)',
-    esferaBorde: '#334155',
-    capa: '#cbd5e1',
-    marcaMenor: '#94a3b8',
-    marcaMayor: '#0f172a',
-    texto: '#0f172a',
-    textoSuave: '#475569',
-    acento: '#0369a1',
-    norte: '#e11d48',
-    sur: '#94a3b8',
-    aro: 'rgba(51,65,85,0.28)',
-    marcadorFijo: null,
-    claseBackdrop: 'bg-slate-900/40',
-    clasePanel: 'bg-white/95 border-slate-200 text-slate-900 shadow-2xl shadow-slate-900/20',
-    claseAcento: 'text-sky-700',
-    claseLectura: 'bg-white/95 border-slate-300 text-slate-900',
-    claseBotonPrimario: 'bg-slate-900 border-slate-900 text-white hover:bg-slate-800',
-    claseAviso: 'border-sky-600/50 bg-sky-50 text-sky-900',
-    claseEstadoOk: 'border-emerald-300 bg-emerald-50 text-emerald-800',
-    claseEstadoAviso: 'border-amber-300 bg-amber-50 text-amber-900',
-  },
-  rojo: {
-    esfera: '#000000',
-    esferaBorde: '#991b1b',
-    capa: '#450a0a',
-    marcaMenor: '#7f1d1d',
-    marcaMayor: '#dc2626',
-    texto: '#ef4444',
-    textoSuave: '#b91c1c',
-    acento: '#ef4444',
-    norte: '#f87171',
-    sur: '#7f1d1d',
-    aro: 'rgba(153,27,27,0.55)',
-    marcadorFijo: '#b91c1c',
-    claseBackdrop: 'bg-black/90',
-    clasePanel: 'bg-black border-red-800 text-red-500',
-    claseAcento: 'text-red-500',
-    claseLectura: 'bg-black border-red-700 text-red-500',
-    claseBotonPrimario: 'bg-red-950 border-red-600 text-red-400 hover:bg-red-900/60',
-    claseAviso: 'border-red-600 bg-red-950/60 text-red-400',
-    claseEstadoOk: 'border-red-700 bg-red-950/50 text-red-400',
-    claseEstadoAviso: 'border-red-900 bg-black text-red-600',
-  },
-};
-
-const MENSAJES_ESTADO: Record<EstadoSensorBrujula, string> = {
-  inactivo: 'Sensores en espera: pulsa «Activar sensores del dispositivo».',
-  solicitando: 'Solicitando permiso de orientación…',
-  buscando: 'Buscando lecturas del magnetómetro…',
-  activo: 'Sensores activos: la brújula sigue a tu dispositivo.',
-  denegado: 'Permiso denegado. Puedes seguir en modo simulación.',
-  'no-disponible': 'Este equipo no dispone de sensores de orientación. Modo simulación activo.',
-  inseguro: 'Los sensores requieren una conexión segura (HTTPS). Modo simulación activo.',
-  'sin-lecturas': 'No se reciben lecturas del sensor en este equipo. Modo simulación activo.',
-};
-
-/** Determina el estado inicial de los sensores sin efectos secundarios. */
-function detectarEstadoInicial(): EstadoSensorBrujula {
-  if (typeof window === 'undefined' || typeof DeviceOrientationEvent === 'undefined') {
-    return 'no-disponible';
-  }
-  if (!window.isSecureContext) return 'inseguro';
-  const constructor = DeviceOrientationEvent as unknown as ConstructorOrientacionConPermiso;
-  return typeof constructor.requestPermission === 'function' ? 'inactivo' : 'buscando';
-}
-
-function prefiereMovimientoReducido(): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
-
-function etiquetaMarcador(nombre: string): string {
-  const token = nombre.split(' ')[0];
-  if (/^M\d+$/i.test(token)) return token.slice(0, 3);
-  return nombre.slice(0, 2);
-}
-
-const SELECTOR_ENFOCABLES =
-  'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-export function Compass3DModal({
-  tema,
-  cuerpos,
-  objetivoSeleccionado = null,
-  onCerrar,
-}: Compass3DModalProps) {
-  const paleta = PALETAS[tema];
-  const idTitulo = useId();
-  const idDescripcion = useId();
-
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const botonCerrarRef = useRef<HTMLButtonElement | null>(null);
-  const discoRef = useRef<HTMLDivElement | null>(null);
-
-  const [estadoSensor, setEstadoSensor] = useState<EstadoSensorBrujula>(detectarEstadoInicial);
-  const [referenciaSensor, setReferenciaSensor] = useState<'absoluta' | 'relativa' | null>(null);
-  const [intentoSensor, setIntentoSensor] = useState(0);
-  const [modoManual, setModoManual] = useState(false);
-  const [rumboManual, setRumboManual] = useState(0);
-  const [inclinacionManual, setInclinacionManual] = useState(25);
-  const [visual, setVisual] = useState<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
-  const [movimientoReducido] = useState(prefiereMovimientoReducido);
-
-  const objetivoRef = useRef<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
-  const visualRef = useRef<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
-  const animacionIdRef = useRef<number>(0);
-  const simulacionRef = useRef(true);
-  const lecturaRecibidaRef = useRef(false);
-  const lecturaAbsolutaRef = useRef(false);
-  const referenciaRef = useRef<'absoluta' | 'relativa' | null>(null);
-  const arrastreRef = useRef<{ idPuntero: number; anguloPrevio: number } | null>(null);
-
-  const simulacion = modoManual || estadoSensor !== 'activo';
-  const escuchando =
-    estadoSensor === 'buscando' || estadoSensor === 'activo' || estadoSensor === 'sin-lecturas';
-
-  // Referencia estable al callback de cierre (evita reiniciar el foco en cada render del padre)
-  const onCerrarRef = useRef(onCerrar);
-  useEffect(() => {
-    onCerrarRef.current = onCerrar;
-  }, [onCerrar]);
-
-  /* Bloqueo de scroll, foco inicial, Escape y trampa de foco */
-  useEffect(() => {
-    const elementoPrevio = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const overflowPrevio = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    botonCerrarRef.current?.focus();
-
-    const manejarTecla = (evento: globalThis.KeyboardEvent) => {
-      if (evento.key === 'Escape') {
-        evento.preventDefault();
-        onCerrarRef.current();
-        return;
-      }
-      if (evento.key !== 'Tab' || !panelRef.current) return;
-      const enfocables = Array.from(
-        panelRef.current.querySelectorAll<HTMLElement>(SELECTOR_ENFOCABLES)
-      ).filter((el) => !el.hasAttribute('hidden'));
-      if (enfocables.length === 0) return;
-      const primero = enfocables[0];
-      const ultimo = enfocables[enfocables.length - 1];
-      if (evento.shiftKey && document.activeElement === primero) {
-        evento.preventDefault();
-        ultimo.focus();
-      } else if (!evento.shiftKey && document.activeElement === ultimo) {
-        evento.preventDefault();
-        primero.focus();
-      }
-    };
-
-    document.addEventListener('keydown', manejarTecla);
-    return () => {
-      document.removeEventListener('keydown', manejarTecla);
-      document.body.style.overflow = overflowPrevio;
-      elementoPrevio?.focus();
-    };
-  }, []);
-
-  /* Suavizado angular bajo demanda (camino más corto, sin bucle activo en reposo) */
-  const programarSuavizado = useCallback(() => {
-    if (animacionIdRef.current !== 0) return;
-    const factor = movimientoReducido ? 0.45 : 0.16;
-
-    const paso = () => {
-      const objetivo = objetivoRef.current;
-      const actual = visualRef.current;
-      const difRumbo = diferenciaAngular(objetivo.rumbo, actual.rumbo);
-      const difInclinacion = objetivo.inclinacion - actual.inclinacion;
-
-      if (Math.abs(difRumbo) < 0.05 && Math.abs(difInclinacion) < 0.05) {
-        if (actual.rumbo !== objetivo.rumbo || actual.inclinacion !== objetivo.inclinacion) {
-          const exacto = { rumbo: objetivo.rumbo, inclinacion: objetivo.inclinacion };
-          visualRef.current = exacto;
-          setVisual(exacto);
-        }
-        animacionIdRef.current = 0;
-        return;
-      }
-
-      const rumbo =
-        Math.abs(difRumbo) < 0.05
-          ? objetivo.rumbo
-          : normalizarAngulo(actual.rumbo + difRumbo * factor);
-      const inclinacion =
-        Math.abs(difInclinacion) < 0.05
-          ? objetivo.inclinacion
-          : actual.inclinacion + difInclinacion * factor;
-
-      const siguiente = { rumbo, inclinacion };
-      visualRef.current = siguiente;
-      setVisual(siguiente);
-      animacionIdRef.current = window.requestAnimationFrame(paso);
-    };
-
-    animacionIdRef.current = window.requestAnimationFrame(paso);
-  }, [movimientoReducido]);
-
-  useEffect(() => {
-    return () => {
-      if (animacionIdRef.current !== 0) {
-        window.cancelAnimationFrame(animacionIdRef.current);
-        animacionIdRef.current = 0;
-      }
-    };
-  }, []);
-
-  /* Sincroniza el objetivo con los controles manuales en modo simulación */
-  useEffect(() => {
-    simulacionRef.current = simulacion;
-    if (simulacion) {
-      objetivoRef.current = { rumbo: normalizarAngulo(rumboManual), inclinacion: inclinacionManual };
-      programarSuavizado();
-    }
-  }, [simulacion, rumboManual, inclinacionManual, programarSuavizado]);
-
-  /* Escucha de sensores: deviceorientationabsolute (prioritario) + deviceorientation */
-  useEffect(() => {
-    if (!escuchando || typeof DeviceOrientationEvent === 'undefined') return;
-
-    const procesarOrientacion = (evento: Event) => {
-      if (!(evento instanceof DeviceOrientationEvent)) return;
-      const datos = evento as EventoOrientacionDispositivo;
-      let rumbo: number | null = null;
-      let absoluta = false;
-
-      if (typeof datos.webkitCompassHeading === 'number' && Number.isFinite(datos.webkitCompassHeading)) {
-        // Safari iOS: rumbo magnético ya referido al Norte
-        rumbo = normalizarAngulo(datos.webkitCompassHeading);
-        absoluta = true;
-      } else if (datos.alpha !== null && Number.isFinite(datos.alpha)) {
-        absoluta = evento.type === 'deviceorientationabsolute' || datos.absolute;
-        // Si ya llegan lecturas absolutas, se descartan las relativas
-        if (!absoluta && lecturaAbsolutaRef.current) return;
-        rumbo = normalizarAngulo(360 - datos.alpha);
-      }
-
-      if (rumbo === null) return;
-      if (absoluta) lecturaAbsolutaRef.current = true;
-
-      const inclinacion =
-        datos.beta !== null && Number.isFinite(datos.beta) ? limitar(datos.beta, -90, 90) : 0;
-
-      if (!simulacionRef.current) {
-        objetivoRef.current = { rumbo, inclinacion };
-        programarSuavizado();
-      }
-
-      const referencia = absoluta ? 'absoluta' : 'relativa';
-      if (referenciaRef.current !== referencia) {
-        referenciaRef.current = referencia;
-        setReferenciaSensor(referencia);
-      }
-      if (!lecturaRecibidaRef.current) {
-        lecturaRecibidaRef.current = true;
-        setEstadoSensor('activo');
-      }
-    };
-
-    const admiteAbsoluto = 'ondeviceorientationabsolute' in window;
-    if (admiteAbsoluto) {
-      window.addEventListener('deviceorientationabsolute', procesarOrientacion);
-    }
-    window.addEventListener('deviceorientation', procesarOrientacion);
-
-    const temporizador = window.setTimeout(() => {
-      if (!lecturaRecibidaRef.current) {
-        setEstadoSensor((prev) => (prev === 'buscando' ? 'sin-lecturas' : prev));
-      }
-    }, 2500);
-
-    return () => {
-      window.clearTimeout(temporizador);
-      if (admiteAbsoluto) {
-        window.removeEventListener('deviceorientationabsolute', procesarOrientacion);
-      }
-      window.removeEventListener('deviceorientation', procesarOrientacion);
-    };
-  }, [escuchando, intentoSensor, programarSuavizado]);
-
-  const activarSensores = async () => {
-    if (typeof DeviceOrientationEvent === 'undefined') {
-      setEstadoSensor('no-disponible');
-      return;
-    }
-    if (!window.isSecureContext) {
-      setEstadoSensor('inseguro');
-      return;
-    }
-    const constructor = DeviceOrientationEvent as unknown as ConstructorOrientacionConPermiso;
-    if (typeof constructor.requestPermission === 'function') {
-      setEstadoSensor('solicitando');
-      try {
-        const respuesta = await constructor.requestPermission();
-        if (respuesta !== 'granted') {
-          setEstadoSensor('denegado');
-          return;
-        }
-      } catch {
-        setEstadoSensor('denegado');
-        return;
-      }
-    }
-    lecturaRecibidaRef.current = false;
-    lecturaAbsolutaRef.current = false;
-    setModoManual(false);
-    setEstadoSensor('buscando');
-    setIntentoSensor((prev) => prev + 1);
-  };
-
-  const pasarAModoManual = () => {
-    setRumboManual(Math.round(visualRef.current.rumbo));
-    setInclinacionManual(Math.round(limitar(visualRef.current.inclinacion, -60, 60)));
-    setModoManual(true);
-  };
-
-  /* Arrastre sobre la brújula (ratón o dedo) */
-  const anguloDesdePuntero = (clienteX: number, clienteY: number): number | null => {
-    const elemento = discoRef.current;
-    if (!elemento) return null;
-    const rect = elemento.getBoundingClientRect();
-    const dx = clienteX - (rect.left + rect.width / 2);
-    const dy = clienteY - (rect.top + rect.height / 2);
-    if (Math.hypot(dx, dy) < 8) return null;
-    return normalizarAngulo((Math.atan2(dx, -dy) * 180) / Math.PI);
-  };
-
-  const manejarPunteroAbajo = (evento: EventoPunteroReact<HTMLDivElement>) => {
-    const angulo = anguloDesdePuntero(evento.clientX, evento.clientY);
-    if (angulo === null) return;
-    evento.currentTarget.setPointerCapture(evento.pointerId);
-    arrastreRef.current = { idPuntero: evento.pointerId, anguloPrevio: angulo };
-    if (!simulacion) pasarAModoManual();
-    else setModoManual(true);
-  };
-
-  const manejarPunteroMovido = (evento: EventoPunteroReact<HTMLDivElement>) => {
-    const arrastre = arrastreRef.current;
-    if (!arrastre || arrastre.idPuntero !== evento.pointerId) return;
-    const angulo = anguloDesdePuntero(evento.clientX, evento.clientY);
-    if (angulo === null) return;
-    const delta = diferenciaAngular(angulo, arrastre.anguloPrevio);
-    arrastre.anguloPrevio = angulo;
-    // Girar el disco en sentido horario equivale a reducir el rumbo
-    setRumboManual((prev) => normalizarAngulo(prev - delta));
-  };
-
-  const finalizarArrastre = (evento: EventoPunteroReact<HTMLDivElement>) => {
-    if (arrastreRef.current?.idPuntero === evento.pointerId) {
-      arrastreRef.current = null;
-    }
-  };
-
-  const manejarTeclaDisco = (evento: EventoTecladoReact<HTMLDivElement>) => {
-    const paso = evento.shiftKey ? 15 : 1;
-    let delta = 0;
-    if (evento.key === 'ArrowRight' || evento.key === 'ArrowUp') delta = paso;
-    else if (evento.key === 'ArrowLeft' || evento.key === 'ArrowDown') delta = -paso;
-    else return;
-    evento.preventDefault();
-    if (!simulacion) {
-      setRumboManual(normalizarAngulo(Math.round(visualRef.current.rumbo) + delta));
-      setModoManual(true);
-      return;
-    }
-    setModoManual(true);
-    setRumboManual((prev) => normalizarAngulo(Math.round(prev) + delta));
-  };
-
-  /* Datos derivados */
-  const rumboEntero = Math.round(visual.rumbo) % 360;
-  const cardinal = direccionCardinal(visual.rumbo);
-  const inclinacionEntera = Math.round(visual.inclinacion);
-  const inclinacionVisual = limitar(visual.inclinacion, -INCLINACION_VISUAL_MAX, INCLINACION_VISUAL_MAX);
-
-  const objetivosVisibles = useMemo<ObjetivoBrujula[]>(() => {
-    const lista: ObjetivoBrujula[] = cuerpos
-      .filter((c) => c.altitud > 0 && Number.isFinite(c.acimut))
-      .map((c) => ({
-        id: c.id,
-        nombre: c.nombre,
-        acimut: c.acimut,
-        altitud: c.altitud,
-        color: c.color,
-      }));
-
-    if (
-      objetivoSeleccionado &&
-      objetivoSeleccionado.altitud > 0 &&
-      Number.isFinite(objetivoSeleccionado.acimut) &&
-      !lista.some((item) => item.id === objetivoSeleccionado.id)
-    ) {
-      lista.unshift(objetivoSeleccionado);
-    }
-
-    return lista;
-  }, [cuerpos, objetivoSeleccionado]);
-
-  let alineado: ObjetivoBrujula | null = null;
-  let mejorDiferencia = Number.POSITIVE_INFINITY;
-  for (const objetivo of objetivosVisibles) {
-    const dif = Math.abs(diferenciaAngular(objetivo.acimut, visual.rumbo));
-    if (dif <= MARGEN_ALINEACION && dif < mejorDiferencia) {
-      mejorDiferencia = dif;
-      alineado = objetivo;
-    }
-  }
-
-  const mostrarBotonActivar =
-    estadoSensor === 'inactivo' || estadoSensor === 'denegado' || estadoSensor === 'sin-lecturas';
-  const estadoCorrecto = estadoSensor === 'activo';
-  const mensajeEstado =
-    estadoSensor === 'activo' && referenciaSensor === 'relativa'
-      ? 'Sensores activos (orientación relativa: el Norte puede no ser exacto en este navegador).'
-      : MENSAJES_ESTADO[estadoSensor];
-
-  return (
-    <div
-      className={`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 backdrop-blur-md ${paleta.claseBackdrop}`}
-      onPointerDown={(evento) => {
-        if (evento.target === evento.currentTarget) onCerrar();
-      }}
-    >
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={idTitulo}
-        aria-describedby={idDescripcion}
-        className={`hud-esquinas hud-${tema} relative w-full max-w-xl max-h-[94dvh] overflow-y-auto overscroll-contain rounded-3xl border p-4 sm:p-6 ${paleta.clasePanel}`}
-      >
-        {/* Cabecera */}
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className={`text-[10px] uppercase tracking-[0.25em] font-mono ${paleta.claseAcento}`}>
-              Instrumento de orientación
-            </p>
-            <h2 id={idTitulo} className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2">
-              <Compass className={`w-5 h-5 ${paleta.claseAcento}`} aria-hidden="true" />
-              Brújula Astronómica 3D
-            </h2>
-            <p id={idDescripcion} className="text-xs opacity-75 mt-1">
-              Gira con tu dispositivo o arrastra el disco. Los marcadores del anillo exterior son la
-              Luna, los planetas y el astro seleccionado sobre el horizonte.
-            </p>
-          </div>
-          <button
-            ref={botonCerrarRef}
-            type="button"
-            onClick={onCerrar}
-            aria-label="Cerrar la brújula"
-            className="grid place-items-center min-w-11 min-h-11 rounded-xl border border-current/25 hover:bg-current/10 cursor-pointer shrink-0"
-          >
-            <X className="w-5 h-5" aria-hidden="true" />
-          </button>
-        </div>
-
-        {/* Brújula 3D */}
-        <div className="relative mx-auto mt-4 w-[min(80vw,22rem)] aspect-square select-none">
-          <div
-            ref={discoRef}
-            role="slider"
-            tabIndex={0}
-            aria-label="Rumbo de la brújula"
-            aria-valuemin={0}
-            aria-valuemax={359}
-            aria-valuenow={rumboEntero}
-            aria-valuetext={`${rumboEntero} grados, ${cardinal}`}
-            onPointerDown={manejarPunteroAbajo}
-            onPointerMove={manejarPunteroMovido}
-            onPointerUp={finalizarArrastre}
-            onPointerCancel={finalizarArrastre}
-            onKeyDown={manejarTeclaDisco}
-            className="absolute inset-0 rounded-full cursor-grab active:cursor-grabbing focus-visible:outline-2 focus-visible:outline-offset-4"
-            style={{ perspective: '1000px', touchAction: 'none' }}
-          >
-            <div
-              className="relative w-full h-full"
-              style={{
-                transformStyle: 'preserve-3d',
-                transform: `rotateX(${inclinacionVisual}deg)`,
-              }}
-            >
-              {/* Grosor del instrumento (capas inferiores) */}
-              {[-18, -12, -6].map((z) => (
-                <div
-                  key={z}
-                  aria-hidden="true"
-                  className="absolute inset-[3%] rounded-full"
-                  style={{
-                    transform: `translateZ(${z}px)`,
-                    backgroundColor: paleta.capa,
-                    border: `1px solid ${paleta.esferaBorde}`,
-                    opacity: 0.85,
-                  }}
-                />
-              ))}
-
-              {/* Disco giratorio (SVG) */}
-              <svg
-                viewBox="-20 -20 440 440"
-                className="absolute inset-0 w-full h-full"
-                aria-hidden="true"
-                style={{ transform: 'translateZ(0px)' }}
-              >
-                <circle
-                  cx={CENTRO}
-                  cy={CENTRO}
-                  r={RADIO_ESFERA}
-                  fill={paleta.esfera}
-                  stroke={paleta.esferaBorde}
-                  strokeWidth="2"
-                />
-                <circle
-                  cx={CENTRO}
-                  cy={CENTRO}
-                  r={RADIO_MARCAS + 2}
-                  fill="none"
-                  stroke={paleta.aro}
-                  strokeWidth="1"
-                />
-                <circle cx={CENTRO} cy={CENTRO} r={110} fill="none" stroke={paleta.aro} strokeDasharray="2 5" />
-
-                <g transform={`rotate(${-visual.rumbo} ${CENTRO} ${CENTRO})`}>
-                  {MARCAS.map((m) => (
-                    <line
-                      key={m.angulo}
-                      x1={m.x1}
-                      y1={m.y1}
-                      x2={m.x2}
-                      y2={m.y2}
-                      stroke={
-                        m.angulo === 0 ? paleta.norte : m.tipo === 'menor' ? paleta.marcaMenor : paleta.marcaMayor
-                      }
-                      strokeWidth={m.tipo === 'mayor' ? 2.5 : m.tipo === 'media' ? 1.6 : 1}
-                      strokeLinecap="round"
-                    />
-                  ))}
-
-                  {ETIQUETAS.map((e) => (
-                    <text
-                      key={e.angulo}
-                      x={e.x}
-                      y={e.y}
-                      transform={`rotate(${visual.rumbo} ${e.x} ${e.y})`}
-                      textAnchor="middle"
-                      dominantBaseline="central"
-                      fontFamily={
-                        e.tipo === 'grado'
-                          ? "'JetBrains Mono Variable', ui-monospace, monospace"
-                          : "'Space Grotesk Variable', system-ui, sans-serif"
-                      }
-                      fontWeight={e.tipo === 'grado' ? 500 : 700}
-                      fontSize={e.tipo === 'cardinal' ? 24 : e.tipo === 'intercardinal' ? 14 : 10.5}
-                      fill={
-                        e.angulo === 0 ? paleta.norte : e.tipo === 'grado' ? paleta.textoSuave : paleta.texto
-                      }
-                    >
-                      {e.texto}
-                    </text>
-                  ))}
-
-                  {/* Aguja: norte destacado y cola sur */}
-                  <polygon
-                    points={`${CENTRO},${CENTRO - 122} ${CENTRO - 9},${CENTRO - 76} ${CENTRO + 9},${CENTRO - 76}`}
-                    fill={paleta.norte}
-                  />
-                  <polygon
-                    points={`${CENTRO},${CENTRO + 108} ${CENTRO - 7},${CENTRO + 76} ${CENTRO + 7},${CENTRO + 76}`}
-                    fill={paleta.sur}
-                  />
-
-                  {/* Marcadores astronómicos en su acimut real */}
-                  {objetivosVisibles.map((objetivo) => {
-                    const p = puntoPolar(objetivo.acimut, RADIO_MARCADORES);
-                    const esAlineado = alineado?.id === objetivo.id;
-                    const esSeleccionado = objetivoSeleccionado?.id === objetivo.id;
-                    const color = paleta.marcadorFijo ?? objetivo.color;
-                    const etiqueta = etiquetaMarcador(objetivo.nombre);
-                    return (
-                      <g key={objetivo.id} transform={`rotate(${visual.rumbo} ${p.x} ${p.y})`}>
-                        {(esAlineado || esSeleccionado) && (
-                          <circle
-                            cx={p.x}
-                            cy={p.y}
-                            r={14}
-                            fill="none"
-                            stroke={paleta.acento}
-                            strokeWidth={esAlineado ? '2' : '1.4'}
-                            strokeDasharray={esAlineado ? undefined : '3 2'}
-                          />
-                        )}
-                        <circle
-                          cx={p.x}
-                          cy={p.y}
-                          r={9.5}
-                          fill={esAlineado ? paleta.acento : color}
-                          stroke={paleta.esfera}
-                          strokeWidth="1.5"
-                        />
-                        <text
-                          x={p.x}
-                          y={p.y}
-                          textAnchor="middle"
-                          dominantBaseline="central"
-                          fontSize={etiqueta.length > 2 ? '7.5' : '8.5'}
-                          fontWeight={700}
-                          fontFamily="'Space Grotesk Variable', system-ui, sans-serif"
-                          fill={tema === 'rojo' ? '#000000' : '#0f172a'}
-                        >
-                          {etiqueta}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </g>
-
-                {/* Línea de fe fija (dirección del dispositivo) */}
-                <polygon
-                  points={`${CENTRO},${CENTRO - RADIO_ESFERA + 14} ${CENTRO - 10},${-16} ${CENTRO + 10},${-16}`}
-                  fill={paleta.acento}
-                />
-              </svg>
-
-              {/* Cardán: meridianos de la cúpula que giran con el rumbo */}
-              <div
-                aria-hidden="true"
-                className="absolute inset-0 pointer-events-none"
-                style={{ transformStyle: 'preserve-3d', transform: `rotateZ(${-visual.rumbo}deg)` }}
-              >
-                <div
-                  className="absolute inset-[6%] rounded-full"
-                  style={{ border: `1.5px solid ${paleta.aro}`, transform: 'rotateY(90deg)' }}
-                />
-                <div
-                  className="absolute inset-[6%] rounded-full"
-                  style={{ border: `1px solid ${paleta.aro}`, transform: 'rotateX(90deg)' }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Lectura central (plana, siempre legible) */}
-          <div
-            aria-hidden="true"
-            className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[34%] aspect-square rounded-full border flex flex-col items-center justify-center ${paleta.claseLectura}`}
-          >
-            <span className="font-mono font-bold text-3xl sm:text-4xl leading-none tabular-nums">
-              {String(rumboEntero).padStart(3, '0')}°
-            </span>
-            <span className={`font-display font-bold text-sm mt-1 ${paleta.claseAcento}`}>{cardinal}</span>
-            <span className="font-mono text-[10px] opacity-75 mt-0.5">
-              Incl {inclinacionEntera > 0 ? '+' : ''}
-              {inclinacionEntera}°
-            </span>
-          </div>
-        </div>
-
-        {/* Aviso de alineación */}
-        <div aria-live="polite" className="min-h-12 mt-3 flex items-center justify-center">
-          {alineado ? (
-            <p
-              className={`alineacion-pulso inline-flex items-center gap-2 px-3.5 py-2 rounded-full border text-sm font-medium ${paleta.claseAviso}`}
-            >
-              <Target className="w-4 h-4" aria-hidden="true" />
-              Apuntando hacia {alineado.nombre} ·{' '}
-              <span className="font-mono">Alt {Math.round(alineado.altitud)}°</span>
-            </p>
-          ) : (
-            <p className="text-xs opacity-65 text-center">
-              {objetivosVisibles.length > 0
-                ? 'Gira hasta situar un marcador bajo la línea de fe superior.'
-                : 'Ahora mismo no hay objetivos visibles sobre el horizonte.'}
-            </p>
-          )}
-        </div>
-
-        {/* Estado de sensores */}
-        <div className="mt-2 space-y-3">
-          <p
-            role="status"
-            className={`flex items-start gap-2 text-xs px-3 py-2 rounded-xl border ${
-              estadoCorrecto ? paleta.claseEstadoOk : paleta.claseEstadoAviso
-            }`}
-          >
-            <Smartphone className="w-4 h-4 shrink-0 mt-px" aria-hidden="true" />
-            <span>{mensajeEstado}</span>
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-2">
-            {mostrarBotonActivar && (
-              <button
-                type="button"
-                onClick={() => {
-                  void activarSensores();
-                }}
-                className={`flex-1 inline-flex items-center justify-center gap-2 px-4 min-h-11 rounded-xl border text-sm font-semibold cursor-pointer transition-colors ${paleta.claseBotonPrimario}`}
-              >
-                <Navigation className="w-4 h-4" aria-hidden="true" />
-                Activar sensores del dispositivo
-              </button>
-            )}
-            {estadoSensor === 'activo' && (
-              <button
-                type="button"
-                onClick={() => (modoManual ? setModoManual(false) : pasarAModoManual())}
-                aria-pressed={modoManual}
-                className="flex-1 inline-flex items-center justify-center gap-2 px-4 min-h-11 rounded-xl border border-current/30 hover:bg-current/10 text-sm font-medium cursor-pointer transition-colors"
-              >
-                <Hand className="w-4 h-4" aria-hidden="true" />
-                {modoManual ? 'Volver a los sensores' : 'Modo manual'}
-              </button>
-            )}
-          </div>
-
-          {/* Controles de simulación */}
-          {simulacion && (
-            <fieldset className="p-3 rounded-2xl border border-current/20 bg-current/5 space-y-1">
-              <legend className="px-1.5 text-[10px] uppercase tracking-[0.2em] font-mono opacity-75">
-                Modo simulación
-              </legend>
-              <label className="block">
-                <span className="flex items-center justify-between text-xs">
-                  <span>Rumbo</span>
-                  <span className="font-mono">{String(Math.round(normalizarAngulo(rumboManual)) % 360).padStart(3, '0')}°</span>
-                </span>
-                <input
-                  type="range"
-                  min={0}
-                  max={359}
-                  step={1}
-                  value={Math.round(normalizarAngulo(rumboManual)) % 360}
-                  onChange={(e) => {
-                    const valor = Number(e.target.value);
-                    if (!Number.isFinite(valor)) return;
-                    setModoManual(true);
-                    setRumboManual(limitar(valor, 0, 359));
-                  }}
-                  className={`rango-hud ${paleta.claseAcento}`}
-                />
-              </label>
-              <label className="block">
-                <span className="flex items-center justify-between text-xs">
-                  <span>Inclinación</span>
-                  <span className="font-mono">
-                    {inclinacionManual > 0 ? '+' : ''}
-                    {inclinacionManual}°
-                  </span>
-                </span>
-                <input
-                  type="range"
-                  min={-60}
-                  max={60}
-                  step={1}
-                  value={inclinacionManual}
-                  onChange={(e) => {
-                    const valor = Number(e.target.value);
-                    if (!Number.isFinite(valor)) return;
-                    setModoManual(true);
-                    setInclinacionManual(limitar(valor, -60, 60));
-                  }}
-                  className={`rango-hud ${paleta.claseAcento}`}
-                />
-              </label>
-              <p className="text-[11px] opacity-70">
-                También puedes arrastrar el disco o usar las flechas del teclado (Mayús: pasos de 15°).
-              </p>
-            </fieldset>
-          )}
-
-          {/* Astros visibles */}
-          {objetivosVisibles.length > 0 && (
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-65 mb-1.5">
-                Sobre el horizonte
-              </p>
-              <ul className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
-                {objetivosVisibles.map((objetivo) => {
-                  const esAlineado = alineado?.id === objetivo.id;
-                  return (
-                    <li
-                      key={objetivo.id}
-                      className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border ${
-                        esAlineado ? paleta.claseAviso : 'border-current/15'
-                      }`}
-                    >
-                      <span className="flex items-center gap-1.5 min-w-0">
-                        <span
-                          className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: paleta.marcadorFijo ?? objetivo.color }}
-                          aria-hidden="true"
-                        />
-                        <span className="truncate font-medium">{objetivo.nombre}</span>
-                      </span>
-                      <span className="font-mono opacity-80 shrink-0">
-                        {Math.round(objetivo.acimut)}° · {Math.round(objetivo.altitud)}°
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-              <p className="text-[10px] opacity-55 mt-1 font-mono">Acimut · Altitud</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
 ````
 
 ## File: src/components/Navbar.tsx
@@ -2920,6 +1692,504 @@ export function Navbar({
 }
 ````
 
+## File: src/core/__tests__/astronomy.test.ts
+````typescript
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as Astronomy from 'astronomy-engine';
+import {
+  calcularCielo,
+  calcularEstadoSolar,
+  calcularEstrellas,
+  calcularMessier,
+  calcularTransitoCuerpo,
+  calcularTrayectoriaAstro,
+  esEntradaAstronomicaValida,
+} from '../skyCalculator';
+import { calcularProximosEventos } from '../eventsCalculator';
+import { obtenerCondicionesMeteo } from '../weatherService';
+import type { Ubicacion } from '../../types/astronomy';
+
+const VALENCIA: Ubicacion = {
+  latitud: 39.47,
+  longitud: -0.38,
+  altitud: 150,
+  nombre: 'Valencia',
+};
+
+function crearMockStorage(): Storage {
+  const almacen = new Map<string, string>();
+  return {
+    get length() {
+      return almacen.size;
+    },
+    clear() {
+      almacen.clear();
+    },
+    getItem(clave: string) {
+      return almacen.get(clave) ?? null;
+    },
+    key(indice: number) {
+      return Array.from(almacen.keys())[indice] ?? null;
+    },
+    removeItem(clave: string) {
+      almacen.delete(clave);
+    },
+    setItem(clave: string, valor: string) {
+      almacen.set(clave, valor);
+    },
+  };
+}
+
+function crearHourlySintetico(inicioUTC: Date, horas: number) {
+  const time: string[] = [];
+  const cloud_cover: number[] = [];
+  const cloud_cover_low: number[] = [];
+  const cloud_cover_mid: number[] = [];
+  const cloud_cover_high: number[] = [];
+  const relative_humidity_2m: number[] = [];
+  const wind_speed_10m: number[] = [];
+  const temperature_2m: number[] = [];
+
+  for (let i = 0; i < horas; i++) {
+    const fecha = new Date(inicioUTC.getTime() + i * 3_600_000);
+    const anio = fecha.getUTCFullYear();
+    const mes = String(fecha.getUTCMonth() + 1).padStart(2, '0');
+    const dia = String(fecha.getUTCDate()).padStart(2, '0');
+    const hora = String(fecha.getUTCHours()).padStart(2, '0');
+    time.push(`${anio}-${mes}-${dia}T${hora}:00`);
+    cloud_cover.push(10 + (i % 5) * 5);
+    cloud_cover_low.push(5);
+    cloud_cover_mid.push(10);
+    cloud_cover_high.push(15);
+    relative_humidity_2m.push(60);
+    wind_speed_10m.push(12);
+    temperature_2m.push(18.4);
+  }
+
+  return {
+    time,
+    cloud_cover,
+    cloud_cover_low,
+    cloud_cover_mid,
+    cloud_cover_high,
+    relative_humidity_2m,
+    wind_speed_10m,
+    temperature_2m,
+  };
+}
+
+describe('Validación defensiva (esEntradaAstronomicaValida)', () => {
+  const fechaValida = new Date('2026-06-15T22:00:00Z');
+
+  it('acepta fechas y coordenadas dentro de los límites exactos', () => {
+    expect(esEntradaAstronomicaValida(fechaValida, VALENCIA)).toBe(true);
+    expect(
+      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: -90, longitud: -180 })
+    ).toBe(true);
+    expect(
+      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: 90, longitud: 180 })
+    ).toBe(true);
+  });
+
+  it('rechaza fechas inválidas', () => {
+    expect(esEntradaAstronomicaValida(new Date('invalid'), VALENCIA)).toBe(false);
+  });
+
+  it('rechaza latitudes y longitudes fuera de rango', () => {
+    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: -90.01 })).toBe(false);
+    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, latitud: 90.01 })).toBe(false);
+    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, longitud: -180.01 })).toBe(false);
+    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, longitud: 180.01 })).toBe(false);
+  });
+
+  it('rechaza altitudes no finitas (NaN e Infinity)', () => {
+    expect(esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, altitud: Number.NaN })).toBe(
+      false
+    );
+    expect(
+      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, altitud: Number.POSITIVE_INFINITY })
+    ).toBe(false);
+    expect(
+      esEntradaAstronomicaValida(fechaValida, { ...VALENCIA, altitud: Number.NEGATIVE_INFINITY })
+    ).toBe(false);
+  });
+});
+
+describe('Motor astronómico (skyCalculator)', () => {
+  describe('calcularEstadoSolar', () => {
+    it('clasifica correctamente Día al mediodía y Noche astronómica de madrugada en Valencia', () => {
+      const mediodia = calcularEstadoSolar(new Date('2026-03-21T12:00:00Z'), VALENCIA);
+      expect(mediodia).not.toBeNull();
+      expect(mediodia?.fase).toBe('Día');
+      expect(mediodia?.altitudSol).toBeGreaterThan(0);
+
+      const noche = calcularEstadoSolar(new Date('2026-03-21T01:00:00Z'), VALENCIA);
+      expect(noche).not.toBeNull();
+      expect(noche?.fase).toBe('Noche astronómica');
+      expect(noche?.altitudSol).toBeLessThan(-18);
+    });
+
+    it('clasifica crepúsculo civil/náutico/astronómico tras la puesta de sol', () => {
+      const fasesCrepusculo = new Set([
+        'Crepúsculo civil',
+        'Crepúsculo náutico',
+        'Crepúsculo astronómico',
+      ]);
+      const atardecer = calcularEstadoSolar(new Date('2026-03-21T18:45:00Z'), VALENCIA);
+      expect(atardecer).not.toBeNull();
+      expect(fasesCrepusculo.has(atardecer?.fase ?? '')).toBe(true);
+    });
+
+    it('devuelve null ante entradas inválidas', () => {
+      expect(calcularEstadoSolar(new Date('invalid'), VALENCIA)).toBeNull();
+      expect(
+        calcularEstadoSolar(new Date('2026-03-21T12:00:00Z'), { ...VALENCIA, latitud: 95 })
+      ).toBeNull();
+    });
+  });
+
+  describe('calcularCielo', () => {
+    it('devuelve los 8 cuerpos ordenados descendentemente por altitud con fase lunar solo en la Luna', () => {
+      const cuerpos = calcularCielo(new Date('2026-03-21T22:00:00Z'), VALENCIA);
+      expect(cuerpos).toHaveLength(8);
+
+      for (let i = 1; i < cuerpos.length; i++) {
+        expect(cuerpos[i - 1].altitud).toBeGreaterThanOrEqual(cuerpos[i].altitud);
+      }
+
+      const luna = cuerpos.find((c) => c.tipo === 'luna');
+      expect(luna).toBeDefined();
+      expect(luna?.faseLunar).toBeDefined();
+      expect(luna?.anguloFase).toBeTypeOf('number');
+
+      const planetas = cuerpos.filter((c) => c.tipo === 'planeta');
+      expect(planetas).toHaveLength(7);
+      for (const planeta of planetas) {
+        expect(planeta.faseLunar).toBeUndefined();
+        expect(planeta.anguloFase).toBeUndefined();
+      }
+    });
+  });
+
+  describe('calcularEstrellas y calcularMessier', () => {
+    it('aplica precesión J2000 situando a Polaris cerca de la latitud del observador en el hemisferio norte', () => {
+      const fecha = new Date('2026-03-21T22:00:00Z');
+      const estrellas = calcularEstrellas(fecha, VALENCIA);
+      const polaris = estrellas.find((e) => e.id === 'polaris');
+
+      expect(polaris).toBeDefined();
+      expect(Math.abs((polaris?.altitud ?? 0) - VALENCIA.latitud)).toBeLessThan(1.5);
+    });
+
+    it('aplica umbral de visibilidad > 0° en estrellas y > 10° en objetos Messier', () => {
+      const fecha = new Date('2026-03-21T22:00:00Z');
+      const estrellas = calcularEstrellas(fecha, VALENCIA);
+      const messier = calcularMessier(fecha, VALENCIA);
+
+      expect(estrellas.length).toBeGreaterThan(0);
+      for (const estrella of estrellas) {
+        if (estrella.altitud > 0.1) expect(estrella.visible).toBe(true);
+        if (estrella.altitud < -0.1) expect(estrella.visible).toBe(false);
+      }
+
+      expect(messier.length).toBeGreaterThan(0);
+      for (const obj of messier) {
+        if (obj.altitud > 10.1) expect(obj.visible).toBe(true);
+        if (obj.altitud < 9.9) expect(obj.visible).toBe(false);
+      }
+    });
+  });
+
+  describe('calcularTrayectoriaAstro y calcularTransitoCuerpo', () => {
+    const fecha = new Date('2026-03-21T22:00:00Z');
+
+    it('devuelve 25 puntos (-6h a +6h cada 30 min) para cuerpo, estrella y objeto Messier válidos', () => {
+      const trajLuna = calcularTrayectoriaAstro(
+        { id: 'Moon', nombre: 'Luna', categoria: 'cuerpo' },
+        fecha,
+        VALENCIA
+      );
+      const trajSirio = calcularTrayectoriaAstro(
+        { id: 'sirius', nombre: 'Sirio', categoria: 'estrella' },
+        fecha,
+        VALENCIA
+      );
+      const trajM31 = calcularTrayectoriaAstro(
+        { id: 'M31', nombre: 'M31 · Galaxia de Andrómeda', categoria: 'messier' },
+        fecha,
+        VALENCIA
+      );
+
+      expect(trajLuna).toHaveLength(25);
+      expect(trajSirio).toHaveLength(25);
+      expect(trajM31).toHaveLength(25);
+    });
+
+    it('devuelve array vacío para IDs inexistentes y tránsito vacío para cuerpos inexistentes', () => {
+      expect(
+        calcularTrayectoriaAstro(
+          { id: 'PlutonInexistente', nombre: 'Inexistente', categoria: 'cuerpo' },
+          fecha,
+          VALENCIA
+        )
+      ).toEqual([]);
+
+      expect(
+        calcularTrayectoriaAstro(
+          { id: 'estrella-falsa', nombre: 'Falsa', categoria: 'estrella' },
+          fecha,
+          VALENCIA
+        )
+      ).toEqual([]);
+
+      const transitoInvalido = calcularTransitoCuerpo('NoExiste', fecha, VALENCIA);
+      expect(transitoInvalido).toEqual({
+        salida: null,
+        culminacion: null,
+        puesta: null,
+        alturaMaxima: null,
+      });
+    });
+
+    it('calcula efemérides de tránsito válidas para un cuerpo existente', () => {
+      const transito = calcularTransitoCuerpo('Moon', fecha, VALENCIA);
+      expect(transito.culminacion).toBeInstanceOf(Date);
+      expect(transito.alturaMaxima).toBeTypeOf('number');
+    });
+  });
+});
+
+describe('Eventos astronómicos (eventsCalculator)', () => {
+  it('devuelve como máximo 6 eventos ordenados cronológicamente con diasRestantes >= 0', () => {
+    const fechaBase = new Date('2026-03-21T12:00:00Z');
+    const eventos = calcularProximosEventos(fechaBase, VALENCIA);
+
+    expect(eventos.length).toBeGreaterThan(0);
+    expect(eventos.length).toBeLessThanOrEqual(6);
+
+    for (let i = 0; i < eventos.length; i++) {
+      expect(eventos[i].diasRestantes).toBeGreaterThanOrEqual(0);
+      if (i > 0) {
+        expect(eventos[i].fechaPico.getTime()).toBeGreaterThanOrEqual(
+          eventos[i - 1].fechaPico.getTime()
+        );
+      }
+    }
+  });
+
+  it('diferencia eclipses lunares penumbrales frente a eclipses totales o parciales', () => {
+    // 25 de marzo de 2024: eclipse lunar penumbral
+    const eventosPenumbral = calcularProximosEventos(new Date('2024-03-20T12:00:00Z'), VALENCIA);
+    const eclipsePenumbral = eventosPenumbral.find((ev) => ev.titulo.includes('Eclipse Lunar'));
+    expect(eclipsePenumbral).toBeDefined();
+    expect(eclipsePenumbral?.titulo).toBe('Eclipse Lunar Penumbral');
+    expect(eclipsePenumbral?.resumen).toBe('Eclipse penumbral (oscurecimiento sutil)');
+
+    // 14 de marzo de 2025: eclipse lunar total
+    const eventosTotal = calcularProximosEventos(new Date('2025-03-01T12:00:00Z'), VALENCIA);
+    const eclipseTotal = eventosTotal.find((ev) => ev.titulo.includes('Eclipse Lunar'));
+    expect(eclipseTotal).toBeDefined();
+    expect(eclipseTotal?.titulo).toBe('Eclipse Lunar Total');
+    expect(eclipseTotal?.resumen).toMatch(/^Oscurecimiento: \d+%$/);
+  });
+
+  it('incluye un eclipse solar con aviso de no visibilidad si todos los próximos ocurren bajo el horizonte', () => {
+    const fechaBase = new Date('2026-06-01T12:00:00Z');
+    const fechaEclipseNocturno = new Date('2026-06-05T02:00:00Z');
+
+    const spySolar = vi.spyOn(Astronomy, 'SearchLocalSolarEclipse').mockImplementation((fecha) => {
+      const base = fecha instanceof Date ? fecha : new Date(fecha.toString());
+      const fechaEvento =
+        base.getTime() <= fechaEclipseNocturno.getTime()
+          ? fechaEclipseNocturno
+          : new Date(base.getTime() + 180 * 24 * 60 * 60 * 1000);
+      const tiempo = Astronomy.MakeTime(fechaEvento);
+      const evento: Astronomy.EclipseEvent = { time: tiempo, altitude: -14.5 };
+      return {
+        kind: Astronomy.EclipseKind.Partial,
+        obscuration: 0.42,
+        partial_begin: evento,
+        total_begin: undefined,
+        peak: evento,
+        total_end: undefined,
+        partial_end: evento,
+      };
+    });
+
+    try {
+      const eventos = calcularProximosEventos(fechaBase, VALENCIA);
+      const eclipseSolar = eventos.find((ev) => ev.titulo.includes('Eclipse Solar'));
+
+      expect(spySolar).toHaveBeenCalledTimes(16);
+      expect(eclipseSolar).toBeDefined();
+      expect(eclipseSolar?.titulo).toBe('Eclipse Solar Parcial');
+      expect(eclipseSolar?.detalle).toBe(
+        'No visible desde tu ubicación (Sol bajo el horizonte: -14.5°)'
+      );
+    } finally {
+      spySolar.mockRestore();
+    }
+  });
+});
+
+describe('Servicio meteorológico (weatherService)', () => {
+  let mockStorage: Storage;
+
+  beforeEach(() => {
+    mockStorage = crearMockStorage();
+    vi.stubGlobal('localStorage', mockStorage);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('usa la caché válida de localStorage sin invocar fetch y genera 12 franjas en proximasHoras', async () => {
+    const fechaUTC = new Date('2026-06-15T20:00:00Z');
+    const hourly = crearHourlySintetico(fechaUTC, 24);
+    const ahora = Date.now();
+    mockStorage.setItem(
+      'skyproject_meteo_cache_v3',
+      JSON.stringify({
+        '39.47,-0.38': {
+          timestamp: ahora,
+          ultimoAcceso: ahora,
+          hourly,
+        },
+      })
+    );
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resultado = await obtenerCondicionesMeteo(fechaUTC, VALENCIA);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(resultado.aviso).toBeNull();
+    expect(resultado.datos).not.toBeNull();
+    expect(resultado.datos?.esCache).toBe(true);
+    expect(resultado.datos?.horaPronostico).toBe('2026-06-15 20:00 UTC');
+    expect(resultado.datos?.proximasHoras).toHaveLength(12);
+    expect(resultado.datos?.proximasHoras[0].fechaISO).toBe('2026-06-15T20:00:00Z');
+  });
+
+  it('se recupera de forma segura ante JSON corrupto en localStorage y consulta Open-Meteo en UTC', async () => {
+    const fechaUTC = new Date('2026-06-15T21:00:00Z');
+    const hourly = crearHourlySintetico(fechaUTC, 18);
+    mockStorage.setItem('skyproject_meteo_cache_v3', '{json-corrupto');
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ hourly }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resultado = await obtenerCondicionesMeteo(fechaUTC, VALENCIA);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const urlLlamada = String(fetchMock.mock.calls[0][0]);
+    expect(urlLlamada).toContain('timezone=UTC');
+    expect(resultado.aviso).toBeNull();
+    expect(resultado.datos).not.toBeNull();
+    expect(resultado.datos?.esCache).toBe(false);
+    expect(resultado.datos?.horaPronostico).toBe('2026-06-15 21:00 UTC');
+    expect(resultado.datos?.proximasHoras).toHaveLength(12);
+  });
+
+  it('rechaza respuestas de Open-Meteo con NaN o Infinity sin guardarlas ni propagar NaN', async () => {
+    const fechaUTC = new Date('2026-06-15T21:00:00Z');
+    const hourlyConNaN = crearHourlySintetico(fechaUTC, 12);
+    hourlyConNaN.cloud_cover[0] = Number.NaN;
+
+    const hourlyConInfinito = crearHourlySintetico(fechaUTC, 12);
+    hourlyConInfinito.wind_speed_10m[0] = Number.POSITIVE_INFINITY;
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hourly: hourlyConNaN }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hourly: hourlyConInfinito }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resNaN = await obtenerCondicionesMeteo(fechaUTC, VALENCIA);
+    expect(resNaN.datos).toBeNull();
+    expect(resNaN.aviso).toBe('No se pudo obtener la previsión meteorológica.');
+
+    const resInfinito = await obtenerCondicionesMeteo(fechaUTC, VALENCIA);
+    expect(resInfinito.datos).toBeNull();
+    expect(resInfinito.aviso).toBe('No se pudo obtener la previsión meteorológica.');
+    expect(mockStorage.getItem('skyproject_meteo_cache_v3')).toBeNull();
+  });
+
+  it('conserva múltiples ubicaciones con expulsión LRU al superar 5 y mantiene fallback offline', async () => {
+    const fechaUTC = new Date('2026-06-15T20:00:00Z');
+    const hourly = crearHourlySintetico(fechaUTC, 18);
+
+    let reloj = 1_700_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      reloj += 1000;
+      return reloj;
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ hourly }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ubicaciones: Ubicacion[] = [
+      { latitud: 39.47, longitud: -0.38, altitud: 150, nombre: 'Valencia' },
+      { latitud: 40.42, longitud: -3.7, altitud: 650, nombre: 'Madrid' },
+      { latitud: 41.39, longitud: 2.17, altitud: 12, nombre: 'Barcelona' },
+      { latitud: 37.39, longitud: -5.98, altitud: 7, nombre: 'Sevilla' },
+      { latitud: 28.47, longitud: -16.25, altitud: 2390, nombre: 'Teide' },
+      { latitud: 43.26, longitud: -2.93, altitud: 19, nombre: 'Bilbao' },
+    ];
+
+    // Carga las 5 primeras ubicaciones
+    for (let i = 0; i < 5; i++) {
+      const res = await obtenerCondicionesMeteo(fechaUTC, ubicaciones[i]);
+      expect(res.datos?.esCache).toBe(false);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+
+    // Reutiliza la primera ubicación desde caché para refrescar su ultimoAcceso (LRU)
+    const resReutilizada = await obtenerCondicionesMeteo(fechaUTC, ubicaciones[0]);
+    expect(resReutilizada.datos?.esCache).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+
+    // Añade una sexta ubicación: debe expulsar a Madrid (índice 1) y conservar Valencia (índice 0)
+    const resSexta = await obtenerCondicionesMeteo(fechaUTC, ubicaciones[5]);
+    expect(resSexta.datos?.esCache).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+
+    const cacheGuardada = JSON.parse(
+      mockStorage.getItem('skyproject_meteo_cache_v3') ?? '{}'
+    ) as Record<string, unknown>;
+    const claves = Object.keys(cacheGuardada);
+    expect(claves).toHaveLength(5);
+    expect(claves).toContain('39.47,-0.38');
+    expect(claves).toContain('43.26,-2.93');
+    expect(claves).not.toContain('40.42,-3.70');
+
+    // Expira el TTL (> 1 hora) y simula fallo de red: debe responder con fallback offline
+    reloj += 2 * 60 * 60 * 1000;
+    fetchMock.mockRejectedValueOnce(new Error('Sin conexión'));
+
+    const resOffline = await obtenerCondicionesMeteo(fechaUTC, ubicaciones[0]);
+    expect(resOffline.datos).not.toBeNull();
+    expect(resOffline.datos?.esCache).toBe(true);
+    expect(resOffline.aviso).toBe('Sin conexión: mostrando datos guardados en caché.');
+  });
+});
+````
+
 ## File: src/data/messierCatalog.ts
 ````typescript
 import type { ObjetoMessier } from '../types/astronomy';
@@ -3102,360 +2372,1164 @@ Antes de finalizar cualquier tarea, ejecuta y verifica que pasan sin errores:
 }
 ````
 
-## File: src/core/eventsCalculator.ts
+## File: vite.config.ts
 ````typescript
-import * as Astronomy from 'astronomy-engine';
-import type { EventoCeleste, Ubicacion } from '../types/astronomy';
-import { LLUVIAS_ESTRELLAS } from '../data/meteorShowers';
-import { esEntradaAstronomicaValida } from './skyCalculator';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import { VitePWA } from 'vite-plugin-pwa'
 
-const NOMBRES_ECLIPSE: Record<string, string> = {
-  total: 'Total',
-  partial: 'Parcial',
-  annular: 'Anular',
-  penumbral: 'Penumbral',
-};
-
-function calcularDiasRestantes(desde: Date, hasta: Date): number {
-  const inicioDia = new Date(desde.getFullYear(), desde.getMonth(), desde.getDate()).getTime();
-  const finDia = new Date(hasta.getFullYear(), hasta.getMonth(), hasta.getDate()).getTime();
-  return Math.round((finDia - inicioDia) / (1000 * 60 * 60 * 24));
-}
-
-function obtenerProximasLluvias(fechaBase: Date): EventoCeleste[] {
-  const anioActual = fechaBase.getFullYear();
-
-  return LLUVIAS_ESTRELLAS.map((lluvia) => {
-    let fechaPico = new Date(anioActual, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
-    if (calcularDiasRestantes(fechaBase, fechaPico) < 0) {
-      fechaPico = new Date(anioActual + 1, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
-    }
-
-    return {
-      id: `lluvia-${lluvia.id}-${fechaPico.getFullYear()}`,
-      titulo: lluvia.nombre,
-      tipo: 'lluvia' as const,
-      fechaPico,
-      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
-      resumen: `Máximo ~${lluvia.thz} meteoros/h`,
-      detalle: `Radiante: Const. ${lluvia.radiante}`,
-    };
-  });
-}
-
-function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoCeleste[] {
-  const eventos: EventoCeleste[] = [];
-  const observador = new Astronomy.Observer(
-    ubicacion.latitud,
-    ubicacion.longitud,
-    ubicacion.altitud
-  );
-
-  // 1. Próximos 2 eclipses lunares con comprobación de visibilidad local
-  let fechaBusqueda = new Date(fechaBase);
-  for (let i = 0; i < 2; i++) {
-    const lunar = Astronomy.SearchLunarEclipse(fechaBusqueda);
-    const fechaPico = lunar.peak.date;
-    const tipoClave = String(lunar.kind).toLowerCase();
-    const tipoStr = NOMBRES_ECLIPSE[tipoClave] ?? 'Lunar';
-
-    const eqLuna = Astronomy.Equator(Astronomy.Body.Moon, fechaPico, observador, true, true);
-    const horLuna = Astronomy.Horizon(fechaPico, observador, eqLuna.ra, eqLuna.dec, 'normal');
-
-    const resumen =
-      tipoClave === 'penumbral'
-        ? 'Eclipse penumbral (oscurecimiento sutil)'
-        : `Oscurecimiento: ${Math.round(lunar.obscuration * 100)}%`;
-
-    const detalle =
-      horLuna.altitude > 0
-        ? `Visible desde tu ubicación (Luna a ${horLuna.altitude.toFixed(1)}° en el máximo)`
-        : `No visible desde tu ubicación (Luna bajo el horizonte: ${horLuna.altitude.toFixed(1)}°)`;
-
-    eventos.push({
-      id: `eclipse-lunar-${fechaPico.getTime()}`,
-      titulo: `Eclipse Lunar ${tipoStr}`,
-      tipo: 'eclipse',
-      fechaPico,
-      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
-      resumen,
-      detalle,
-    });
-
-    fechaBusqueda = new Date(fechaPico.getTime() + 15 * 24 * 60 * 60 * 1000);
-  }
-
-  // 2. Próximos eclipses solares visibles sobre el horizonte en tu ubicación
-  let fechaSolar = new Date(fechaBase);
-  let encontrados = 0;
-  let intentos = 0;
-
-  while (encontrados < 2 && intentos < 8) {
-    intentos++;
-    const solar = Astronomy.SearchLocalSolarEclipse(fechaSolar, observador);
-    const fechaPico = solar.peak.time.date;
-
-    if (solar.peak.altitude > 0) {
-      const tipoStr = NOMBRES_ECLIPSE[String(solar.kind).toLowerCase()] ?? 'Solar';
-      eventos.push({
-        id: `eclipse-solar-${fechaPico.getTime()}`,
-        titulo: `Eclipse Solar ${tipoStr}`,
-        tipo: 'eclipse',
-        fechaPico,
-        diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
-        resumen: `Ocultación local: ${Math.round(solar.obscuration * 100)}%`,
-        detalle: `Altura del Sol en máximo: ${solar.peak.altitude.toFixed(1)}°`,
-      });
-      encontrados++;
-    }
-
-    fechaSolar = new Date(fechaPico.getTime() + 20 * 24 * 60 * 60 * 1000);
-  }
-
-  return eventos;
-}
-
-export function calcularProximosEventos(fechaBase: Date, ubicacion: Ubicacion): EventoCeleste[] {
-  if (!esEntradaAstronomicaValida(fechaBase, ubicacion)) return [];
-
-  const lluvias = obtenerProximasLluvias(fechaBase);
-  const eclipses = obtenerProximosEclipses(fechaBase, ubicacion);
-
-  return [...lluvias, ...eclipses]
-    .sort((a, b) => a.fechaPico.getTime() - b.fechaPico.getTime())
-    .slice(0, 6);
-}
+export default defineConfig({
+  plugins: [
+    react(),
+    tailwindcss(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      injectRegister: 'script',
+      includeAssets: ['favicon.svg'],
+      manifest: {
+        name: 'SkyProject — Observatorio Personal',
+        short_name: 'SkyProject',
+        description: 'Mapa celeste interactivo, efemérides y meteorología astronómica offline-first.',
+        theme_color: '#020617',
+        background_color: '#020617',
+        display: 'standalone',
+        start_url: '/',
+        icons: [
+          {
+            src: 'favicon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
+            purpose: 'any maskable',
+          },
+        ],
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,svg,woff,woff2}'],
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/api\.open-meteo\.com\/.*/i,
+            handler: 'NetworkOnly',
+          },
+        ],
+      },
+    }),
+  ],
+})
 ````
 
-## File: src/core/weatherService.ts
+## File: src/components/Compass3DModal.tsx
 ````typescript
-import type { CondicionesMeteo, FranjaHorariaMeteo, Ubicacion } from '../types/astronomy';
-import { calcularEstadoSolar, esEntradaAstronomicaValida } from './skyCalculator';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent as EventoTecladoReact, PointerEvent as EventoPunteroReact } from 'react';
+import { ArrowDown, ArrowUp, Check, Compass, Hand, Navigation, Smartphone, Target, X } from 'lucide-react';
+import type {
+  ConstructorOrientacionConPermiso,
+  CuerpoCeleste,
+  EstadoSensorBrujula,
+  EventoOrientacionDispositivo,
+  ObjetivoBrujula,
+  OrientacionBrujula,
+  TemaVisual,
+} from '../types/astronomy';
 
-interface OpenMeteoHourly {
-  time: string[];
-  cloud_cover: number[];
-  cloud_cover_low: number[];
-  cloud_cover_mid: number[];
-  cloud_cover_high: number[];
-  relative_humidity_2m: number[];
-  wind_speed_10m: number[];
-  temperature_2m: number[];
+interface Compass3DModalProps {
+  tema: TemaVisual;
+  cuerpos: CuerpoCeleste[];
+  objetivoSeleccionado?: ObjetivoBrujula | null;
+  onCerrar: () => void;
 }
 
-interface CacheMeteo {
-  claveUbicacion: string;
-  timestamp: number;
-  hourly: OpenMeteoHourly;
+/* ── Utilidades angulares ─────────────────────────────────────────── */
+
+function normalizarAngulo(angulo: number): number {
+  return ((angulo % 360) + 360) % 360;
 }
 
-const CACHE_KEY = 'skyproject_meteo_cache_v2';
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora
-
-function esArrayDeStrings(valor: unknown): valor is string[] {
-  return Array.isArray(valor) && valor.every((item) => typeof item === 'string');
+/** Diferencia por el camino más corto en el círculo, en el rango [-180, 180). */
+function diferenciaAngular(destino: number, origen: number): number {
+  return ((((destino - origen) % 360) + 540) % 360) - 180;
 }
 
-function esArrayNumerico(valor: unknown): valor is number[] {
-  return Array.isArray(valor) && valor.every((item) => typeof item === 'number' || item === null);
+function limitar(valor: number, minimo: number, maximo: number): number {
+  return Math.min(maximo, Math.max(minimo, valor));
 }
 
-function esOpenMeteoHourlyValido(valor: unknown): valor is OpenMeteoHourly {
-  if (typeof valor !== 'object' || valor === null) return false;
-  const obj = valor as Record<string, unknown>;
-  return (
-    esArrayDeStrings(obj.time) &&
-    esArrayNumerico(obj.cloud_cover) &&
-    esArrayNumerico(obj.cloud_cover_low) &&
-    esArrayNumerico(obj.cloud_cover_mid) &&
-    esArrayNumerico(obj.cloud_cover_high) &&
-    esArrayNumerico(obj.relative_humidity_2m) &&
-    esArrayNumerico(obj.wind_speed_10m) &&
-    esArrayNumerico(obj.temperature_2m)
-  );
+const DIRECCIONES = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'] as const;
+
+function direccionCardinal(rumbo: number): string {
+  return DIRECCIONES[Math.round(normalizarAngulo(rumbo) / 45) % 8];
 }
 
-function leerCacheMeteo(): CacheMeteo | null {
-  try {
-    const cacheRaw = localStorage.getItem(CACHE_KEY);
-    if (!cacheRaw) return null;
-    const parsed: unknown = JSON.parse(cacheRaw);
-    if (typeof parsed !== 'object' || parsed === null) return null;
+function puntoPolar(angulo: number, radio: number): { x: number; y: number } {
+  const rad = (angulo * Math.PI) / 180;
+  return { x: CENTRO + Math.sin(rad) * radio, y: CENTRO - Math.cos(rad) * radio };
+}
 
-    const obj = parsed as Record<string, unknown>;
-    if (
-      typeof obj.claveUbicacion !== 'string' ||
-      typeof obj.timestamp !== 'number' ||
-      !Number.isFinite(obj.timestamp) ||
-      !esOpenMeteoHourlyValido(obj.hourly)
-    ) {
-      return null;
-    }
+/* ── Geometría estática del disco (viewBox -20 -20 440 440) ──────── */
 
-    return {
-      claveUbicacion: obj.claveUbicacion,
-      timestamp: obj.timestamp,
-      hourly: obj.hourly,
+const CENTRO = 200;
+const RADIO_ESFERA = 196;
+const RADIO_MARCADORES = 187;
+const RADIO_MARCAS = 175;
+const MARGEN_ALINEACION = 8;
+const INCLINACION_VISUAL_MAX = 65;
+const UMBRAL_PROYECCION_HORIZONTAL = 0.15;
+const ALTITUD_MANUAL_MIN = -60;
+const ALTITUD_MANUAL_MAX = 90;
+const ALTITUD_MANUAL_INICIAL = 25;
+
+function obtenerAnguloPantalla(): number {
+  if (typeof window === 'undefined') return 0;
+  const angulo = window.screen?.orientation?.angle;
+  return typeof angulo === 'number' && Number.isFinite(angulo) ? normalizarAngulo(angulo) : 0;
+}
+
+/**
+ * Proyección matricial 3D estándar W3C (rotación intrínseca Z-X'-Y'') del vector
+ * de la cámara trasera (0, 0, -1) al marco terrestre ENU (Este-Norte-Arriba),
+ * compensando la rotación de pantalla (0°, 90°, 180°, 270°).
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function calcularOrientacionDesdeSensores(
+  alpha: number,
+  beta: number,
+  gamma: number,
+  anguloPantalla: number
+): { rumbo: number; altitudApuntado: number } {
+  const a = (alpha * Math.PI) / 180;
+  const b = (beta * Math.PI) / 180;
+  const g = (gamma * Math.PI) / 180;
+  const s = (normalizarAngulo(anguloPantalla) * Math.PI) / 180;
+
+  const ca = Math.cos(a);
+  const sa = Math.sin(a);
+  const cb = Math.cos(b);
+  const sb = Math.sin(b);
+  const cg = Math.cos(g);
+  const sg = Math.sin(g);
+
+  // Vector cámara trasera [0, 0, -1] proyectado por R = Rz(a) * Rx(b) * Ry(g)
+  // (invariante respecto a la rotación de pantalla Rz(-s) alrededor del eje Z del dispositivo)
+  const camX = -ca * sg - sa * sb * cg;
+  const camY = -sa * sg + ca * sb * cg;
+  const camZ = -cb * cg;
+
+  const altitudApuntado = (Math.asin(limitar(camZ, -1, 1)) * 180) / Math.PI;
+
+  let vx = camX;
+  let vy = camY;
+
+  // Cuando la proyección horizontal de la cámara trasera es casi nula (teléfono plano
+  // o apuntando cerca del cenit), proyectar el borde superior de la pantalla Rz(-s) * [0, 1, 0]
+  if (Math.hypot(vx, vy) < UMBRAL_PROYECCION_HORIZONTAL) {
+    const cs = Math.cos(s);
+    const ss = Math.sin(s);
+
+    // Primera y segunda columnas de R (ejes +X y +Y del dispositivo en ENU)
+    const r11 = ca * cg - sa * sb * sg;
+    const r21 = sa * cg + ca * sb * sg;
+    const r12 = -sa * cb;
+    const r22 = ca * cb;
+
+    // Si camZ > 0 (cámara apuntando casi al cenit), invertir el vector superior mantiene
+    // la continuidad del acimut sin salto de 180° al pasar de ~81° a 90° de elevación.
+    const signo = camZ > 0 ? -1 : 1;
+    vx = signo * (r11 * ss + r12 * cs);
+    vy = signo * (r21 * ss + r22 * cs);
+  }
+
+  const rumbo = normalizarAngulo((Math.atan2(vx, vy) * 180) / Math.PI);
+  return { rumbo, altitudApuntado };
+}
+
+interface MarcaGraduacion {
+  angulo: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  tipo: 'menor' | 'media' | 'mayor';
+}
+
+const MARCAS: MarcaGraduacion[] = Array.from({ length: 72 }, (_, i) => {
+  const angulo = i * 5;
+  const tipo: MarcaGraduacion['tipo'] = angulo % 45 === 0 ? 'mayor' : angulo % 15 === 0 ? 'media' : 'menor';
+  const largo = tipo === 'mayor' ? 16 : tipo === 'media' ? 11 : 5;
+  const exterior = puntoPolar(angulo, RADIO_MARCAS);
+  const interior = puntoPolar(angulo, RADIO_MARCAS - largo);
+  return { angulo, x1: exterior.x, y1: exterior.y, x2: interior.x, y2: interior.y, tipo };
+});
+
+interface EtiquetaDisco {
+  angulo: number;
+  texto: string;
+  x: number;
+  y: number;
+  tipo: 'cardinal' | 'intercardinal' | 'grado';
+}
+
+const ETIQUETAS: EtiquetaDisco[] = Array.from({ length: 24 }, (_, i) => {
+  const angulo = i * 15;
+  if (angulo % 90 === 0) {
+    const p = puntoPolar(angulo, 141);
+    return { angulo, texto: DIRECCIONES[angulo / 45], ...p, tipo: 'cardinal' as const };
+  }
+  if (angulo % 45 === 0) {
+    const p = puntoPolar(angulo, 143);
+    return { angulo, texto: DIRECCIONES[angulo / 45], ...p, tipo: 'intercardinal' as const };
+  }
+  const p = puntoPolar(angulo, 145);
+  return { angulo, texto: String(angulo), ...p, tipo: 'grado' as const };
+});
+
+/* ── Paletas por tema (Filtro Rojo: solo rojos sobre negro puro) ── */
+
+interface PaletaBrujula {
+  esfera: string;
+  esferaBorde: string;
+  capa: string;
+  marcaMenor: string;
+  marcaMayor: string;
+  texto: string;
+  textoSuave: string;
+  acento: string;
+  norte: string;
+  sur: string;
+  aro: string;
+  marcadorFijo: string | null;
+  claseBackdrop: string;
+  clasePanel: string;
+  claseAcento: string;
+  claseLectura: string;
+  claseBotonPrimario: string;
+  claseAviso: string;
+  claseEstadoOk: string;
+  claseEstadoAviso: string;
+}
+
+const PALETAS: Record<TemaVisual, PaletaBrujula> = {
+  oscuro: {
+    esfera: 'rgba(2,6,23,0.9)',
+    esferaBorde: 'rgba(34,211,238,0.5)',
+    capa: 'rgba(15,23,42,0.95)',
+    marcaMenor: 'rgba(148,163,184,0.55)',
+    marcaMayor: '#e2e8f0',
+    texto: '#e2e8f0',
+    textoSuave: '#94a3b8',
+    acento: '#22d3ee',
+    norte: '#f43f5e',
+    sur: '#64748b',
+    aro: 'rgba(34,211,238,0.3)',
+    marcadorFijo: null,
+    claseBackdrop: 'bg-slate-950/65',
+    clasePanel: 'bg-slate-950/90 border-cyan-400/25 text-slate-100 shadow-2xl shadow-black/60',
+    claseAcento: 'text-cyan-300',
+    claseLectura: 'bg-slate-950/90 border-cyan-400/40 text-slate-50',
+    claseBotonPrimario: 'bg-cyan-500/15 border-cyan-400/50 text-cyan-100 hover:bg-cyan-500/25',
+    claseAviso: 'border-cyan-400/50 bg-cyan-500/10 text-cyan-100',
+    claseEstadoOk: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
+    claseEstadoAviso: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
+  },
+  claro: {
+    esfera: 'rgba(248,250,252,0.96)',
+    esferaBorde: '#334155',
+    capa: '#cbd5e1',
+    marcaMenor: '#94a3b8',
+    marcaMayor: '#0f172a',
+    texto: '#0f172a',
+    textoSuave: '#475569',
+    acento: '#0369a1',
+    norte: '#e11d48',
+    sur: '#94a3b8',
+    aro: 'rgba(51,65,85,0.28)',
+    marcadorFijo: null,
+    claseBackdrop: 'bg-slate-900/40',
+    clasePanel: 'bg-white/95 border-slate-200 text-slate-900 shadow-2xl shadow-slate-900/20',
+    claseAcento: 'text-sky-700',
+    claseLectura: 'bg-white/95 border-slate-300 text-slate-900',
+    claseBotonPrimario: 'bg-slate-900 border-slate-900 text-white hover:bg-slate-800',
+    claseAviso: 'border-sky-600/50 bg-sky-50 text-sky-900',
+    claseEstadoOk: 'border-emerald-300 bg-emerald-50 text-emerald-800',
+    claseEstadoAviso: 'border-amber-300 bg-amber-50 text-amber-900',
+  },
+  rojo: {
+    esfera: '#000000',
+    esferaBorde: '#991b1b',
+    capa: '#450a0a',
+    marcaMenor: '#7f1d1d',
+    marcaMayor: '#dc2626',
+    texto: '#ef4444',
+    textoSuave: '#b91c1c',
+    acento: '#ef4444',
+    norte: '#f87171',
+    sur: '#7f1d1d',
+    aro: 'rgba(153,27,27,0.55)',
+    marcadorFijo: '#b91c1c',
+    claseBackdrop: 'bg-black/90',
+    clasePanel: 'bg-black border-red-800 text-red-500',
+    claseAcento: 'text-red-500',
+    claseLectura: 'bg-black border-red-700 text-red-500',
+    claseBotonPrimario: 'bg-red-950 border-red-600 text-red-400 hover:bg-red-900/60',
+    claseAviso: 'border-red-600 bg-red-950/60 text-red-400',
+    claseEstadoOk: 'border-red-700 bg-red-950/50 text-red-400',
+    claseEstadoAviso: 'border-red-900 bg-black text-red-600',
+  },
+};
+
+const MENSAJES_ESTADO: Record<EstadoSensorBrujula, string> = {
+  inactivo: 'Sensores en espera: pulsa «Activar sensores del dispositivo».',
+  solicitando: 'Solicitando permiso de orientación…',
+  buscando: 'Buscando lecturas del magnetómetro…',
+  activo: 'Sensores activos: la brújula sigue a tu dispositivo.',
+  denegado: 'Permiso denegado. Puedes seguir en modo simulación.',
+  'no-disponible': 'Este equipo no dispone de sensores de orientación. Modo simulación activo.',
+  inseguro: 'Los sensores requieren una conexión segura (HTTPS). Modo simulación activo.',
+  'sin-lecturas': 'No se reciben lecturas del sensor en este equipo. Modo simulación activo.',
+};
+
+/** Determina el estado inicial de los sensores sin efectos secundarios. */
+function detectarEstadoInicial(): EstadoSensorBrujula {
+  if (typeof window === 'undefined' || typeof DeviceOrientationEvent === 'undefined') {
+    return 'no-disponible';
+  }
+  if (!window.isSecureContext) return 'inseguro';
+  const constructor = DeviceOrientationEvent as unknown as ConstructorOrientacionConPermiso;
+  return typeof constructor.requestPermission === 'function' ? 'inactivo' : 'buscando';
+}
+
+function prefiereMovimientoReducido(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function etiquetaMarcador(nombre: string): string {
+  const token = nombre.split(' ')[0];
+  if (/^M\d+$/i.test(token)) return token.slice(0, 3);
+  return nombre.slice(0, 2);
+}
+
+const SELECTOR_ENFOCABLES =
+  'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+export function Compass3DModal({
+  tema,
+  cuerpos,
+  objetivoSeleccionado = null,
+  onCerrar,
+}: Compass3DModalProps) {
+  const paleta = PALETAS[tema];
+  const idTitulo = useId();
+  const idDescripcion = useId();
+
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const botonCerrarRef = useRef<HTMLButtonElement | null>(null);
+  const discoRef = useRef<HTMLDivElement | null>(null);
+
+  const [estadoSensor, setEstadoSensor] = useState<EstadoSensorBrujula>(detectarEstadoInicial);
+  const [referenciaSensor, setReferenciaSensor] = useState<'absoluta' | 'relativa' | null>(null);
+  const [intentoSensor, setIntentoSensor] = useState(0);
+  const [modoManual, setModoManual] = useState(false);
+  const [rumboManual, setRumboManual] = useState(0);
+  const [altitudManual, setAltitudManual] = useState(ALTITUD_MANUAL_INICIAL);
+  const [visual, setVisual] = useState<OrientacionBrujula>({
+    rumbo: 0,
+    inclinacion: ALTITUD_MANUAL_INICIAL,
+    altitudApuntado: ALTITUD_MANUAL_INICIAL,
+  });
+  const [movimientoReducido] = useState(prefiereMovimientoReducido);
+
+  const objetivoRef = useRef<OrientacionBrujula>({
+    rumbo: 0,
+    inclinacion: ALTITUD_MANUAL_INICIAL,
+    altitudApuntado: ALTITUD_MANUAL_INICIAL,
+  });
+  const visualRef = useRef<OrientacionBrujula>({
+    rumbo: 0,
+    inclinacion: ALTITUD_MANUAL_INICIAL,
+    altitudApuntado: ALTITUD_MANUAL_INICIAL,
+  });
+  const animacionIdRef = useRef<number>(0);
+  const simulacionRef = useRef(true);
+  const lecturaRecibidaRef = useRef(false);
+  const lecturaAbsolutaRef = useRef(false);
+  const referenciaRef = useRef<'absoluta' | 'relativa' | null>(null);
+  const arrastreRef = useRef<{ idPuntero: number; anguloPrevio: number } | null>(null);
+
+  const simulacion = modoManual || estadoSensor !== 'activo';
+  const escuchando =
+    estadoSensor === 'buscando' || estadoSensor === 'activo' || estadoSensor === 'sin-lecturas';
+
+  // Referencia estable al callback de cierre (evita reiniciar el foco en cada render del padre)
+  const onCerrarRef = useRef(onCerrar);
+  useEffect(() => {
+    onCerrarRef.current = onCerrar;
+  }, [onCerrar]);
+
+  /* Bloqueo de scroll, foco inicial, Escape y trampa de foco */
+  useEffect(() => {
+    const elementoPrevio = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overflowPrevio = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    botonCerrarRef.current?.focus();
+
+    const manejarTecla = (evento: globalThis.KeyboardEvent) => {
+      if (evento.key === 'Escape') {
+        evento.preventDefault();
+        onCerrarRef.current();
+        return;
+      }
+      if (evento.key !== 'Tab' || !panelRef.current) return;
+      const enfocables = Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>(SELECTOR_ENFOCABLES)
+      ).filter((el) => !el.hasAttribute('hidden'));
+      if (enfocables.length === 0) return;
+      const primero = enfocables[0];
+      const ultimo = enfocables[enfocables.length - 1];
+      if (evento.shiftKey && document.activeElement === primero) {
+        evento.preventDefault();
+        ultimo.focus();
+      } else if (!evento.shiftKey && document.activeElement === ultimo) {
+        evento.preventDefault();
+        primero.focus();
+      }
     };
-  } catch {
-    return null;
-  }
-}
 
-function guardarCacheMeteo(cache: CacheMeteo): void {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
-  } catch {
-    // Ignora errores de cuota o almacenamiento bloqueado
-  }
-}
-
-function evaluarVeredicto(nubesTotal: number, vientoKmh: number): CondicionesMeteo['veredicto'] {
-  if (nubesTotal <= 20 && vientoKmh <= 25) return 'Excelente';
-  if (nubesTotal <= 50 && vientoKmh <= 35) return 'Aceptable';
-  return 'Desfavorable';
-}
-
-function formatearClaveHoraUTC(fecha: Date): string {
-  const anio = fecha.getUTCFullYear();
-  const mes = String(fecha.getUTCMonth() + 1).padStart(2, '0');
-  const dia = String(fecha.getUTCDate()).padStart(2, '0');
-  const hora = String(fecha.getUTCHours()).padStart(2, '0');
-  return `${anio}-${mes}-${dia}T${hora}:00`;
-}
-
-function formatearHoraLocalFranja(fecha: Date): string {
-  const horas = String(fecha.getHours()).padStart(2, '0');
-  const minutos = String(fecha.getMinutes()).padStart(2, '0');
-  return `${horas}:${minutos}`;
-}
-
-function extraerDesdeHourly(
-  hourly: OpenMeteoHourly,
-  fecha: Date,
-  ubicacion: Ubicacion,
-  esCache: boolean
-): CondicionesMeteo | null {
-  const claveHora = formatearClaveHoraUTC(fecha);
-  const idx = hourly.time.indexOf(claveHora);
-  if (idx === -1) return null;
-
-  const nubesTotal = Math.round(hourly.cloud_cover[idx] ?? 0);
-  const vientoKmh = Math.round(hourly.wind_speed_10m[idx] ?? 0);
-
-  const proximasHoras: FranjaHorariaMeteo[] = [];
-  const limite = Math.min(idx + 12, hourly.time.length);
-
-  for (let i = idx; i < limite; i++) {
-    const horaRaw = hourly.time[i];
-    const fechaISO = horaRaw.endsWith('Z') ? horaRaw : `${horaRaw}:00Z`;
-    const fechaFranja = new Date(fechaISO);
-    if (Number.isNaN(fechaFranja.getTime())) continue;
-
-    const nubesFranja = Math.min(100, Math.max(0, Math.round(hourly.cloud_cover[i] ?? 0)));
-    const vientoFranja = Math.max(0, Math.round(hourly.wind_speed_10m[i] ?? 0));
-    const estadoSolar = calcularEstadoSolar(fechaFranja, ubicacion);
-
-    proximasHoras.push({
-      fechaISO,
-      horaLocal: formatearHoraLocalFranja(fechaFranja),
-      nubesTotal: nubesFranja,
-      vientoKmh: vientoFranja,
-      veredicto: evaluarVeredicto(nubesFranja, vientoFranja),
-      esNoche: estadoSolar !== null && estadoSolar.altitudSol < -6,
-    });
-  }
-
-  return {
-    horaPronostico: `${claveHora.replace('T', ' ')} UTC`,
-    nubesTotal,
-    nubesBajas: Math.round(hourly.cloud_cover_low[idx] ?? 0),
-    nubesMedias: Math.round(hourly.cloud_cover_mid[idx] ?? 0),
-    nubesAltas: Math.round(hourly.cloud_cover_high[idx] ?? 0),
-    humedad: Math.round(hourly.relative_humidity_2m[idx] ?? 0),
-    vientoKmh,
-    temperatura: Number((hourly.temperature_2m[idx] ?? 0).toFixed(1)),
-    veredicto: evaluarVeredicto(nubesTotal, vientoKmh),
-    esCache,
-    proximasHoras,
-  };
-}
-
-export async function obtenerCondicionesMeteo(
-  fecha: Date,
-  ubicacion: Ubicacion,
-  signal?: AbortSignal
-): Promise<{ datos: CondicionesMeteo | null; aviso: string | null }> {
-  if (!esEntradaAstronomicaValida(fecha, ubicacion)) {
-    return { datos: null, aviso: 'Fecha o coordenadas inválidas.' };
-  }
-
-  const claveUbicacion = `${ubicacion.latitud.toFixed(2)},${ubicacion.longitud.toFixed(2)}`;
-  const cache = leerCacheMeteo();
-
-  const cacheValida =
-    cache !== null &&
-    cache.claveUbicacion === claveUbicacion &&
-    Date.now() - cache.timestamp < CACHE_TTL_MS;
-
-  if (cacheValida) {
-    const datos = extraerDesdeHourly(cache.hourly, fecha, ubicacion, true);
-    return {
-      datos,
-      aviso: datos ? null : 'Pronóstico disponible solo hasta 14 días vista.',
+    document.addEventListener('keydown', manejarTecla);
+    return () => {
+      document.removeEventListener('keydown', manejarTecla);
+      document.body.style.overflow = overflowPrevio;
+      elementoPrevio?.focus();
     };
-  }
+  }, []);
 
-  try {
-    const url = new URL('https://api.open-meteo.com/v1/forecast');
-    url.searchParams.set('latitude', String(ubicacion.latitud));
-    url.searchParams.set('longitude', String(ubicacion.longitud));
-    url.searchParams.set(
-      'hourly',
-      'cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_2m,wind_speed_10m,temperature_2m'
-    );
-    url.searchParams.set('timezone', 'UTC');
-    url.searchParams.set('forecast_days', '14');
+  /* Suavizado angular bajo demanda (camino más corto, sin bucle activo en reposo) */
+  const programarSuavizado = useCallback(() => {
+    if (animacionIdRef.current !== 0) return;
+    const factor = movimientoReducido ? 0.45 : 0.16;
 
-    const res = await fetch(url.toString(), { signal });
-    if (!res.ok) throw new Error('Error HTTP Open-Meteo');
+    const paso = () => {
+      const objetivo = objetivoRef.current;
+      const actual = visualRef.current;
+      const difRumbo = diferenciaAngular(objetivo.rumbo, actual.rumbo);
+      const difInclinacion = objetivo.inclinacion - actual.inclinacion;
+      const difAltitud = objetivo.altitudApuntado - actual.altitudApuntado;
 
-    const json: unknown = await res.json();
-    const hourly =
-      typeof json === 'object' && json !== null
-        ? (json as Record<string, unknown>).hourly
-        : null;
+      if (
+        Math.abs(difRumbo) < 0.05 &&
+        Math.abs(difInclinacion) < 0.05 &&
+        Math.abs(difAltitud) < 0.05
+      ) {
+        if (
+          actual.rumbo !== objetivo.rumbo ||
+          actual.inclinacion !== objetivo.inclinacion ||
+          actual.altitudApuntado !== objetivo.altitudApuntado
+        ) {
+          const exacto: OrientacionBrujula = {
+            rumbo: objetivo.rumbo,
+            inclinacion: objetivo.inclinacion,
+            altitudApuntado: objetivo.altitudApuntado,
+          };
+          visualRef.current = exacto;
+          setVisual(exacto);
+        }
+        animacionIdRef.current = 0;
+        return;
+      }
 
-    if (!esOpenMeteoHourlyValido(hourly)) {
-      throw new Error('Respuesta meteorológica con formato inesperado');
-    }
+      const rumbo =
+        Math.abs(difRumbo) < 0.05
+          ? objetivo.rumbo
+          : normalizarAngulo(actual.rumbo + difRumbo * factor);
+      const inclinacion =
+        Math.abs(difInclinacion) < 0.05
+          ? objetivo.inclinacion
+          : actual.inclinacion + difInclinacion * factor;
+      const altitudApuntado =
+        Math.abs(difAltitud) < 0.05
+          ? objetivo.altitudApuntado
+          : actual.altitudApuntado + difAltitud * factor;
 
-    const nuevoCache: CacheMeteo = {
-      claveUbicacion,
-      timestamp: Date.now(),
-      hourly,
+      const siguiente: OrientacionBrujula = { rumbo, inclinacion, altitudApuntado };
+      visualRef.current = siguiente;
+      setVisual(siguiente);
+      animacionIdRef.current = window.requestAnimationFrame(paso);
     };
-    guardarCacheMeteo(nuevoCache);
 
-    const datos = extraerDesdeHourly(hourly, fecha, ubicacion, false);
-    return {
-      datos,
-      aviso: datos ? null : 'Pronóstico disponible solo hasta 14 días vista.',
+    animacionIdRef.current = window.requestAnimationFrame(paso);
+  }, [movimientoReducido]);
+
+  useEffect(() => {
+    return () => {
+      if (animacionIdRef.current !== 0) {
+        window.cancelAnimationFrame(animacionIdRef.current);
+        animacionIdRef.current = 0;
+      }
     };
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw error;
-    }
+  }, []);
 
-    if (cache && cache.claveUbicacion === claveUbicacion) {
-      const datos = extraerDesdeHourly(cache.hourly, fecha, ubicacion, true);
-      return {
-        datos,
-        aviso: datos ? 'Sin conexión: mostrando datos guardados en caché.' : 'Sin conexión.',
+  /* Sincroniza el objetivo con los controles manuales en modo simulación */
+  useEffect(() => {
+    simulacionRef.current = simulacion;
+    if (simulacion) {
+      const altitudAcotada = limitar(altitudManual, ALTITUD_MANUAL_MIN, ALTITUD_MANUAL_MAX);
+      objetivoRef.current = {
+        rumbo: normalizarAngulo(rumboManual),
+        inclinacion: limitar(altitudAcotada, -INCLINACION_VISUAL_MAX, INCLINACION_VISUAL_MAX),
+        altitudApuntado: altitudAcotada,
       };
+      programarSuavizado();
     }
-    return { datos: null, aviso: 'No se pudo obtener la previsión meteorológica.' };
+  }, [simulacion, rumboManual, altitudManual, programarSuavizado]);
+
+  /* Escucha de sensores: deviceorientationabsolute (prioritario) + deviceorientation */
+  useEffect(() => {
+    if (!escuchando || typeof DeviceOrientationEvent === 'undefined') return;
+
+    const procesarOrientacion = (evento: Event) => {
+      if (!(evento instanceof DeviceOrientationEvent)) return;
+      const datos = evento as EventoOrientacionDispositivo;
+      const anguloPantalla = obtenerAnguloPantalla();
+
+      const alpha = typeof datos.alpha === 'number' && Number.isFinite(datos.alpha) ? datos.alpha : null;
+      const beta = typeof datos.beta === 'number' && Number.isFinite(datos.beta) ? datos.beta : null;
+      const gamma = typeof datos.gamma === 'number' && Number.isFinite(datos.gamma) ? datos.gamma : null;
+
+      let rumbo: number | null = null;
+      let altitudApuntado = 0;
+      let absoluta = false;
+
+      if (typeof datos.webkitCompassHeading === 'number' && Number.isFinite(datos.webkitCompassHeading)) {
+        // Safari iOS: rumbo magnético absoluto referido al Norte, compensando rotación de pantalla
+        rumbo = normalizarAngulo(datos.webkitCompassHeading + anguloPantalla);
+        absoluta = true;
+        if (beta !== null || gamma !== null) {
+          altitudApuntado = calcularOrientacionDesdeSensores(
+            alpha ?? 0,
+            beta ?? 0,
+            gamma ?? 0,
+            anguloPantalla
+          ).altitudApuntado;
+        }
+      } else if (alpha !== null) {
+        absoluta = evento.type === 'deviceorientationabsolute' || datos.absolute;
+        // Si ya llegan lecturas absolutas, se descartan las relativas
+        if (!absoluta && lecturaAbsolutaRef.current) return;
+        const orientacion = calcularOrientacionDesdeSensores(
+          alpha,
+          beta ?? 0,
+          gamma ?? 0,
+          anguloPantalla
+        );
+        rumbo = orientacion.rumbo;
+        altitudApuntado = beta !== null || gamma !== null ? orientacion.altitudApuntado : 0;
+      }
+
+      if (rumbo === null) return;
+      if (absoluta) lecturaAbsolutaRef.current = true;
+
+      const altitudAcotada = limitar(altitudApuntado, -90, 90);
+      const inclinacion = limitar(altitudAcotada, -INCLINACION_VISUAL_MAX, INCLINACION_VISUAL_MAX);
+
+      if (!simulacionRef.current) {
+        objetivoRef.current = { rumbo, inclinacion, altitudApuntado: altitudAcotada };
+        programarSuavizado();
+      }
+
+      const referencia = absoluta ? 'absoluta' : 'relativa';
+      if (referenciaRef.current !== referencia) {
+        referenciaRef.current = referencia;
+        setReferenciaSensor(referencia);
+      }
+      if (!lecturaRecibidaRef.current) {
+        lecturaRecibidaRef.current = true;
+        setEstadoSensor('activo');
+      }
+    };
+
+    const admiteAbsoluto = 'ondeviceorientationabsolute' in window;
+    if (admiteAbsoluto) {
+      window.addEventListener('deviceorientationabsolute', procesarOrientacion);
+    }
+    window.addEventListener('deviceorientation', procesarOrientacion);
+
+    const temporizador = window.setTimeout(() => {
+      if (!lecturaRecibidaRef.current) {
+        setEstadoSensor((prev) => (prev === 'buscando' ? 'sin-lecturas' : prev));
+      }
+    }, 2500);
+
+    return () => {
+      window.clearTimeout(temporizador);
+      if (admiteAbsoluto) {
+        window.removeEventListener('deviceorientationabsolute', procesarOrientacion);
+      }
+      window.removeEventListener('deviceorientation', procesarOrientacion);
+    };
+  }, [escuchando, intentoSensor, programarSuavizado]);
+
+  const activarSensores = async () => {
+    if (typeof DeviceOrientationEvent === 'undefined') {
+      setEstadoSensor('no-disponible');
+      return;
+    }
+    if (!window.isSecureContext) {
+      setEstadoSensor('inseguro');
+      return;
+    }
+    const constructor = DeviceOrientationEvent as unknown as ConstructorOrientacionConPermiso;
+    if (typeof constructor.requestPermission === 'function') {
+      setEstadoSensor('solicitando');
+      try {
+        const respuesta = await constructor.requestPermission();
+        if (respuesta !== 'granted') {
+          setEstadoSensor('denegado');
+          return;
+        }
+      } catch {
+        setEstadoSensor('denegado');
+        return;
+      }
+    }
+    lecturaRecibidaRef.current = false;
+    lecturaAbsolutaRef.current = false;
+    setModoManual(false);
+    setEstadoSensor('buscando');
+    setIntentoSensor((prev) => prev + 1);
+  };
+
+  const pasarAModoManual = () => {
+    setRumboManual(Math.round(visualRef.current.rumbo));
+    setAltitudManual(
+      Math.round(limitar(visualRef.current.altitudApuntado, ALTITUD_MANUAL_MIN, ALTITUD_MANUAL_MAX))
+    );
+    setModoManual(true);
+  };
+
+  /* Arrastre sobre la brújula (ratón o dedo) */
+  const anguloDesdePuntero = (clienteX: number, clienteY: number): number | null => {
+    const elemento = discoRef.current;
+    if (!elemento) return null;
+    const rect = elemento.getBoundingClientRect();
+    const dx = clienteX - (rect.left + rect.width / 2);
+    const dy = clienteY - (rect.top + rect.height / 2);
+    if (Math.hypot(dx, dy) < 8) return null;
+    return normalizarAngulo((Math.atan2(dx, -dy) * 180) / Math.PI);
+  };
+
+  const manejarPunteroAbajo = (evento: EventoPunteroReact<HTMLDivElement>) => {
+    const angulo = anguloDesdePuntero(evento.clientX, evento.clientY);
+    if (angulo === null) return;
+    evento.currentTarget.setPointerCapture(evento.pointerId);
+    arrastreRef.current = { idPuntero: evento.pointerId, anguloPrevio: angulo };
+    if (!simulacion) pasarAModoManual();
+    else setModoManual(true);
+  };
+
+  const manejarPunteroMovido = (evento: EventoPunteroReact<HTMLDivElement>) => {
+    const arrastre = arrastreRef.current;
+    if (!arrastre || arrastre.idPuntero !== evento.pointerId) return;
+    const angulo = anguloDesdePuntero(evento.clientX, evento.clientY);
+    if (angulo === null) return;
+    const delta = diferenciaAngular(angulo, arrastre.anguloPrevio);
+    arrastre.anguloPrevio = angulo;
+    // Girar el disco en sentido horario equivale a reducir el rumbo
+    setRumboManual((prev) => normalizarAngulo(prev - delta));
+  };
+
+  const finalizarArrastre = (evento: EventoPunteroReact<HTMLDivElement>) => {
+    if (arrastreRef.current?.idPuntero === evento.pointerId) {
+      arrastreRef.current = null;
+    }
+  };
+
+  const manejarTeclaDisco = (evento: EventoTecladoReact<HTMLDivElement>) => {
+    const paso = evento.shiftKey ? 15 : 1;
+    let delta = 0;
+    if (evento.key === 'ArrowRight' || evento.key === 'ArrowUp') delta = paso;
+    else if (evento.key === 'ArrowLeft' || evento.key === 'ArrowDown') delta = -paso;
+    else return;
+    evento.preventDefault();
+    if (!simulacion) {
+      setRumboManual(normalizarAngulo(Math.round(visualRef.current.rumbo) + delta));
+      setAltitudManual(
+        Math.round(limitar(visualRef.current.altitudApuntado, ALTITUD_MANUAL_MIN, ALTITUD_MANUAL_MAX))
+      );
+      setModoManual(true);
+      return;
+    }
+    setModoManual(true);
+    setRumboManual((prev) => normalizarAngulo(Math.round(prev) + delta));
+  };
+
+  /* Datos derivados */
+  const rumboEntero = Math.round(visual.rumbo) % 360;
+  const cardinal = direccionCardinal(visual.rumbo);
+  const altitudEntera = Math.round(visual.altitudApuntado);
+  const inclinacionVisual = limitar(visual.inclinacion, -INCLINACION_VISUAL_MAX, INCLINACION_VISUAL_MAX);
+
+  const objetivosVisibles = useMemo<ObjetivoBrujula[]>(() => {
+    const lista: ObjetivoBrujula[] = cuerpos
+      .filter((c) => c.altitud > 0 && Number.isFinite(c.acimut))
+      .map((c) => ({
+        id: c.id,
+        nombre: c.nombre,
+        acimut: c.acimut,
+        altitud: c.altitud,
+        color: c.color,
+      }));
+
+    if (
+      objetivoSeleccionado &&
+      objetivoSeleccionado.altitud > 0 &&
+      Number.isFinite(objetivoSeleccionado.acimut) &&
+      !lista.some((item) => item.id === objetivoSeleccionado.id)
+    ) {
+      lista.unshift(objetivoSeleccionado);
+    }
+
+    return lista;
+  }, [cuerpos, objetivoSeleccionado]);
+
+  let alineado: ObjetivoBrujula | null = null;
+  let mejorDiferencia = Number.POSITIVE_INFINITY;
+  for (const objetivo of objetivosVisibles) {
+    const dif = Math.abs(diferenciaAngular(objetivo.acimut, visual.rumbo));
+    if (dif <= MARGEN_ALINEACION && dif < mejorDiferencia) {
+      mejorDiferencia = dif;
+      alineado = objetivo;
+    }
   }
+
+  const difElevacion = alineado ? alineado.altitud - visual.altitudApuntado : null;
+  const alturaAlineada = difElevacion !== null && Math.abs(difElevacion) <= MARGEN_ALINEACION;
+  const gradosElevacion = difElevacion !== null ? Math.round(Math.abs(difElevacion)) : 0;
+  const direccionElevacion: 'alineada' | 'subir' | 'bajar' | null =
+    difElevacion === null ? null : alturaAlineada ? 'alineada' : difElevacion > 0 ? 'subir' : 'bajar';
+  const textoGuiaElevacion =
+    direccionElevacion === null
+      ? null
+      : direccionElevacion === 'alineada'
+        ? 'Altura alineada'
+        : direccionElevacion === 'subir'
+          ? `Sube el móvil ${gradosElevacion}°`
+          : `Baja el móvil ${gradosElevacion}°`;
+
+  const mostrarBotonActivar =
+    estadoSensor === 'inactivo' || estadoSensor === 'denegado' || estadoSensor === 'sin-lecturas';
+  const estadoCorrecto = estadoSensor === 'activo';
+  const mensajeEstado =
+    estadoSensor === 'activo' && referenciaSensor === 'relativa'
+      ? 'Sensores activos (orientación relativa: el Norte puede no ser exacto en este navegador).'
+      : MENSAJES_ESTADO[estadoSensor];
+
+  return (
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 backdrop-blur-md ${paleta.claseBackdrop}`}
+      onPointerDown={(evento) => {
+        if (evento.target === evento.currentTarget) onCerrar();
+      }}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={idTitulo}
+        aria-describedby={idDescripcion}
+        className={`hud-esquinas hud-${tema} relative w-full max-w-xl max-h-[94dvh] overflow-y-auto overscroll-contain rounded-3xl border p-4 sm:p-6 ${paleta.clasePanel}`}
+      >
+        {/* Cabecera */}
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className={`text-[10px] uppercase tracking-[0.25em] font-mono ${paleta.claseAcento}`}>
+              Instrumento de orientación
+            </p>
+            <h2 id={idTitulo} className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2">
+              <Compass className={`w-5 h-5 ${paleta.claseAcento}`} aria-hidden="true" />
+              Brújula Astronómica 3D
+            </h2>
+            <p id={idDescripcion} className="text-xs opacity-75 mt-1">
+              Gira con tu dispositivo o arrastra el disco. Los marcadores del anillo exterior son la
+              Luna, los planetas y el astro seleccionado sobre el horizonte.
+            </p>
+          </div>
+          <button
+            ref={botonCerrarRef}
+            type="button"
+            onClick={onCerrar}
+            aria-label="Cerrar la brújula"
+            className="grid place-items-center min-w-11 min-h-11 rounded-xl border border-current/25 hover:bg-current/10 cursor-pointer shrink-0"
+          >
+            <X className="w-5 h-5" aria-hidden="true" />
+          </button>
+        </div>
+
+        {/* Brújula 3D */}
+        <div className="relative mx-auto mt-4 w-[min(80vw,22rem)] aspect-square select-none">
+          <div
+            ref={discoRef}
+            role="slider"
+            tabIndex={0}
+            aria-label="Rumbo de la brújula"
+            aria-valuemin={0}
+            aria-valuemax={359}
+            aria-valuenow={rumboEntero}
+            aria-valuetext={`${rumboEntero} grados, ${cardinal}, altitud ${altitudEntera} grados`}
+            onPointerDown={manejarPunteroAbajo}
+            onPointerMove={manejarPunteroMovido}
+            onPointerUp={finalizarArrastre}
+            onPointerCancel={finalizarArrastre}
+            onKeyDown={manejarTeclaDisco}
+            className="absolute inset-0 rounded-full cursor-grab active:cursor-grabbing focus-visible:outline-2 focus-visible:outline-offset-4"
+            style={{ perspective: '1000px', touchAction: 'none' }}
+          >
+            <div
+              className="relative w-full h-full"
+              style={{
+                transformStyle: 'preserve-3d',
+                transform: `rotateX(${inclinacionVisual}deg)`,
+              }}
+            >
+              {/* Grosor del instrumento (capas inferiores) */}
+              {[-18, -12, -6].map((z) => (
+                <div
+                  key={z}
+                  aria-hidden="true"
+                  className="absolute inset-[3%] rounded-full"
+                  style={{
+                    transform: `translateZ(${z}px)`,
+                    backgroundColor: paleta.capa,
+                    border: `1px solid ${paleta.esferaBorde}`,
+                    opacity: 0.85,
+                  }}
+                />
+              ))}
+
+              {/* Disco giratorio (SVG) */}
+              <svg
+                viewBox="-20 -20 440 440"
+                className="absolute inset-0 w-full h-full"
+                aria-hidden="true"
+                style={{ transform: 'translateZ(0px)' }}
+              >
+                <circle
+                  cx={CENTRO}
+                  cy={CENTRO}
+                  r={RADIO_ESFERA}
+                  fill={paleta.esfera}
+                  stroke={paleta.esferaBorde}
+                  strokeWidth="2"
+                />
+                <circle
+                  cx={CENTRO}
+                  cy={CENTRO}
+                  r={RADIO_MARCAS + 2}
+                  fill="none"
+                  stroke={paleta.aro}
+                  strokeWidth="1"
+                />
+                <circle cx={CENTRO} cy={CENTRO} r={110} fill="none" stroke={paleta.aro} strokeDasharray="2 5" />
+
+                <g transform={`rotate(${-visual.rumbo} ${CENTRO} ${CENTRO})`}>
+                  {MARCAS.map((m) => (
+                    <line
+                      key={m.angulo}
+                      x1={m.x1}
+                      y1={m.y1}
+                      x2={m.x2}
+                      y2={m.y2}
+                      stroke={
+                        m.angulo === 0 ? paleta.norte : m.tipo === 'menor' ? paleta.marcaMenor : paleta.marcaMayor
+                      }
+                      strokeWidth={m.tipo === 'mayor' ? 2.5 : m.tipo === 'media' ? 1.6 : 1}
+                      strokeLinecap="round"
+                    />
+                  ))}
+
+                  {ETIQUETAS.map((e) => (
+                    <text
+                      key={e.angulo}
+                      x={e.x}
+                      y={e.y}
+                      transform={`rotate(${visual.rumbo} ${e.x} ${e.y})`}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fontFamily={
+                        e.tipo === 'grado'
+                          ? "'JetBrains Mono Variable', ui-monospace, monospace"
+                          : "'Space Grotesk Variable', system-ui, sans-serif"
+                      }
+                      fontWeight={e.tipo === 'grado' ? 500 : 700}
+                      fontSize={e.tipo === 'cardinal' ? 24 : e.tipo === 'intercardinal' ? 14 : 10.5}
+                      fill={
+                        e.angulo === 0 ? paleta.norte : e.tipo === 'grado' ? paleta.textoSuave : paleta.texto
+                      }
+                    >
+                      {e.texto}
+                    </text>
+                  ))}
+
+                  {/* Aguja: norte destacado y cola sur */}
+                  <polygon
+                    points={`${CENTRO},${CENTRO - 122} ${CENTRO - 9},${CENTRO - 76} ${CENTRO + 9},${CENTRO - 76}`}
+                    fill={paleta.norte}
+                  />
+                  <polygon
+                    points={`${CENTRO},${CENTRO + 108} ${CENTRO - 7},${CENTRO + 76} ${CENTRO + 7},${CENTRO + 76}`}
+                    fill={paleta.sur}
+                  />
+
+                  {/* Marcadores astronómicos en su acimut real */}
+                  {objetivosVisibles.map((objetivo) => {
+                    const p = puntoPolar(objetivo.acimut, RADIO_MARCADORES);
+                    const esAlineado = alineado?.id === objetivo.id;
+                    const esSeleccionado = objetivoSeleccionado?.id === objetivo.id;
+                    const color = paleta.marcadorFijo ?? objetivo.color;
+                    const etiqueta = etiquetaMarcador(objetivo.nombre);
+                    return (
+                      <g key={objetivo.id} transform={`rotate(${visual.rumbo} ${p.x} ${p.y})`}>
+                        {(esAlineado || esSeleccionado) && (
+                          <circle
+                            cx={p.x}
+                            cy={p.y}
+                            r={14}
+                            fill="none"
+                            stroke={paleta.acento}
+                            strokeWidth={esAlineado ? '2' : '1.4'}
+                            strokeDasharray={esAlineado ? undefined : '3 2'}
+                          />
+                        )}
+                        <circle
+                          cx={p.x}
+                          cy={p.y}
+                          r={9.5}
+                          fill={esAlineado ? paleta.acento : color}
+                          stroke={paleta.esfera}
+                          strokeWidth="1.5"
+                        />
+                        <text
+                          x={p.x}
+                          y={p.y}
+                          textAnchor="middle"
+                          dominantBaseline="central"
+                          fontSize={etiqueta.length > 2 ? '7.5' : '8.5'}
+                          fontWeight={700}
+                          fontFamily="'Space Grotesk Variable', system-ui, sans-serif"
+                          fill={tema === 'rojo' ? '#000000' : '#0f172a'}
+                        >
+                          {etiqueta}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </g>
+
+                {/* Línea de fe fija (dirección del dispositivo) */}
+                <polygon
+                  points={`${CENTRO},${CENTRO - RADIO_ESFERA + 14} ${CENTRO - 10},${-16} ${CENTRO + 10},${-16}`}
+                  fill={paleta.acento}
+                />
+              </svg>
+
+              {/* Cardán: meridianos de la cúpula que giran con el rumbo */}
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 pointer-events-none"
+                style={{ transformStyle: 'preserve-3d', transform: `rotateZ(${-visual.rumbo}deg)` }}
+              >
+                <div
+                  className="absolute inset-[6%] rounded-full"
+                  style={{ border: `1.5px solid ${paleta.aro}`, transform: 'rotateY(90deg)' }}
+                />
+                <div
+                  className="absolute inset-[6%] rounded-full"
+                  style={{ border: `1px solid ${paleta.aro}`, transform: 'rotateX(90deg)' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Lectura central (plana, siempre legible) */}
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[34%] aspect-square rounded-full border flex flex-col items-center justify-center ${paleta.claseLectura}`}
+          >
+            <span className="font-mono font-bold text-3xl sm:text-4xl leading-none tabular-nums">
+              {String(rumboEntero).padStart(3, '0')}°
+            </span>
+            <span className={`font-display font-bold text-sm mt-1 ${paleta.claseAcento}`}>{cardinal}</span>
+            <span className="font-mono text-[10px] opacity-75 mt-0.5 tabular-nums">
+              Alt {altitudEntera}°
+            </span>
+          </div>
+        </div>
+
+        {/* Aviso de alineación */}
+        <div aria-live="polite" className="min-h-12 mt-3 flex items-center justify-center">
+          {alineado ? (
+            <p
+              className={`alineacion-pulso inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-1 px-3.5 py-2 rounded-2xl border text-sm font-medium text-center ${
+                alturaAlineada ? paleta.claseEstadoOk : paleta.claseAviso
+              }`}
+            >
+              <Target className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>
+                Apuntando hacia {alineado.nombre} ·{' '}
+                <span className="font-mono">Alt {Math.round(alineado.altitud)}°</span>
+              </span>
+              {textoGuiaElevacion && (
+                <span className="inline-flex items-center gap-1 font-mono text-xs font-semibold">
+                  {direccionElevacion === 'alineada' ? (
+                    <Check className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  ) : direccionElevacion === 'subir' ? (
+                    <ArrowUp className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <ArrowDown className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  )}
+                  {textoGuiaElevacion}
+                </span>
+              )}
+            </p>
+          ) : (
+            <p className="text-xs opacity-65 text-center">
+              {objetivosVisibles.length > 0
+                ? 'Gira hasta situar un marcador bajo la línea de fe superior.'
+                : 'Ahora mismo no hay objetivos visibles sobre el horizonte.'}
+            </p>
+          )}
+        </div>
+
+        {/* Estado de sensores */}
+        <div className="mt-2 space-y-3">
+          <p
+            role="status"
+            className={`flex items-start gap-2 text-xs px-3 py-2 rounded-xl border ${
+              estadoCorrecto ? paleta.claseEstadoOk : paleta.claseEstadoAviso
+            }`}
+          >
+            <Smartphone className="w-4 h-4 shrink-0 mt-px" aria-hidden="true" />
+            <span>{mensajeEstado}</span>
+          </p>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            {mostrarBotonActivar && (
+              <button
+                type="button"
+                onClick={() => {
+                  void activarSensores();
+                }}
+                className={`flex-1 inline-flex items-center justify-center gap-2 px-4 min-h-11 rounded-xl border text-sm font-semibold cursor-pointer transition-colors ${paleta.claseBotonPrimario}`}
+              >
+                <Navigation className="w-4 h-4" aria-hidden="true" />
+                Activar sensores del dispositivo
+              </button>
+            )}
+            {estadoSensor === 'activo' && (
+              <button
+                type="button"
+                onClick={() => (modoManual ? setModoManual(false) : pasarAModoManual())}
+                aria-pressed={modoManual}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 min-h-11 rounded-xl border border-current/30 hover:bg-current/10 text-sm font-medium cursor-pointer transition-colors"
+              >
+                <Hand className="w-4 h-4" aria-hidden="true" />
+                {modoManual ? 'Volver a los sensores' : 'Modo manual'}
+              </button>
+            )}
+          </div>
+
+          {/* Controles de simulación */}
+          {simulacion && (
+            <fieldset className="p-3 rounded-2xl border border-current/20 bg-current/5 space-y-1">
+              <legend className="px-1.5 text-[10px] uppercase tracking-[0.2em] font-mono opacity-75">
+                Modo simulación
+              </legend>
+              <label className="block">
+                <span className="flex items-center justify-between text-xs">
+                  <span>Rumbo</span>
+                  <span className="font-mono">{String(Math.round(normalizarAngulo(rumboManual)) % 360).padStart(3, '0')}°</span>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={359}
+                  step={1}
+                  value={Math.round(normalizarAngulo(rumboManual)) % 360}
+                  onChange={(e) => {
+                    const valor = Number(e.target.value);
+                    if (!Number.isFinite(valor)) return;
+                    setModoManual(true);
+                    setRumboManual(limitar(valor, 0, 359));
+                  }}
+                  className={`rango-hud ${paleta.claseAcento}`}
+                />
+              </label>
+              <label className="block">
+                <span className="flex items-center justify-between text-xs">
+                  <span>Altitud de apuntado</span>
+                  <span className="font-mono tabular-nums">
+                    {altitudManual > 0 ? '+' : ''}
+                    {altitudManual}°
+                  </span>
+                </span>
+                <input
+                  type="range"
+                  min={ALTITUD_MANUAL_MIN}
+                  max={ALTITUD_MANUAL_MAX}
+                  step={1}
+                  value={altitudManual}
+                  onChange={(e) => {
+                    const valor = Number(e.target.value);
+                    if (!Number.isFinite(valor)) return;
+                    setModoManual(true);
+                    setAltitudManual(limitar(valor, ALTITUD_MANUAL_MIN, ALTITUD_MANUAL_MAX));
+                  }}
+                  className={`rango-hud ${paleta.claseAcento}`}
+                />
+              </label>
+              <p className="text-[11px] opacity-70">
+                También puedes arrastrar el disco o usar las flechas del teclado (Mayús: pasos de 15°).
+              </p>
+            </fieldset>
+          )}
+
+          {/* Astros visibles */}
+          {objetivosVisibles.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-65 mb-1.5">
+                Sobre el horizonte
+              </p>
+              <ul className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
+                {objetivosVisibles.map((objetivo) => {
+                  const esAlineado = alineado?.id === objetivo.id;
+                  return (
+                    <li
+                      key={objetivo.id}
+                      className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border ${
+                        esAlineado ? paleta.claseAviso : 'border-current/15'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: paleta.marcadorFijo ?? objetivo.color }}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate font-medium">{objetivo.nombre}</span>
+                      </span>
+                      <span className="font-mono opacity-80 shrink-0">
+                        {Math.round(objetivo.acimut)}° · {Math.round(objetivo.altitud)}°
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="text-[10px] opacity-55 mt-1 font-mono">Acimut · Altitud</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 ````
 
@@ -3490,69 +3564,6 @@ NOTAS.md
 MOVIL.md
 PORTFOLIO.md
 resumen_codigo.md
-````
-
-## File: index.html
-````html
-<!doctype html>
-<html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#020617" />
-    <title>SkyProject — Mapa Celeste</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
-````
-
-## File: package.json
-````json
-{
-  "name": "sky_project",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "preview": "vite preview",
-    "test": "vitest run"
-  },
-  "dependencies": {
-    "@capacitor/core": "^8.6.2",
-    "@fontsource-variable/inter": "^5.3.0",
-    "@fontsource-variable/jetbrains-mono": "^5.3.0",
-    "@fontsource-variable/space-grotesk": "^5.3.0",
-    "@tailwindcss/vite": "^4.3.5",
-    "astronomy-engine": "^2.1.19",
-    "lucide-react": "^1.80.0",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "tailwindcss": "^4.3.5"
-  },
-  "devDependencies": {
-    "@capacitor/cli": "^8.6.2",
-    "@eslint/js": "^10.0.1",
-    "@types/node": "^24.19.2",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.2",
-    "eslint": "^10.14.0",
-    "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.5.7",
-    "globals": "^17.13.0",
-    "typescript": "~6.0.3",
-    "typescript-eslint": "^8.72.1",
-    "vite": "^8.3.6",
-    "vitest": "^5.1.2"
-  }
-}
 ````
 
 ## File: src/components/EventsPanel.tsx
@@ -3666,6 +3677,156 @@ export function EventsPanel({
       </div>
     </section>
   );
+}
+````
+
+## File: src/core/eventsCalculator.ts
+````typescript
+import * as Astronomy from 'astronomy-engine';
+import type { EventoCeleste, Ubicacion } from '../types/astronomy';
+import { LLUVIAS_ESTRELLAS } from '../data/meteorShowers';
+import { esEntradaAstronomicaValida } from './skyCalculator';
+
+const NOMBRES_ECLIPSE: Record<string, string> = {
+  total: 'Total',
+  partial: 'Parcial',
+  annular: 'Anular',
+  penumbral: 'Penumbral',
+};
+
+function calcularDiasRestantes(desde: Date, hasta: Date): number {
+  const inicioDia = new Date(desde.getFullYear(), desde.getMonth(), desde.getDate()).getTime();
+  const finDia = new Date(hasta.getFullYear(), hasta.getMonth(), hasta.getDate()).getTime();
+  return Math.round((finDia - inicioDia) / (1000 * 60 * 60 * 24));
+}
+
+function obtenerProximasLluvias(fechaBase: Date): EventoCeleste[] {
+  const anioActual = fechaBase.getFullYear();
+
+  return LLUVIAS_ESTRELLAS.map((lluvia) => {
+    let fechaPico = new Date(anioActual, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
+    if (calcularDiasRestantes(fechaBase, fechaPico) < 0) {
+      fechaPico = new Date(anioActual + 1, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
+    }
+
+    return {
+      id: `lluvia-${lluvia.id}-${fechaPico.getFullYear()}`,
+      titulo: lluvia.nombre,
+      tipo: 'lluvia' as const,
+      fechaPico,
+      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
+      resumen: `Máximo ~${lluvia.thz} meteoros/h`,
+      detalle: `Radiante: Const. ${lluvia.radiante}`,
+    };
+  });
+}
+
+function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoCeleste[] {
+  const eventos: EventoCeleste[] = [];
+  const observador = new Astronomy.Observer(
+    ubicacion.latitud,
+    ubicacion.longitud,
+    ubicacion.altitud
+  );
+
+  // 1. Próximos 2 eclipses lunares con comprobación de visibilidad local
+  let fechaBusqueda = new Date(fechaBase);
+  for (let i = 0; i < 2; i++) {
+    const lunar = Astronomy.SearchLunarEclipse(fechaBusqueda);
+    const fechaPico = lunar.peak.date;
+    const tipoClave = String(lunar.kind).toLowerCase();
+    const tipoStr = NOMBRES_ECLIPSE[tipoClave] ?? 'Lunar';
+
+    const eqLuna = Astronomy.Equator(Astronomy.Body.Moon, fechaPico, observador, true, true);
+    const horLuna = Astronomy.Horizon(fechaPico, observador, eqLuna.ra, eqLuna.dec, 'normal');
+
+    const resumen =
+      tipoClave === 'penumbral'
+        ? 'Eclipse penumbral (oscurecimiento sutil)'
+        : `Oscurecimiento: ${Math.round(lunar.obscuration * 100)}%`;
+
+    const detalle =
+      horLuna.altitude > 0
+        ? `Visible desde tu ubicación (Luna a ${horLuna.altitude.toFixed(1)}° en el máximo)`
+        : `No visible desde tu ubicación (Luna bajo el horizonte: ${horLuna.altitude.toFixed(1)}°)`;
+
+    eventos.push({
+      id: `eclipse-lunar-${fechaPico.getTime()}`,
+      titulo: `Eclipse Lunar ${tipoStr}`,
+      tipo: 'eclipse',
+      fechaPico,
+      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
+      resumen,
+      detalle,
+    });
+
+    fechaBusqueda = new Date(fechaPico.getTime() + 15 * 24 * 60 * 60 * 1000);
+  }
+
+  // 2. Próximos eclipses solares visibles sobre el horizonte en tu ubicación
+  let fechaSolar = new Date(fechaBase);
+  let encontrados = 0;
+  let intentos = 0;
+  let primerEclipseSolar: Astronomy.LocalSolarEclipseInfo | null = null;
+
+  while (encontrados < 2 && intentos < 16) {
+    intentos++;
+    const solar = Astronomy.SearchLocalSolarEclipse(fechaSolar, observador);
+    const fechaPico = solar.peak.time.date;
+
+    if (!primerEclipseSolar) {
+      primerEclipseSolar = solar;
+    }
+
+    if (solar.peak.altitude > 0) {
+      const tipoStr = NOMBRES_ECLIPSE[String(solar.kind).toLowerCase()] ?? 'Solar';
+      const porcentajeOcultacion = Number.isFinite(solar.obscuration)
+        ? Math.round(solar.obscuration * 100)
+        : 0;
+      eventos.push({
+        id: `eclipse-solar-${fechaPico.getTime()}`,
+        titulo: `Eclipse Solar ${tipoStr}`,
+        tipo: 'eclipse',
+        fechaPico,
+        diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
+        resumen: `Ocultación local: ${porcentajeOcultacion}%`,
+        detalle: `Altura del Sol en máximo: ${solar.peak.altitude.toFixed(1)}°`,
+      });
+      encontrados++;
+    }
+
+    fechaSolar = new Date(fechaPico.getTime() + 20 * 24 * 60 * 60 * 1000);
+  }
+
+  if (encontrados === 0 && primerEclipseSolar) {
+    const fechaPico = primerEclipseSolar.peak.time.date;
+    const tipoStr = NOMBRES_ECLIPSE[String(primerEclipseSolar.kind).toLowerCase()] ?? 'Solar';
+    const porcentajeOcultacion = Number.isFinite(primerEclipseSolar.obscuration)
+      ? Math.round(primerEclipseSolar.obscuration * 100)
+      : 0;
+    eventos.push({
+      id: `eclipse-solar-${fechaPico.getTime()}`,
+      titulo: `Eclipse Solar ${tipoStr}`,
+      tipo: 'eclipse',
+      fechaPico,
+      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
+      resumen: `Ocultación local: ${porcentajeOcultacion}%`,
+      detalle: `No visible desde tu ubicación (Sol bajo el horizonte: ${primerEclipseSolar.peak.altitude.toFixed(1)}°)`,
+    });
+  }
+
+  return eventos;
+}
+
+export function calcularProximosEventos(fechaBase: Date, ubicacion: Ubicacion): EventoCeleste[] {
+  if (!esEntradaAstronomicaValida(fechaBase, ubicacion)) return [];
+
+  const lluvias = obtenerProximasLluvias(fechaBase);
+  const eclipses = obtenerProximosEclipses(fechaBase, ubicacion);
+
+  return [...lluvias, ...eclipses]
+    .sort((a, b) => a.fechaPico.getTime() - b.fechaPico.getTime())
+    .slice(0, 6);
 }
 ````
 
@@ -3987,6 +4148,263 @@ export function calcularTransitoCuerpo(
 }
 ````
 
+## File: src/core/weatherService.ts
+````typescript
+import type { CondicionesMeteo, FranjaHorariaMeteo, Ubicacion } from '../types/astronomy';
+import { calcularEstadoSolar, esEntradaAstronomicaValida } from './skyCalculator';
+
+interface OpenMeteoHourly {
+  time: string[];
+  cloud_cover: (number | null)[];
+  cloud_cover_low: (number | null)[];
+  cloud_cover_mid: (number | null)[];
+  cloud_cover_high: (number | null)[];
+  relative_humidity_2m: (number | null)[];
+  wind_speed_10m: (number | null)[];
+  temperature_2m: (number | null)[];
+}
+
+interface EntradaCacheMeteo {
+  timestamp: number;
+  ultimoAcceso: number;
+  hourly: OpenMeteoHourly;
+}
+
+type DiccionarioCacheMeteo = Record<string, EntradaCacheMeteo>;
+
+const CACHE_KEY = 'skyproject_meteo_cache_v3';
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora
+const MAX_CACHE_UBICACIONES = 5;
+
+function esArrayDeStrings(valor: unknown): valor is string[] {
+  return Array.isArray(valor) && valor.every((item) => typeof item === 'string');
+}
+
+function esArrayNumerico(valor: unknown): valor is (number | null)[] {
+  return (
+    Array.isArray(valor) &&
+    valor.every((item) => (typeof item === 'number' && Number.isFinite(item)) || item === null)
+  );
+}
+
+function esOpenMeteoHourlyValido(valor: unknown): valor is OpenMeteoHourly {
+  if (typeof valor !== 'object' || valor === null) return false;
+  const obj = valor as Record<string, unknown>;
+  return (
+    esArrayDeStrings(obj.time) &&
+    esArrayNumerico(obj.cloud_cover) &&
+    esArrayNumerico(obj.cloud_cover_low) &&
+    esArrayNumerico(obj.cloud_cover_mid) &&
+    esArrayNumerico(obj.cloud_cover_high) &&
+    esArrayNumerico(obj.relative_humidity_2m) &&
+    esArrayNumerico(obj.wind_speed_10m) &&
+    esArrayNumerico(obj.temperature_2m)
+  );
+}
+
+function esEntradaCacheMeteoValida(valor: unknown): valor is EntradaCacheMeteo {
+  if (typeof valor !== 'object' || valor === null) return false;
+  const obj = valor as Record<string, unknown>;
+  return (
+    typeof obj.timestamp === 'number' &&
+    Number.isFinite(obj.timestamp) &&
+    typeof obj.ultimoAcceso === 'number' &&
+    Number.isFinite(obj.ultimoAcceso) &&
+    esOpenMeteoHourlyValido(obj.hourly)
+  );
+}
+
+function leerDiccionarioCache(): DiccionarioCacheMeteo {
+  try {
+    const cacheRaw = localStorage.getItem(CACHE_KEY);
+    if (!cacheRaw) return {};
+    const parsed: unknown = JSON.parse(cacheRaw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+
+    const diccionario: DiccionarioCacheMeteo = {};
+    for (const [clave, entrada] of Object.entries(parsed as Record<string, unknown>)) {
+      if (esEntradaCacheMeteoValida(entrada)) {
+        diccionario[clave] = entrada;
+      }
+    }
+    return diccionario;
+  } catch {
+    return {};
+  }
+}
+
+function guardarDiccionarioCache(diccionario: DiccionarioCacheMeteo): void {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(diccionario));
+  } catch {
+    // Ignora errores de cuota o almacenamiento bloqueado
+  }
+}
+
+function guardarEntradaCache(claveUbicacion: string, hourly: OpenMeteoHourly): void {
+  const diccionario = leerDiccionarioCache();
+  const ahora = Date.now();
+  diccionario[claveUbicacion] = {
+    timestamp: ahora,
+    ultimoAcceso: ahora,
+    hourly,
+  };
+
+  const entradasRecortadas = Object.entries(diccionario)
+    .sort(([, a], [, b]) => b.ultimoAcceso - a.ultimoAcceso)
+    .slice(0, MAX_CACHE_UBICACIONES);
+
+  guardarDiccionarioCache(Object.fromEntries(entradasRecortadas));
+}
+
+function evaluarVeredicto(nubesTotal: number, vientoKmh: number): CondicionesMeteo['veredicto'] {
+  if (nubesTotal <= 20 && vientoKmh <= 25) return 'Excelente';
+  if (nubesTotal <= 50 && vientoKmh <= 35) return 'Aceptable';
+  return 'Desfavorable';
+}
+
+function formatearClaveHoraUTC(fecha: Date): string {
+  const anio = fecha.getUTCFullYear();
+  const mes = String(fecha.getUTCMonth() + 1).padStart(2, '0');
+  const dia = String(fecha.getUTCDate()).padStart(2, '0');
+  const hora = String(fecha.getUTCHours()).padStart(2, '0');
+  return `${anio}-${mes}-${dia}T${hora}:00`;
+}
+
+function formatearHoraLocalFranja(fecha: Date): string {
+  const horas = String(fecha.getHours()).padStart(2, '0');
+  const minutos = String(fecha.getMinutes()).padStart(2, '0');
+  return `${horas}:${minutos}`;
+}
+
+function extraerDesdeHourly(
+  hourly: OpenMeteoHourly,
+  fecha: Date,
+  ubicacion: Ubicacion,
+  esCache: boolean
+): CondicionesMeteo | null {
+  const claveHora = formatearClaveHoraUTC(fecha);
+  const idx = hourly.time.indexOf(claveHora);
+  if (idx === -1) return null;
+
+  const nubesTotal = Math.round(hourly.cloud_cover[idx] ?? 0);
+  const vientoKmh = Math.round(hourly.wind_speed_10m[idx] ?? 0);
+
+  const proximasHoras: FranjaHorariaMeteo[] = [];
+  const limite = Math.min(idx + 12, hourly.time.length);
+
+  for (let i = idx; i < limite; i++) {
+    const horaRaw = hourly.time[i];
+    const fechaISO = horaRaw.endsWith('Z') ? horaRaw : `${horaRaw}:00Z`;
+    const fechaFranja = new Date(fechaISO);
+    if (Number.isNaN(fechaFranja.getTime())) continue;
+
+    const nubesFranja = Math.min(100, Math.max(0, Math.round(hourly.cloud_cover[i] ?? 0)));
+    const vientoFranja = Math.max(0, Math.round(hourly.wind_speed_10m[i] ?? 0));
+    const estadoSolar = calcularEstadoSolar(fechaFranja, ubicacion);
+
+    proximasHoras.push({
+      fechaISO,
+      horaLocal: formatearHoraLocalFranja(fechaFranja),
+      nubesTotal: nubesFranja,
+      vientoKmh: vientoFranja,
+      veredicto: evaluarVeredicto(nubesFranja, vientoFranja),
+      esNoche: estadoSolar !== null && estadoSolar.altitudSol < -6,
+    });
+  }
+
+  return {
+    horaPronostico: `${claveHora.replace('T', ' ')} UTC`,
+    nubesTotal,
+    nubesBajas: Math.round(hourly.cloud_cover_low[idx] ?? 0),
+    nubesMedias: Math.round(hourly.cloud_cover_mid[idx] ?? 0),
+    nubesAltas: Math.round(hourly.cloud_cover_high[idx] ?? 0),
+    humedad: Math.round(hourly.relative_humidity_2m[idx] ?? 0),
+    vientoKmh,
+    temperatura: Number((hourly.temperature_2m[idx] ?? 0).toFixed(1)),
+    veredicto: evaluarVeredicto(nubesTotal, vientoKmh),
+    esCache,
+    proximasHoras,
+  };
+}
+
+export async function obtenerCondicionesMeteo(
+  fecha: Date,
+  ubicacion: Ubicacion,
+  signal?: AbortSignal
+): Promise<{ datos: CondicionesMeteo | null; aviso: string | null }> {
+  if (!esEntradaAstronomicaValida(fecha, ubicacion)) {
+    return { datos: null, aviso: 'Fecha o coordenadas inválidas.' };
+  }
+
+  const claveUbicacion = `${ubicacion.latitud.toFixed(2)},${ubicacion.longitud.toFixed(2)}`;
+  const diccionario = leerDiccionarioCache();
+  const entradaCache = diccionario[claveUbicacion] ?? null;
+
+  const cacheValida =
+    entradaCache !== null && Date.now() - entradaCache.timestamp < CACHE_TTL_MS;
+
+  if (cacheValida) {
+    diccionario[claveUbicacion] = {
+      ...entradaCache,
+      ultimoAcceso: Date.now(),
+    };
+    guardarDiccionarioCache(diccionario);
+    const datos = extraerDesdeHourly(entradaCache.hourly, fecha, ubicacion, true);
+    return {
+      datos,
+      aviso: datos ? null : 'Pronóstico disponible solo hasta 14 días vista.',
+    };
+  }
+
+  try {
+    const url = new URL('https://api.open-meteo.com/v1/forecast');
+    url.searchParams.set('latitude', String(ubicacion.latitud));
+    url.searchParams.set('longitude', String(ubicacion.longitud));
+    url.searchParams.set(
+      'hourly',
+      'cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_2m,wind_speed_10m,temperature_2m'
+    );
+    url.searchParams.set('timezone', 'UTC');
+    url.searchParams.set('forecast_days', '14');
+
+    const res = await fetch(url.toString(), { signal });
+    if (!res.ok) throw new Error('Error HTTP Open-Meteo');
+
+    const json: unknown = await res.json();
+    const hourly =
+      typeof json === 'object' && json !== null
+        ? (json as Record<string, unknown>).hourly
+        : null;
+
+    if (!esOpenMeteoHourlyValido(hourly)) {
+      throw new Error('Respuesta meteorológica con formato inesperado');
+    }
+
+    guardarEntradaCache(claveUbicacion, hourly);
+
+    const datos = extraerDesdeHourly(hourly, fecha, ubicacion, false);
+    return {
+      datos,
+      aviso: datos ? null : 'Pronóstico disponible solo hasta 14 días vista.',
+    };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
+    }
+
+    if (entradaCache) {
+      const datos = extraerDesdeHourly(entradaCache.hourly, fecha, ubicacion, true);
+      return {
+        datos,
+        aviso: datos ? 'Sin conexión: mostrando datos guardados en caché.' : 'Sin conexión.',
+      };
+    }
+    return { datos: null, aviso: 'No se pudo obtener la previsión meteorológica.' };
+  }
+}
+````
+
 ## File: src/index.css
 ````css
 @import "tailwindcss";
@@ -4184,6 +4602,74 @@ export function calcularTransitoCuerpo(
   .brujula-icono-animada,
   .alineacion-pulso {
     animation: none;
+  }
+}
+````
+
+## File: index.html
+````html
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://api.open-meteo.com; object-src 'none'; base-uri 'self'; form-action 'self';"
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#020617" />
+    <title>SkyProject — Mapa Celeste</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+````
+
+## File: package.json
+````json
+{
+  "name": "sky_project",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.6.2",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/space-grotesk": "^5.3.0",
+    "@tailwindcss/vite": "^4.3.5",
+    "astronomy-engine": "^2.1.19",
+    "lucide-react": "^1.80.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.5"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.2",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^8.3.6",
+    "vite-plugin-pwa": "^2.0.0",
+    "vitest": "^5.1.2"
   }
 }
 ````
@@ -4529,7 +5015,7 @@ export function WeatherPanel({
 
 ## File: src/components/SkyMap.tsx
 ````typescript
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Globe, Compass, RotateCcw, X } from 'lucide-react';
 import type {
   AstroSeleccionado,
@@ -4595,6 +5081,13 @@ interface PaletaMapa {
   textoEstrella: string;
 }
 
+interface CacheEscenaCanvas {
+  canvas: HTMLCanvasElement;
+  ancho: number;
+  alto: number;
+}
+
+const TAMANO_CANVAS = 560;
 const CAMARA_INICIAL: Camara3D = { rotAz: 0, tilt: 32 };
 const DURACION_TRANSICION_CAMARA_MS = 480;
 
@@ -5211,6 +5704,7 @@ export function SkyMap({
   contadorFoco = 0,
 }: Readonly<SkyMapProps>) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const escenaBaseRef = useRef<CacheEscenaCanvas | null>(null);
   const [modoVista, setModoVista] = useState<ModoVista>('2d');
   const [camara, setCamara] = useState<Camara3D>(CAMARA_INICIAL);
   const [hoverInfo, setHoverInfo] = useState<ObjetoHover | null>(null);
@@ -5320,19 +5814,59 @@ export function SkyMap({
     };
   }, [astroSeleccionado, modoVista, contadorFoco]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  const claveEscenaBase = useMemo(
+    () => ({
+      cuerpos,
+      estrellas,
+      messier,
+      tema,
+      modoVista,
+      camara,
+      mostrarConstelaciones,
+      mostrarEtiquetasEstrellas,
+      mostrarMessier,
+      trayectoria,
+    }),
+    [
+      cuerpos,
+      estrellas,
+      messier,
+      tema,
+      modoVista,
+      camara,
+      mostrarConstelaciones,
+      mostrarEtiquetasEstrellas,
+      mostrarMessier,
+      trayectoria,
+    ]
+  );
 
+  // Effect 1: Renderizado de la escena celeste base en el canvas secundario
+  useEffect(() => {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const size = 560;
+    const size = TAMANO_CANVAS;
     const tamanoBuffer = Math.round(size * dpr);
-    if (canvas.width !== tamanoBuffer || canvas.height !== tamanoBuffer) {
-      canvas.width = tamanoBuffer;
-      canvas.height = tamanoBuffer;
+
+    let cache = escenaBaseRef.current;
+    if (!cache) {
+      const canvasBase = document.createElement('canvas');
+      canvasBase.width = tamanoBuffer;
+      canvasBase.height = tamanoBuffer;
+      cache = {
+        canvas: canvasBase,
+        ancho: tamanoBuffer,
+        alto: tamanoBuffer,
+      };
+      escenaBaseRef.current = cache;
+    } else if (cache.ancho !== tamanoBuffer || cache.alto !== tamanoBuffer) {
+      cache.canvas.width = tamanoBuffer;
+      cache.canvas.height = tamanoBuffer;
+      cache.ancho = tamanoBuffer;
+      cache.alto = tamanoBuffer;
     }
+
+    const ctxBase = cache.canvas.getContext('2d');
+    if (!ctxBase) return;
 
     const cx = size / 2;
     const cy = size / 2;
@@ -5344,65 +5878,41 @@ export function SkyMap({
         ? (alt: number, az: number) => proyectar2D(alt, az, cx, cy, radio)
         : (alt: number, az: number) => proyectar3D(alt, az, cx, cy, size, camara);
 
-    const dibujarEscena = (fasePulso: number) => {
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, size, size);
-      const interactivos: ObjetoHover[] = [];
+    ctxBase.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctxBase.clearRect(0, 0, size, size);
+    const interactivos: ObjetoHover[] = [];
 
-      if (modoVista === '2d') {
-        dibujarBaseMapa2D(ctx, size, cx, cy, radio, paleta);
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(cx, cy, radio, 0, Math.PI * 2);
-        ctx.clip();
-      } else {
-        dibujarBaseMapa3D(ctx, size, cx, cy, camara, paleta, tema);
-        ctx.save();
-      }
-
-      dibujarEstrellas(
-        ctx,
-        estrellas,
-        mostrarConstelaciones,
-        mostrarEtiquetasEstrellas,
-        proyectarFn,
-        paleta,
-        tema,
-        interactivos
-      );
-
-      if (mostrarMessier) {
-        dibujarMessier(ctx, messier, tema, proyectarFn, interactivos);
-      }
-
-      dibujarTrayectoria(ctx, trayectoria, tema, proyectarFn);
-      dibujarCuerpos(ctx, cuerpos, tema, proyectarFn, interactivos);
-      dibujarReticulaSeleccion(ctx, astroSeleccionado, interactivos, tema, fasePulso);
-
-      ctx.restore();
-      puntosInteractivosRef.current = interactivos;
-    };
-
-    const prefiereMovimientoReducido =
-      typeof window !== 'undefined' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    if (!astroSeleccionado || prefiereMovimientoReducido) {
-      dibujarEscena(0.5);
-      return;
+    if (modoVista === '2d') {
+      dibujarBaseMapa2D(ctxBase, size, cx, cy, radio, paleta);
+      ctxBase.save();
+      ctxBase.beginPath();
+      ctxBase.arc(cx, cy, radio, 0, Math.PI * 2);
+      ctxBase.clip();
+    } else {
+      dibujarBaseMapa3D(ctxBase, size, cx, cy, camara, paleta, tema);
+      ctxBase.save();
     }
 
-    let animacionId = 0;
-    const animar = (tiempo: number) => {
-      const fase = (Math.sin(tiempo / 320) + 1) / 2;
-      dibujarEscena(fase);
-      animacionId = window.requestAnimationFrame(animar);
-    };
-    animacionId = window.requestAnimationFrame(animar);
+    dibujarEstrellas(
+      ctxBase,
+      estrellas,
+      mostrarConstelaciones,
+      mostrarEtiquetasEstrellas,
+      proyectarFn,
+      paleta,
+      tema,
+      interactivos
+    );
 
-    return () => {
-      window.cancelAnimationFrame(animacionId);
-    };
+    if (mostrarMessier) {
+      dibujarMessier(ctxBase, messier, tema, proyectarFn, interactivos);
+    }
+
+    dibujarTrayectoria(ctxBase, trayectoria, tema, proyectarFn);
+    dibujarCuerpos(ctxBase, cuerpos, tema, proyectarFn, interactivos);
+
+    ctxBase.restore();
+    puntosInteractivosRef.current = interactivos;
   }, [
     cuerpos,
     estrellas,
@@ -5413,9 +5923,76 @@ export function SkyMap({
     mostrarConstelaciones,
     mostrarEtiquetasEstrellas,
     mostrarMessier,
-    astroSeleccionado,
     trayectoria,
   ]);
+
+  // Effect 2: Composición desde el canvas cacheado y animación de la retícula de selección
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const size = TAMANO_CANVAS;
+    const tamanoBuffer = Math.round(size * dpr);
+    if (canvas.width !== tamanoBuffer || canvas.height !== tamanoBuffer) {
+      canvas.width = tamanoBuffer;
+      canvas.height = tamanoBuffer;
+    }
+
+    const { tema: temaActual, modoVista: modoActual } = claveEscenaBase;
+
+    const dibujarFrame = (fasePulso: number) => {
+      const base = escenaBaseRef.current;
+      if (!base) return;
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, size, size);
+      ctx.drawImage(base.canvas, 0, 0, size, size);
+
+      if (astroSeleccionado) {
+        ctx.save();
+        if (modoActual === '2d') {
+          ctx.beginPath();
+          ctx.arc(size / 2, size / 2, size / 2 - 36, 0, Math.PI * 2);
+          ctx.clip();
+        }
+        dibujarReticulaSeleccion(
+          ctx,
+          astroSeleccionado,
+          puntosInteractivosRef.current,
+          temaActual,
+          fasePulso
+        );
+        ctx.restore();
+      }
+    };
+
+    const prefiereMovimientoReducido =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (!astroSeleccionado || prefiereMovimientoReducido) {
+      dibujarFrame(0.5);
+      return;
+    }
+
+    // Dibujar inmediatamente para evitar frames en blanco al cambiar escena o tamaño
+    dibujarFrame((Math.sin(performance.now() / 320) + 1) / 2);
+
+    let animacionId = 0;
+    const animar = (tiempo: number) => {
+      const fase = (Math.sin(tiempo / 320) + 1) / 2;
+      dibujarFrame(fase);
+      animacionId = window.requestAnimationFrame(animar);
+    };
+    animacionId = window.requestAnimationFrame(animar);
+
+    return () => {
+      window.cancelAnimationFrame(animacionId);
+    };
+  }, [astroSeleccionado, claveEscenaBase]);
 
   const buscarAstroEnPuntero = (e: PointerEvent<HTMLCanvasElement>): ObjetoHover | null => {
     const canvas = canvasRef.current;
@@ -5850,10 +6427,12 @@ export type EstadoSensorBrujula =
   | 'sin-lecturas';
 
 export interface OrientacionBrujula {
-  /** Rumbo en grados [0, 360). */
+  /** Rumbo magnético/geográfico en grados [0, 360). */
   rumbo: number;
-  /** Cabeceo/inclinación del dispositivo en grados. */
+  /** Inclinación visual para la perspectiva 3D del disco en grados [-65, 65]. */
   inclinacion: number;
+  /** Altitud real de apuntado sobre el horizonte en grados [-90, 90]. */
+  altitudApuntado: number;
 }
 
 export interface ObjetivoBrujula {
@@ -5867,7 +6446,15 @@ export interface ObjetivoBrujula {
 
 ## File: src/App.tsx
 ````typescript
-import { useState, useMemo, useEffect, useRef, useCallback, type KeyboardEvent } from 'react';
+import {
+  useState,
+  useMemo,
+  useEffect,
+  useRef,
+  useCallback,
+  type FormEvent,
+  type KeyboardEvent,
+} from 'react';
 import {
   Compass,
   Moon,
@@ -5919,6 +6506,7 @@ const CLAVE_TEMA = 'skyproject_tema';
 const CLAVE_FAVORITOS = 'skyproject_favoritos_v1';
 const MAX_FAVORITOS = 8;
 const MAX_RESULTADOS_BUSQUEDA = 6;
+const MAX_NOMBRE_UBICACION = 80;
 const UMBRAL_COORD_DUPLICADA = 0.01;
 
 const UBICACION_INICIAL: Ubicacion = {
@@ -5991,6 +6579,7 @@ function esUbicacionValida(valor: unknown): valor is Ubicacion {
   const obj = valor as Record<string, unknown>;
   return (
     typeof obj.nombre === 'string' &&
+    obj.nombre.length <= MAX_NOMBRE_UBICACION &&
     typeof obj.latitud === 'number' &&
     Number.isFinite(obj.latitud) &&
     obj.latitud >= -90 &&
@@ -6108,12 +6697,18 @@ function validarFormularioUbicacion(form: FormularioUbicacion): {
   return {
     errores,
     ubicacionValida: {
-      nombre: form.nombre,
+      nombre: form.nombre.slice(0, MAX_NOMBRE_UBICACION),
       latitud: lat,
       longitud: lon,
       altitud: alt,
     },
   };
+}
+
+function obtenerClaseBotonAplicar(tema: TemaVisual): string {
+  if (tema === 'rojo') return 'border-red-600 bg-red-950/70 text-red-400 hover:bg-red-950';
+  if (tema === 'claro') return 'border-sky-600 bg-sky-600 text-white hover:bg-sky-700';
+  return 'border-sky-500/60 bg-sky-600 text-white hover:bg-sky-500';
 }
 
 function obtenerClaseErrorInline(tema: TemaVisual): string {
@@ -6203,6 +6798,8 @@ export function App() {
   const [avisoFavorito, setAvisoFavorito] = useState<string | null>(null);
   const [cargandoGPS, setCargandoGPS] = useState(false);
   const [errorGPS, setErrorGPS] = useState<string | null>(null);
+  const gpsRequestIdRef = useRef<number>(0);
+  const altitudActualRef = useRef<number>(ubicacion.altitud);
 
   const [fechaStr, setFechaStr] = useState<string>(() => formatearFechaParaInput(new Date()));
   const [reproduciendo, setReproduciendo] = useState(false);
@@ -6251,12 +6848,21 @@ export function App() {
 
   const cargandoMeteo = estadoMeteo.clave !== claveConsultaMeteo;
 
-  const { errores: erroresUbicacion } = useMemo(
+  const { errores: erroresUbicacion, ubicacionValida: ubicacionFormularioValida } = useMemo(
     () => validarFormularioUbicacion(formUbicacion),
     [formUbicacion]
   );
 
+  const hayErroresUbicacion = Object.keys(erroresUbicacion).length > 0;
+  const ubicacionSinCambios =
+    ubicacionFormularioValida !== null &&
+    ubicacionFormularioValida.nombre === ubicacion.nombre &&
+    ubicacionFormularioValida.latitud === ubicacion.latitud &&
+    ubicacionFormularioValida.longitud === ubicacion.longitud &&
+    ubicacionFormularioValida.altitud === ubicacion.altitud;
+
   useEffect(() => {
+    altitudActualRef.current = ubicacion.altitud;
     guardarEnStorage(CLAVE_UBICACION, JSON.stringify(ubicacion));
   }, [ubicacion]);
 
@@ -6432,15 +7038,14 @@ export function App() {
     [astroSeleccionado, fechaSeleccionada, coordenadasEstables]
   );
 
-  const transitoSeleccionado: EfemeridesTransito | null = useMemo(
-    () =>
-      astroSeleccionado && astroSeleccionado.categoria === 'cuerpo'
-        ? calcularTransitoCuerpo(astroSeleccionado.id, fechaSeleccionada, coordenadasEstables)
-        : null,
-    [astroSeleccionado, fechaSeleccionada, coordenadasEstables]
-  );
-
   const diaSeleccionado = fechaStr.slice(0, 10);
+
+  const transitoSeleccionado: EfemeridesTransito | null = useMemo(() => {
+    if (!astroSeleccionado || astroSeleccionado.categoria !== 'cuerpo') return null;
+    const fechaDia = new Date(`${diaSeleccionado}T12:00:00`);
+    const baseValida = Number.isNaN(fechaDia.getTime()) ? new Date() : fechaDia;
+    return calcularTransitoCuerpo(astroSeleccionado.id, baseValida, coordenadasEstables);
+  }, [astroSeleccionado, diaSeleccionado, coordenadasEstables]);
 
   const eventos = useMemo(() => {
     const fechaDia = new Date(`${diaSeleccionado}T12:00:00`);
@@ -6484,15 +7089,29 @@ export function App() {
   }, [astroSeleccionado, cuerpos, estrellas, messier]);
 
   const actualizarCampoUbicacion = (campo: keyof FormularioUbicacion, valor: string) => {
-    const siguienteForm = { ...formUbicacion, [campo]: valor };
-    setFormUbicacion(siguienteForm);
+    const valorSanitizado =
+      campo === 'nombre' ? valor.slice(0, MAX_NOMBRE_UBICACION) : valor;
+    setFormUbicacion((prev) => ({ ...prev, [campo]: valorSanitizado }));
     setErrorGPS(null);
     setAvisoFavorito(null);
+  };
 
-    const { ubicacionValida } = validarFormularioUbicacion(siguienteForm);
-    if (ubicacionValida) {
-      setUbicacion(ubicacionValida);
-    }
+  const aplicarUbicacionManual = (evento: FormEvent<HTMLFormElement>) => {
+    evento.preventDefault();
+    setErrorGPS(null);
+    setAvisoFavorito(null);
+    const { ubicacionValida } = validarFormularioUbicacion(formUbicacion);
+    if (!ubicacionValida) return;
+
+    gpsRequestIdRef.current += 1;
+    setCargandoGPS(false);
+    setUbicacion(ubicacionValida);
+    setFormUbicacion({
+      nombre: ubicacionValida.nombre,
+      latitud: String(ubicacionValida.latitud),
+      longitud: String(ubicacionValida.longitud),
+      altitud: String(ubicacionValida.altitud),
+    });
   };
 
   const guardarUbicacionFavorita = () => {
@@ -6527,6 +7146,8 @@ export function App() {
   };
 
   const cargarUbicacionFavorita = (fav: UbicacionFavorita) => {
+    gpsRequestIdRef.current += 1;
+    setCargandoGPS(false);
     setErrorGPS(null);
     setAvisoFavorito(null);
     const seleccionada: Ubicacion = {
@@ -6606,33 +7227,34 @@ export function App() {
       setErrorGPS('Tu navegador no soporta geolocalización.');
       return;
     }
+    const requestId = ++gpsRequestIdRef.current;
     setCargandoGPS(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        if (requestId !== gpsRequestIdRef.current) return;
         const lat = Number(pos.coords.latitude.toFixed(4));
         const lon = Number(pos.coords.longitude.toFixed(4));
-        setUbicacion((prev) => {
-          const alt =
-            pos.coords.altitude !== null && Number.isFinite(pos.coords.altitude)
-              ? Math.min(9000, Math.max(-500, Math.round(pos.coords.altitude)))
-              : prev.altitud;
-          const nuevaUbicacion: Ubicacion = {
-            latitud: lat,
-            longitud: lon,
-            altitud: alt,
-            nombre: 'Ubicación GPS Actual',
-          };
-          setFormUbicacion({
-            nombre: nuevaUbicacion.nombre,
-            latitud: String(nuevaUbicacion.latitud),
-            longitud: String(nuevaUbicacion.longitud),
-            altitud: String(nuevaUbicacion.altitud),
-          });
-          return nuevaUbicacion;
+        const alt =
+          pos.coords.altitude !== null && Number.isFinite(pos.coords.altitude)
+            ? Math.min(9000, Math.max(-500, Math.round(pos.coords.altitude)))
+            : altitudActualRef.current;
+        const nuevaUbicacion: Ubicacion = {
+          latitud: lat,
+          longitud: lon,
+          altitud: alt,
+          nombre: 'Ubicación GPS Actual',
+        };
+        setUbicacion(nuevaUbicacion);
+        setFormUbicacion({
+          nombre: nuevaUbicacion.nombre,
+          latitud: String(nuevaUbicacion.latitud),
+          longitud: String(nuevaUbicacion.longitud),
+          altitud: String(nuevaUbicacion.altitud),
         });
         setCargandoGPS(false);
       },
       (err) => {
+        if (requestId !== gpsRequestIdRef.current) return;
         if (err.code === 1) {
           setErrorGPS('Permiso de ubicación denegado. Actívalo en los ajustes del navegador.');
         } else if (err.code === 2) {
@@ -6748,76 +7370,90 @@ export function App() {
               </p>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-sm">
-              <label className="space-y-1">
-                <span className="text-xs opacity-70">Nombre del lugar</span>
-                <input
-                  type="text"
-                  value={formUbicacion.nombre}
-                  onChange={(e) => actualizarCampoUbicacion('nombre', e.target.value)}
-                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent ${claseEsquemaInput}`}
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs opacity-70">Latitud (°N)</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min={-90}
-                  max={90}
-                  step="0.0001"
-                  aria-invalid={Boolean(erroresUbicacion.latitud)}
-                  aria-describedby={erroresUbicacion.latitud ? 'error-latitud' : undefined}
-                  value={formUbicacion.latitud}
-                  onChange={(e) => actualizarCampoUbicacion('latitud', e.target.value)}
-                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
-                />
-                {erroresUbicacion.latitud && (
-                  <span id="error-latitud" className="block text-[11px] opacity-90">
-                    {erroresUbicacion.latitud}
-                  </span>
-                )}
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs opacity-70">Longitud (°E)</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min={-180}
-                  max={180}
-                  step="0.0001"
-                  aria-invalid={Boolean(erroresUbicacion.longitud)}
-                  aria-describedby={erroresUbicacion.longitud ? 'error-longitud' : undefined}
-                  value={formUbicacion.longitud}
-                  onChange={(e) => actualizarCampoUbicacion('longitud', e.target.value)}
-                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
-                />
-                {erroresUbicacion.longitud && (
-                  <span id="error-longitud" className="block text-[11px] opacity-90">
-                    {erroresUbicacion.longitud}
-                  </span>
-                )}
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs opacity-70">Altitud (metros)</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min={-500}
-                  max={9000}
-                  aria-invalid={Boolean(erroresUbicacion.altitud)}
-                  aria-describedby={erroresUbicacion.altitud ? 'error-altitud' : undefined}
-                  value={formUbicacion.altitud}
-                  onChange={(e) => actualizarCampoUbicacion('altitud', e.target.value)}
-                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
-                />
-                {erroresUbicacion.altitud && (
-                  <span id="error-altitud" className="block text-[11px] opacity-90">
-                    {erroresUbicacion.altitud}
-                  </span>
-                )}
-              </label>
-            </div>
+            <form onSubmit={aplicarUbicacionManual} className="space-y-3" noValidate>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-sm">
+                <label className="space-y-1">
+                  <span className="text-xs opacity-70">Nombre del lugar</span>
+                  <input
+                    type="text"
+                    maxLength={MAX_NOMBRE_UBICACION}
+                    value={formUbicacion.nombre}
+                    onChange={(e) => actualizarCampoUbicacion('nombre', e.target.value)}
+                    className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent ${claseEsquemaInput}`}
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs opacity-70">Latitud (°N)</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={-90}
+                    max={90}
+                    step="0.0001"
+                    aria-invalid={Boolean(erroresUbicacion.latitud)}
+                    aria-describedby={erroresUbicacion.latitud ? 'error-latitud' : undefined}
+                    value={formUbicacion.latitud}
+                    onChange={(e) => actualizarCampoUbicacion('latitud', e.target.value)}
+                    className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  />
+                  {erroresUbicacion.latitud && (
+                    <span id="error-latitud" className="block text-[11px] opacity-90">
+                      {erroresUbicacion.latitud}
+                    </span>
+                  )}
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs opacity-70">Longitud (°E)</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={-180}
+                    max={180}
+                    step="0.0001"
+                    aria-invalid={Boolean(erroresUbicacion.longitud)}
+                    aria-describedby={erroresUbicacion.longitud ? 'error-longitud' : undefined}
+                    value={formUbicacion.longitud}
+                    onChange={(e) => actualizarCampoUbicacion('longitud', e.target.value)}
+                    className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  />
+                  {erroresUbicacion.longitud && (
+                    <span id="error-longitud" className="block text-[11px] opacity-90">
+                      {erroresUbicacion.longitud}
+                    </span>
+                  )}
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs opacity-70">Altitud (metros)</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={-500}
+                    max={9000}
+                    aria-invalid={Boolean(erroresUbicacion.altitud)}
+                    aria-describedby={erroresUbicacion.altitud ? 'error-altitud' : undefined}
+                    value={formUbicacion.altitud}
+                    onChange={(e) => actualizarCampoUbicacion('altitud', e.target.value)}
+                    className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  />
+                  {erroresUbicacion.altitud && (
+                    <span id="error-altitud" className="block text-[11px] opacity-90">
+                      {erroresUbicacion.altitud}
+                    </span>
+                  )}
+                </label>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={hayErroresUbicacion || ubicacionSinCambios}
+                  className={`min-h-10 sm:min-h-8 px-3.5 py-1.5 rounded-lg text-xs font-medium border cursor-pointer transition-colors motion-reduce:transition-none disabled:opacity-45 disabled:cursor-not-allowed ${obtenerClaseBotonAplicar(
+                    tema
+                  )}`}
+                >
+                  Aplicar ubicación
+                </button>
+              </div>
+            </form>
 
             {favoritos.length > 0 && (
               <div className="pt-2 border-t border-current/15 space-y-2">
