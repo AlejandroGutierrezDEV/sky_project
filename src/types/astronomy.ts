@@ -38,6 +38,9 @@ export interface CuerpoCeleste {
   acimut: number;
   direccion: string;
   magnitud: number;
+  raHoras?: number;
+  decGrados?: number;
+  constelacionIAU?: string;
   iluminacion?: number;
   faseLunar?: string;
   anguloFase?: number;
@@ -259,4 +262,35 @@ export interface CapasMapa {
 export interface PreferenciasVisualizacion {
   modoMapa: ModoMapa;
   capas: CapasMapa;
+}
+
+export type CategoriaAstroObjetivo = 'messier' | 'estrella' | 'planeta';
+
+export type EstadoVisibilidadObjetivo = 'optimo_noche' | 'visible_parcial' | 'nunca_sale';
+
+export interface ObjetivoSesion {
+  id: string; // Ej: 'messier-M31', 'estrella-HIP32349'
+  codigo: string; // 'M31', 'Sirio'
+  nombre: string;
+  categoria: CategoriaAstroObjetivo;
+  magnitud: number;
+  constelacion: string;
+  raHoras: number;
+  decGrados: number;
+  observado: boolean;
+  notas?: string;
+}
+
+export interface ObjetivoPlanificado extends ObjetivoSesion {
+  horaCulminacion: Date | null; // Paso por el meridiano local
+  altitudMaximaGrados: number; // 90 - |latitud - decGrados|
+  estadoVisibilidad: EstadoVisibilidadObjetivo;
+  etiquetaHoraria: string; // Ej: '01:42 (Alt. máx 78°)' o 'No visible desde esta latitud'
+}
+
+export interface MetadatosExportacionSesion {
+  ubicacionNombre: string;
+  bortle: number;
+  faseLunar: string;
+  fecha: Date;
 }

@@ -128,8 +128,10 @@ export function calcularCielo(fecha: Date, ubicacion: Ubicacion): CuerpoCeleste[
 
   return CUERPOS_A_CALCULAR.map(({ body, nombre, tipo, color }) => {
     const ecuatorial = Astronomy.Equator(body, fecha, observador, true, true);
+    const ecuatorialJ2000 = Astronomy.Equator(body, fecha, observador, false, true);
     const horizontal = Astronomy.Horizon(fecha, observador, ecuatorial.ra, ecuatorial.dec, 'normal');
     const brillo = Astronomy.Illumination(body, fecha);
+    const constelacion = Astronomy.Constellation(ecuatorialJ2000.ra, ecuatorialJ2000.dec);
 
     let faseLunar: string | undefined;
     let anguloFase: number | undefined;
@@ -146,6 +148,9 @@ export function calcularCielo(fecha: Date, ubicacion: Ubicacion): CuerpoCeleste[
       acimut: Number(horizontal.azimuth.toFixed(1)),
       direccion: gradosADireccion(horizontal.azimuth),
       magnitud: Number(brillo.mag.toFixed(1)),
+      raHoras: Number(ecuatorial.ra.toFixed(4)),
+      decGrados: Number(ecuatorial.dec.toFixed(4)),
+      constelacionIAU: constelacion.symbol.toUpperCase(),
       iluminacion: Number((brillo.phase_fraction * 100).toFixed(0)),
       faseLunar,
       anguloFase,
