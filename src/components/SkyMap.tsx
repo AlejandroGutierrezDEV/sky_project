@@ -793,10 +793,13 @@ export function SkyMap({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const size = 560;
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
+    const tamanoBuffer = Math.round(size * dpr);
+    if (canvas.width !== tamanoBuffer || canvas.height !== tamanoBuffer) {
+      canvas.width = tamanoBuffer;
+      canvas.height = tamanoBuffer;
+    }
 
     const cx = size / 2;
     const cy = size / 2;
@@ -810,6 +813,7 @@ export function SkyMap({
 
     const dibujarEscena = (fasePulso: number) => {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, size, size);
       const interactivos: ObjetoHover[] = [];
 
       if (modoVista === '2d') {

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as EventoTecladoReact, PointerEvent as EventoPunteroReact } from 'react';
 import { Compass, Hand, Navigation, Smartphone, Target, X } from 'lucide-react';
 import type {
@@ -6,6 +6,7 @@ import type {
   CuerpoCeleste,
   EstadoSensorBrujula,
   EventoOrientacionDispositivo,
+  ObjetivoBrujula,
   OrientacionBrujula,
   TemaVisual,
 } from '../types/astronomy';
@@ -13,6 +14,7 @@ import type {
 interface Compass3DModalProps {
   tema: TemaVisual;
   cuerpos: CuerpoCeleste[];
+  objetivoSeleccionado?: ObjetivoBrujula | null;
   onCerrar: () => void;
 }
 
@@ -211,10 +213,21 @@ function prefiereMovimientoReducido(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+function etiquetaMarcador(nombre: string): string {
+  const token = nombre.split(' ')[0];
+  if (/^M\d+$/i.test(token)) return token.slice(0, 3);
+  return nombre.slice(0, 2);
+}
+
 const SELECTOR_ENFOCABLES =
   'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps) {
+export function Compass3DModal({
+  tema,
+  cuerpos,
+  objetivoSeleccionado = null,
+  onCerrar,
+}: Compass3DModalProps) {
   const paleta = PALETAS[tema];
   const idTitulo = useId();
   const idDescripcion = useId();
@@ -234,6 +247,7 @@ export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps)
 
   const objetivoRef = useRef<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
   const visualRef = useRef<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
+  const animacionIdRef = useRef<number>(0);
   const simulacionRef = useRef(true);
   const lecturaRecibidaRef = useRef(false);
   const lecturaAbsolutaRef = useRef(false);
@@ -287,13 +301,62 @@ export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps)
     };
   }, []);
 
+  /* Suavizado angular bajo demanda (camino más corto, sin bucle activo en reposo) */
+  const programarSuavizado = useCallback(() => {
+    if (animacionIdRef.current !== 0) return;
+    const factor = movimientoReducido ? 0.45 : 0.16;
+
+    const paso = () => {
+      const objetivo = objetivoRef.current;
+      const actual = visualRef.current;
+      const difRumbo = diferenciaAngular(objetivo.rumbo, actual.rumbo);
+      const difInclinacion = objetivo.inclinacion - actual.inclinacion;
+
+      if (Math.abs(difRumbo) < 0.05 && Math.abs(difInclinacion) < 0.05) {
+        if (actual.rumbo !== objetivo.rumbo || actual.inclinacion !== objetivo.inclinacion) {
+          const exacto = { rumbo: objetivo.rumbo, inclinacion: objetivo.inclinacion };
+          visualRef.current = exacto;
+          setVisual(exacto);
+        }
+        animacionIdRef.current = 0;
+        return;
+      }
+
+      const rumbo =
+        Math.abs(difRumbo) < 0.05
+          ? objetivo.rumbo
+          : normalizarAngulo(actual.rumbo + difRumbo * factor);
+      const inclinacion =
+        Math.abs(difInclinacion) < 0.05
+          ? objetivo.inclinacion
+          : actual.inclinacion + difInclinacion * factor;
+
+      const siguiente = { rumbo, inclinacion };
+      visualRef.current = siguiente;
+      setVisual(siguiente);
+      animacionIdRef.current = window.requestAnimationFrame(paso);
+    };
+
+    animacionIdRef.current = window.requestAnimationFrame(paso);
+  }, [movimientoReducido]);
+
+  useEffect(() => {
+    return () => {
+      if (animacionIdRef.current !== 0) {
+        window.cancelAnimationFrame(animacionIdRef.current);
+        animacionIdRef.current = 0;
+      }
+    };
+  }, []);
+
   /* Sincroniza el objetivo con los controles manuales en modo simulación */
   useEffect(() => {
     simulacionRef.current = simulacion;
     if (simulacion) {
       objetivoRef.current = { rumbo: normalizarAngulo(rumboManual), inclinacion: inclinacionManual };
+      programarSuavizado();
     }
-  }, [simulacion, rumboManual, inclinacionManual]);
+  }, [simulacion, rumboManual, inclinacionManual, programarSuavizado]);
 
   /* Escucha de sensores: deviceorientationabsolute (prioritario) + deviceorientation */
   useEffect(() => {
@@ -324,6 +387,7 @@ export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps)
 
       if (!simulacionRef.current) {
         objetivoRef.current = { rumbo, inclinacion };
+        programarSuavizado();
       }
 
       const referencia = absoluta ? 'absoluta' : 'relativa';
@@ -356,33 +420,7 @@ export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps)
       }
       window.removeEventListener('deviceorientation', procesarOrientacion);
     };
-  }, [escuchando, intentoSensor]);
-
-  /* Bucle de suavizado angular (camino más corto, sin saltos 359° → 0°) */
-  useEffect(() => {
-    const factor = movimientoReducido ? 0.45 : 0.16;
-    let idFrame = 0;
-    const paso = () => {
-      const objetivo = objetivoRef.current;
-      const actual = visualRef.current;
-      const difRumbo = diferenciaAngular(objetivo.rumbo, actual.rumbo);
-      const difInclinacion = objetivo.inclinacion - actual.inclinacion;
-      const rumbo =
-        Math.abs(difRumbo) < 0.05 ? objetivo.rumbo : normalizarAngulo(actual.rumbo + difRumbo * factor);
-      const inclinacion =
-        Math.abs(difInclinacion) < 0.05
-          ? objetivo.inclinacion
-          : actual.inclinacion + difInclinacion * factor;
-      if (rumbo !== actual.rumbo || inclinacion !== actual.inclinacion) {
-        const siguiente = { rumbo, inclinacion };
-        visualRef.current = siguiente;
-        setVisual(siguiente);
-      }
-      idFrame = window.requestAnimationFrame(paso);
-    };
-    idFrame = window.requestAnimationFrame(paso);
-    return () => window.cancelAnimationFrame(idFrame);
-  }, [movimientoReducido]);
+  }, [escuchando, intentoSensor, programarSuavizado]);
 
   const activarSensores = async () => {
     if (typeof DeviceOrientationEvent === 'undefined') {
@@ -479,18 +517,36 @@ export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps)
   const inclinacionEntera = Math.round(visual.inclinacion);
   const inclinacionVisual = limitar(visual.inclinacion, -INCLINACION_VISUAL_MAX, INCLINACION_VISUAL_MAX);
 
-  const cuerposVisibles = useMemo(
-    () => cuerpos.filter((c) => c.altitud > 0 && Number.isFinite(c.acimut)),
-    [cuerpos]
-  );
+  const objetivosVisibles = useMemo<ObjetivoBrujula[]>(() => {
+    const lista: ObjetivoBrujula[] = cuerpos
+      .filter((c) => c.altitud > 0 && Number.isFinite(c.acimut))
+      .map((c) => ({
+        id: c.id,
+        nombre: c.nombre,
+        acimut: c.acimut,
+        altitud: c.altitud,
+        color: c.color,
+      }));
 
-  let alineado: CuerpoCeleste | null = null;
+    if (
+      objetivoSeleccionado &&
+      objetivoSeleccionado.altitud > 0 &&
+      Number.isFinite(objetivoSeleccionado.acimut) &&
+      !lista.some((item) => item.id === objetivoSeleccionado.id)
+    ) {
+      lista.unshift(objetivoSeleccionado);
+    }
+
+    return lista;
+  }, [cuerpos, objetivoSeleccionado]);
+
+  let alineado: ObjetivoBrujula | null = null;
   let mejorDiferencia = Number.POSITIVE_INFINITY;
-  for (const cuerpo of cuerposVisibles) {
-    const dif = Math.abs(diferenciaAngular(cuerpo.acimut, visual.rumbo));
+  for (const objetivo of objetivosVisibles) {
+    const dif = Math.abs(diferenciaAngular(objetivo.acimut, visual.rumbo));
     if (dif <= MARGEN_ALINEACION && dif < mejorDiferencia) {
       mejorDiferencia = dif;
-      alineado = cuerpo;
+      alineado = objetivo;
     }
   }
 
@@ -529,7 +585,7 @@ export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps)
             </h2>
             <p id={idDescripcion} className="text-xs opacity-75 mt-1">
               Gira con tu dispositivo o arrastra el disco. Los marcadores del anillo exterior son la
-              Luna y los planetas sobre el horizonte.
+              Luna, los planetas y el astro seleccionado sobre el horizonte.
             </p>
           </div>
           <button
@@ -659,14 +715,24 @@ export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps)
                   />
 
                   {/* Marcadores astronómicos en su acimut real */}
-                  {cuerposVisibles.map((cuerpo) => {
-                    const p = puntoPolar(cuerpo.acimut, RADIO_MARCADORES);
-                    const esAlineado = alineado?.id === cuerpo.id;
-                    const color = paleta.marcadorFijo ?? cuerpo.color;
+                  {objetivosVisibles.map((objetivo) => {
+                    const p = puntoPolar(objetivo.acimut, RADIO_MARCADORES);
+                    const esAlineado = alineado?.id === objetivo.id;
+                    const esSeleccionado = objetivoSeleccionado?.id === objetivo.id;
+                    const color = paleta.marcadorFijo ?? objetivo.color;
+                    const etiqueta = etiquetaMarcador(objetivo.nombre);
                     return (
-                      <g key={cuerpo.id} transform={`rotate(${visual.rumbo} ${p.x} ${p.y})`}>
-                        {esAlineado && (
-                          <circle cx={p.x} cy={p.y} r={14} fill="none" stroke={paleta.acento} strokeWidth="2" />
+                      <g key={objetivo.id} transform={`rotate(${visual.rumbo} ${p.x} ${p.y})`}>
+                        {(esAlineado || esSeleccionado) && (
+                          <circle
+                            cx={p.x}
+                            cy={p.y}
+                            r={14}
+                            fill="none"
+                            stroke={paleta.acento}
+                            strokeWidth={esAlineado ? '2' : '1.4'}
+                            strokeDasharray={esAlineado ? undefined : '3 2'}
+                          />
                         )}
                         <circle
                           cx={p.x}
@@ -681,12 +747,12 @@ export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps)
                           y={p.y}
                           textAnchor="middle"
                           dominantBaseline="central"
-                          fontSize="8.5"
+                          fontSize={etiqueta.length > 2 ? '7.5' : '8.5'}
                           fontWeight={700}
                           fontFamily="'Space Grotesk Variable', system-ui, sans-serif"
                           fill={tema === 'rojo' ? '#000000' : '#0f172a'}
                         >
-                          {cuerpo.nombre.slice(0, 2)}
+                          {etiqueta}
                         </text>
                       </g>
                     );
@@ -746,9 +812,9 @@ export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps)
             </p>
           ) : (
             <p className="text-xs opacity-65 text-center">
-              {cuerposVisibles.length > 0
+              {objetivosVisibles.length > 0
                 ? 'Gira hasta situar un marcador bajo la línea de fe superior.'
-                : 'Ahora mismo no hay Luna ni planetas sobre el horizonte.'}
+                : 'Ahora mismo no hay objetivos visibles sobre el horizonte.'}
             </p>
           )}
         </div>
@@ -847,17 +913,17 @@ export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps)
           )}
 
           {/* Astros visibles */}
-          {cuerposVisibles.length > 0 && (
+          {objetivosVisibles.length > 0 && (
             <div>
               <p className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-65 mb-1.5">
                 Sobre el horizonte
               </p>
               <ul className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
-                {cuerposVisibles.map((cuerpo) => {
-                  const esAlineado = alineado?.id === cuerpo.id;
+                {objetivosVisibles.map((objetivo) => {
+                  const esAlineado = alineado?.id === objetivo.id;
                   return (
                     <li
-                      key={cuerpo.id}
+                      key={objetivo.id}
                       className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border ${
                         esAlineado ? paleta.claseAviso : 'border-current/15'
                       }`}
@@ -865,13 +931,13 @@ export function Compass3DModal({ tema, cuerpos, onCerrar }: Compass3DModalProps)
                       <span className="flex items-center gap-1.5 min-w-0">
                         <span
                           className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: paleta.marcadorFijo ?? cuerpo.color }}
+                          style={{ backgroundColor: paleta.marcadorFijo ?? objetivo.color }}
                           aria-hidden="true"
                         />
-                        <span className="truncate font-medium">{cuerpo.nombre}</span>
+                        <span className="truncate font-medium">{objetivo.nombre}</span>
                       </span>
                       <span className="font-mono opacity-80 shrink-0">
-                        {Math.round(cuerpo.acimut)}° · {Math.round(cuerpo.altitud)}°
+                        {Math.round(objetivo.acimut)}° · {Math.round(objetivo.altitud)}°
                       </span>
                     </li>
                   );
