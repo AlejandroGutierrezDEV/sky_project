@@ -168,10 +168,12 @@ export type EstadoSensorBrujula =
   | 'sin-lecturas';
 
 export interface OrientacionBrujula {
-  /** Rumbo en grados [0, 360). */
+  /** Rumbo magnético/geográfico en grados [0, 360). */
   rumbo: number;
-  /** Cabeceo/inclinación del dispositivo en grados. */
+  /** Inclinación visual para la perspectiva 3D del disco en grados [-65, 65]. */
   inclinacion: number;
+  /** Altitud real de apuntado sobre el horizonte en grados [-90, 90]. */
+  altitudApuntado: number;
 }
 
 export interface ObjetivoBrujula {
