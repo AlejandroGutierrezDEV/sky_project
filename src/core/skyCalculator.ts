@@ -1,6 +1,7 @@
 import * as Astronomy from 'astronomy-engine';
 import type {
   AstroSeleccionado,
+  ConstelacionCalculada,
   CuerpoCeleste,
   EfemeridesTransito,
   EstadoCieloSolar,
@@ -8,10 +9,12 @@ import type {
   FaseCrepusculo,
   MessierCalculado,
   PuntoTrayectoria,
+  SegmentoHorizontalConstelacion,
   Ubicacion,
 } from '../types/astronomy';
-import { CATALOGO_MESSIER } from '../data/messierCatalog';
-import { ESTRELLAS_BRILLANTES } from '../data/brightStars';
+import { CATALOGO_MESSIER } from '../data/messier110';
+import { CATALOGO_ESTRELLAS } from '../data/estrellasMag4';
+import { CONSTELACIONES_IAU } from '../data/constelacionesIAU';
 
 const CUERPOS_A_CALCULAR: {
   body: Astronomy.Body;
@@ -79,6 +82,23 @@ function precesarJ2000AFecha(
   return { ra: ecuatorialFecha.ra, dec: ecuatorialFecha.dec };
 }
 
+function crearConvertidorJ2000Horizontal(
+  fecha: Date,
+  observador: Astronomy.Observer
+): (raJ2000Horas: number, decJ2000Grados: number) => { altitud: number; acimut: number } {
+  const rotacion = Astronomy.Rotation_EQJ_HOR(fecha, observador);
+  return (raJ2000Horas: number, decJ2000Grados: number) => {
+    const esferaJ2000 = new Astronomy.Spherical(decJ2000Grados, raJ2000Horas * 15, 1);
+    const vectorJ2000 = Astronomy.VectorFromSphere(esferaJ2000, fecha);
+    const vectorHor = Astronomy.RotateVector(rotacion, vectorJ2000);
+    const horizontal = Astronomy.HorizonFromVector(vectorHor, 'normal');
+    return {
+      altitud: horizontal.lat,
+      acimut: horizontal.lon,
+    };
+  };
+}
+
 export function calcularEstadoSolar(fecha: Date, ubicacion: Ubicacion): EstadoCieloSolar | null {
   if (!esEntradaAstronomicaValida(fecha, ubicacion)) return null;
 
@@ -143,16 +163,15 @@ export function calcularEstrellas(fecha: Date, ubicacion: Ubicacion): EstrellaCa
     ubicacion.longitud,
     ubicacion.altitud
   );
-  const rotacion = Astronomy.Rotation_EQJ_EQD(fecha);
+  const convertirHorizontal = crearConvertidorJ2000Horizontal(fecha, observador);
 
-  return ESTRELLAS_BRILLANTES.map((estrella) => {
-    const { ra, dec } = precesarJ2000AFecha(estrella.ra, estrella.dec, fecha, rotacion);
-    const horizontal = Astronomy.Horizon(fecha, observador, ra, dec, 'normal');
+  return CATALOGO_ESTRELLAS.map((estrella) => {
+    const { altitud, acimut } = convertirHorizontal(estrella.raHoras, estrella.decGrados);
     return {
       ...estrella,
-      altitud: Number(horizontal.altitude.toFixed(1)),
-      acimut: Number(horizontal.azimuth.toFixed(1)),
-      visible: horizontal.altitude > 0,
+      altitud: Number(altitud.toFixed(1)),
+      acimut: Number(acimut.toFixed(1)),
+      visible: altitud > 0,
     };
   });
 }
@@ -165,16 +184,102 @@ export function calcularMessier(fecha: Date, ubicacion: Ubicacion): MessierCalcu
     ubicacion.longitud,
     ubicacion.altitud
   );
-  const rotacion = Astronomy.Rotation_EQJ_EQD(fecha);
+  const convertirHorizontal = crearConvertidorJ2000Horizontal(fecha, observador);
 
   return CATALOGO_MESSIER.map((obj) => {
-    const { ra, dec } = precesarJ2000AFecha(obj.ra, obj.dec, fecha, rotacion);
-    const horizontal = Astronomy.Horizon(fecha, observador, ra, dec, 'normal');
+    const { altitud, acimut } = convertirHorizontal(obj.raHoras, obj.decGrados);
     return {
       ...obj,
-      altitud: Number(horizontal.altitude.toFixed(1)),
-      acimut: Number(horizontal.azimuth.toFixed(1)),
-      visible: horizontal.altitude > 10,
+      altitud: Number(altitud.toFixed(1)),
+      acimut: Number(acimut.toFixed(1)),
+      visible: altitud > 10,
+    };
+  });
+}
+
+export function calcularConstelaciones(
+  fecha: Date,
+  ubicacion: Ubicacion
+): ConstelacionCalculada[] {
+  if (!esEntradaAstronomicaValida(fecha, ubicacion)) return [];
+
+  const observador = new Astronomy.Observer(
+    ubicacion.latitud,
+    ubicacion.longitud,
+    ubicacion.altitud
+  );
+  const convertirHorizontal = crearConvertidorJ2000Horizontal(fecha, observador);
+
+  return CONSTELACIONES_IAU.map((constelacion) => {
+    const segmentos: SegmentoHorizontalConstelacion[] = [];
+    let sxVisible = 0;
+    let syVisible = 0;
+    let szVisible = 0;
+    let conteoVisible = 0;
+    let sxTotal = 0;
+    let syTotal = 0;
+    let szTotal = 0;
+
+    const acumularVertice = (alt: number, az: number) => {
+      const altRad = (alt * Math.PI) / 180;
+      const azRad = (az * Math.PI) / 180;
+      const cosAlt = Math.cos(altRad);
+      const vx = cosAlt * Math.cos(azRad);
+      const vy = cosAlt * Math.sin(azRad);
+      const vz = Math.sin(altRad);
+
+      sxTotal += vx;
+      syTotal += vy;
+      szTotal += vz;
+
+      if (alt >= 0) {
+        sxVisible += vx;
+        syVisible += vy;
+        szVisible += vz;
+        conteoVisible += 1;
+      }
+    };
+
+    for (const [desdeJ2000, hastaJ2000] of constelacion.segmentos) {
+      const p1 = convertirHorizontal(desdeJ2000[0], desdeJ2000[1]);
+      const p2 = convertirHorizontal(hastaJ2000[0], hastaJ2000[1]);
+
+      acumularVertice(p1.altitud, p1.acimut);
+      acumularVertice(p2.altitud, p2.acimut);
+
+      segmentos.push({
+        desde: {
+          altitud: Number(p1.altitud.toFixed(1)),
+          acimut: Number(p1.acimut.toFixed(1)),
+        },
+        hasta: {
+          altitud: Number(p2.altitud.toFixed(1)),
+          acimut: Number(p2.acimut.toFixed(1)),
+        },
+      });
+    }
+
+    const sx = conteoVisible > 0 ? sxVisible : sxTotal;
+    const sy = conteoVisible > 0 ? syVisible : syTotal;
+    const sz = conteoVisible > 0 ? szVisible : szTotal;
+    const norma = Math.hypot(sx, sy, sz) || 1;
+    const centroAltRad = Math.asin(Math.max(-1, Math.min(1, sz / norma)));
+    const centroAzRad = Math.atan2(sy, sx);
+    const centroAltitud = Number(((centroAltRad * 180) / Math.PI).toFixed(1));
+    const centroAcimutGrados = (centroAzRad * 180) / Math.PI;
+    const centroAcimut = Number((((centroAcimutGrados % 360) + 360) % 360).toFixed(1));
+
+    const visible = segmentos.some((s) => s.desde.altitud >= 0 && s.hasta.altitud >= 0);
+
+    return {
+      codigo: constelacion.codigo,
+      nombreEs: constelacion.nombreEs,
+      nombreLatin: constelacion.nombreLatin,
+      estacion: constelacion.estacion,
+      segmentos,
+      centroAltitud,
+      centroAcimut,
+      visible,
     };
   });
 }
@@ -225,13 +330,18 @@ export function calcularTrayectoriaAstro(
 
   const catalogo =
     astro.categoria === 'estrella'
-      ? ESTRELLAS_BRILLANTES.find((e) => e.id === astro.id)
+      ? CATALOGO_ESTRELLAS.find((e) => e.id === astro.id)
       : CATALOGO_MESSIER.find((m) => m.id === astro.id);
 
   if (!catalogo) return [];
 
   const rotacion = Astronomy.Rotation_EQJ_EQD(fecha);
-  const { ra, dec } = precesarJ2000AFecha(catalogo.ra, catalogo.dec, fecha, rotacion);
+  const { ra, dec } = precesarJ2000AFecha(
+    catalogo.raHoras,
+    catalogo.decGrados,
+    fecha,
+    rotacion
+  );
 
   for (let i = -12; i <= 12; i++) {
     const fechaPaso = new Date(fecha.getTime() + i * pasoMs);
