@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Globe, Compass, RotateCcw, X } from 'lucide-react';
 import type {
   AstroSeleccionado,
@@ -64,6 +64,13 @@ interface PaletaMapa {
   textoEstrella: string;
 }
 
+interface CacheEscenaCanvas {
+  canvas: HTMLCanvasElement;
+  ancho: number;
+  alto: number;
+}
+
+const TAMANO_CANVAS = 560;
 const CAMARA_INICIAL: Camara3D = { rotAz: 0, tilt: 32 };
 const DURACION_TRANSICION_CAMARA_MS = 480;
 
@@ -680,6 +687,7 @@ export function SkyMap({
   contadorFoco = 0,
 }: Readonly<SkyMapProps>) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const escenaBaseRef = useRef<CacheEscenaCanvas | null>(null);
   const [modoVista, setModoVista] = useState<ModoVista>('2d');
   const [camara, setCamara] = useState<Camara3D>(CAMARA_INICIAL);
   const [hoverInfo, setHoverInfo] = useState<ObjetoHover | null>(null);
@@ -789,19 +797,59 @@ export function SkyMap({
     };
   }, [astroSeleccionado, modoVista, contadorFoco]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  const claveEscenaBase = useMemo(
+    () => ({
+      cuerpos,
+      estrellas,
+      messier,
+      tema,
+      modoVista,
+      camara,
+      mostrarConstelaciones,
+      mostrarEtiquetasEstrellas,
+      mostrarMessier,
+      trayectoria,
+    }),
+    [
+      cuerpos,
+      estrellas,
+      messier,
+      tema,
+      modoVista,
+      camara,
+      mostrarConstelaciones,
+      mostrarEtiquetasEstrellas,
+      mostrarMessier,
+      trayectoria,
+    ]
+  );
 
+  // Effect 1: Renderizado de la escena celeste base en el canvas secundario
+  useEffect(() => {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const size = 560;
+    const size = TAMANO_CANVAS;
     const tamanoBuffer = Math.round(size * dpr);
-    if (canvas.width !== tamanoBuffer || canvas.height !== tamanoBuffer) {
-      canvas.width = tamanoBuffer;
-      canvas.height = tamanoBuffer;
+
+    let cache = escenaBaseRef.current;
+    if (!cache) {
+      const canvasBase = document.createElement('canvas');
+      canvasBase.width = tamanoBuffer;
+      canvasBase.height = tamanoBuffer;
+      cache = {
+        canvas: canvasBase,
+        ancho: tamanoBuffer,
+        alto: tamanoBuffer,
+      };
+      escenaBaseRef.current = cache;
+    } else if (cache.ancho !== tamanoBuffer || cache.alto !== tamanoBuffer) {
+      cache.canvas.width = tamanoBuffer;
+      cache.canvas.height = tamanoBuffer;
+      cache.ancho = tamanoBuffer;
+      cache.alto = tamanoBuffer;
     }
+
+    const ctxBase = cache.canvas.getContext('2d');
+    if (!ctxBase) return;
 
     const cx = size / 2;
     const cy = size / 2;
@@ -813,65 +861,41 @@ export function SkyMap({
         ? (alt: number, az: number) => proyectar2D(alt, az, cx, cy, radio)
         : (alt: number, az: number) => proyectar3D(alt, az, cx, cy, size, camara);
 
-    const dibujarEscena = (fasePulso: number) => {
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, size, size);
-      const interactivos: ObjetoHover[] = [];
+    ctxBase.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctxBase.clearRect(0, 0, size, size);
+    const interactivos: ObjetoHover[] = [];
 
-      if (modoVista === '2d') {
-        dibujarBaseMapa2D(ctx, size, cx, cy, radio, paleta);
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(cx, cy, radio, 0, Math.PI * 2);
-        ctx.clip();
-      } else {
-        dibujarBaseMapa3D(ctx, size, cx, cy, camara, paleta, tema);
-        ctx.save();
-      }
-
-      dibujarEstrellas(
-        ctx,
-        estrellas,
-        mostrarConstelaciones,
-        mostrarEtiquetasEstrellas,
-        proyectarFn,
-        paleta,
-        tema,
-        interactivos
-      );
-
-      if (mostrarMessier) {
-        dibujarMessier(ctx, messier, tema, proyectarFn, interactivos);
-      }
-
-      dibujarTrayectoria(ctx, trayectoria, tema, proyectarFn);
-      dibujarCuerpos(ctx, cuerpos, tema, proyectarFn, interactivos);
-      dibujarReticulaSeleccion(ctx, astroSeleccionado, interactivos, tema, fasePulso);
-
-      ctx.restore();
-      puntosInteractivosRef.current = interactivos;
-    };
-
-    const prefiereMovimientoReducido =
-      typeof window !== 'undefined' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    if (!astroSeleccionado || prefiereMovimientoReducido) {
-      dibujarEscena(0.5);
-      return;
+    if (modoVista === '2d') {
+      dibujarBaseMapa2D(ctxBase, size, cx, cy, radio, paleta);
+      ctxBase.save();
+      ctxBase.beginPath();
+      ctxBase.arc(cx, cy, radio, 0, Math.PI * 2);
+      ctxBase.clip();
+    } else {
+      dibujarBaseMapa3D(ctxBase, size, cx, cy, camara, paleta, tema);
+      ctxBase.save();
     }
 
-    let animacionId = 0;
-    const animar = (tiempo: number) => {
-      const fase = (Math.sin(tiempo / 320) + 1) / 2;
-      dibujarEscena(fase);
-      animacionId = window.requestAnimationFrame(animar);
-    };
-    animacionId = window.requestAnimationFrame(animar);
+    dibujarEstrellas(
+      ctxBase,
+      estrellas,
+      mostrarConstelaciones,
+      mostrarEtiquetasEstrellas,
+      proyectarFn,
+      paleta,
+      tema,
+      interactivos
+    );
 
-    return () => {
-      window.cancelAnimationFrame(animacionId);
-    };
+    if (mostrarMessier) {
+      dibujarMessier(ctxBase, messier, tema, proyectarFn, interactivos);
+    }
+
+    dibujarTrayectoria(ctxBase, trayectoria, tema, proyectarFn);
+    dibujarCuerpos(ctxBase, cuerpos, tema, proyectarFn, interactivos);
+
+    ctxBase.restore();
+    puntosInteractivosRef.current = interactivos;
   }, [
     cuerpos,
     estrellas,
@@ -882,9 +906,76 @@ export function SkyMap({
     mostrarConstelaciones,
     mostrarEtiquetasEstrellas,
     mostrarMessier,
-    astroSeleccionado,
     trayectoria,
   ]);
+
+  // Effect 2: Composición desde el canvas cacheado y animación de la retícula de selección
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const size = TAMANO_CANVAS;
+    const tamanoBuffer = Math.round(size * dpr);
+    if (canvas.width !== tamanoBuffer || canvas.height !== tamanoBuffer) {
+      canvas.width = tamanoBuffer;
+      canvas.height = tamanoBuffer;
+    }
+
+    const { tema: temaActual, modoVista: modoActual } = claveEscenaBase;
+
+    const dibujarFrame = (fasePulso: number) => {
+      const base = escenaBaseRef.current;
+      if (!base) return;
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, size, size);
+      ctx.drawImage(base.canvas, 0, 0, size, size);
+
+      if (astroSeleccionado) {
+        ctx.save();
+        if (modoActual === '2d') {
+          ctx.beginPath();
+          ctx.arc(size / 2, size / 2, size / 2 - 36, 0, Math.PI * 2);
+          ctx.clip();
+        }
+        dibujarReticulaSeleccion(
+          ctx,
+          astroSeleccionado,
+          puntosInteractivosRef.current,
+          temaActual,
+          fasePulso
+        );
+        ctx.restore();
+      }
+    };
+
+    const prefiereMovimientoReducido =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (!astroSeleccionado || prefiereMovimientoReducido) {
+      dibujarFrame(0.5);
+      return;
+    }
+
+    // Dibujar inmediatamente para evitar frames en blanco al cambiar escena o tamaño
+    dibujarFrame((Math.sin(performance.now() / 320) + 1) / 2);
+
+    let animacionId = 0;
+    const animar = (tiempo: number) => {
+      const fase = (Math.sin(tiempo / 320) + 1) / 2;
+      dibujarFrame(fase);
+      animacionId = window.requestAnimationFrame(animar);
+    };
+    animacionId = window.requestAnimationFrame(animar);
+
+    return () => {
+      window.cancelAnimationFrame(animacionId);
+    };
+  }, [astroSeleccionado, claveEscenaBase]);
 
   const buscarAstroEnPuntero = (e: PointerEvent<HTMLCanvasElement>): ObjetoHover | null => {
     const canvas = canvasRef.current;
