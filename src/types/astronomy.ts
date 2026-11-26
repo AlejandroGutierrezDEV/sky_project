@@ -1,15 +1,34 @@
 export type TemaVisual = 'oscuro' | 'claro' | 'rojo';
 
+export type EscalaBortle = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+
+export interface DatosLunares {
+  iluminacion: number; // 0 a 1 (0% a 100%)
+  altitudGrados: number; // -90 a +90
+  faseNombre: string;
+}
+
+export interface CalidadCieloCalculada {
+  magnitudLimiteVisible: number; // Ej: 6.8 en Bortle 2 sin Luna -> 4.1 con Luna llena
+  penalizacionLunar: number; // Magnitudes perdidas por brillo lunar
+  veredicto: 'Excelente' | 'Bueno' | 'Regular' | 'Malo';
+  motivoPrincipal: string;
+}
+
 export interface Ubicacion {
   latitud: number;
   longitud: number;
   altitud: number;
   nombre: string;
+  bortle?: EscalaBortle;
 }
 
 export interface UbicacionFavorita extends Ubicacion {
   id: string;
+  bortle: EscalaBortle;
 }
+
+export type ObservatorioFavorito = UbicacionFavorita;
 
 export interface CuerpoCeleste {
   id: string;

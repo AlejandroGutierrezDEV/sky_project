@@ -42,12 +42,22 @@ import { Navbar } from './components/Navbar';
 import { AstronomyGuide } from './components/AstronomyGuide';
 import { Compass3DModal } from './components/Compass3DModal';
 import { usePreferenciasMapa } from './hooks/usePreferenciasMapa';
+import {
+  BORTLE_POR_DEFECTO,
+  DESCRIPCIONES_BORTLE,
+  NIVELES_BORTLE,
+  calcularCalidadCielo,
+  esEscalaBortleValida,
+  normalizarEscalaBortle,
+} from './utils/astronomia/calidadCielo';
 import type {
   AstroSeleccionado,
   CategoriaAstro,
   CondicionesMeteo,
   CuerpoCeleste,
+  DatosLunares,
   EfemeridesTransito,
+  EscalaBortle,
   ObjetivoBrujula,
   TemaVisual,
   Ubicacion,
@@ -68,6 +78,7 @@ const UBICACION_INICIAL: Ubicacion = {
   longitud: -0.38,
   altitud: 150,
   nombre: 'Mi Observatorio (Valencia)',
+  bortle: BORTLE_POR_DEFECTO,
 };
 
 const CLASES_CONTENEDOR: Record<TemaVisual, string> = {
@@ -100,6 +111,7 @@ interface FormularioUbicacion {
   latitud: string;
   longitud: string;
   altitud: string;
+  bortle: EscalaBortle;
 }
 
 interface ErroresUbicacion {
@@ -131,6 +143,7 @@ function normalizarTextoBusqueda(texto: string): string {
 function esUbicacionValida(valor: unknown): valor is Ubicacion {
   if (typeof valor !== 'object' || valor === null) return false;
   const obj = valor as Record<string, unknown>;
+  const bortleValido = obj.bortle === undefined || esEscalaBortleValida(obj.bortle);
   return (
     typeof obj.nombre === 'string' &&
     obj.nombre.length <= MAX_NOMBRE_UBICACION &&
@@ -145,18 +158,49 @@ function esUbicacionValida(valor: unknown): valor is Ubicacion {
     typeof obj.altitud === 'number' &&
     Number.isFinite(obj.altitud) &&
     obj.altitud >= -500 &&
-    obj.altitud <= 9000
+    obj.altitud <= 9000 &&
+    bortleValido
   );
 }
 
-function esUbicacionFavoritaValida(valor: unknown): valor is UbicacionFavorita {
-  if (typeof valor !== 'object' || valor === null) return false;
+function normalizarUbicacionFavorita(valor: unknown): UbicacionFavorita | null {
+  if (typeof valor !== 'object' || valor === null) return null;
   const obj = valor as Record<string, unknown>;
-  return (
-    typeof obj.id === 'string' &&
-    obj.id.trim().length > 0 &&
-    esUbicacionValida(valor)
-  );
+  if (typeof obj.id !== 'string' || obj.id.trim().length === 0) return null;
+  if (!esUbicacionValida(valor)) return null;
+
+  return {
+    id: obj.id,
+    nombre: valor.nombre,
+    latitud: valor.latitud,
+    longitud: valor.longitud,
+    altitud: valor.altitud,
+    bortle: normalizarEscalaBortle(valor.bortle),
+  };
+}
+
+/**
+ * Parsea la lista de observatorios favoritos desde localStorage garantizando
+ * retrocompatibilidad con registros antiguos sin campo `bortle` (asigna 4).
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function parsearFavoritosGuardados(raw: string | null): UbicacionFavorita[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const resultados: UbicacionFavorita[] = [];
+    for (const item of parsed) {
+      const normalizado = normalizarUbicacionFavorita(item);
+      if (normalizado) {
+        resultados.push(normalizado);
+        if (resultados.length >= MAX_FAVORITOS) break;
+      }
+    }
+    return resultados;
+  } catch {
+    return [];
+  }
 }
 
 function leerUbicacionGuardada(): Ubicacion {
@@ -164,7 +208,11 @@ function leerUbicacionGuardada(): Ubicacion {
     const guardada = localStorage.getItem(CLAVE_UBICACION);
     if (!guardada) return UBICACION_INICIAL;
     const parsed: unknown = JSON.parse(guardada);
-    return esUbicacionValida(parsed) ? parsed : UBICACION_INICIAL;
+    if (!esUbicacionValida(parsed)) return UBICACION_INICIAL;
+    return {
+      ...parsed,
+      bortle: normalizarEscalaBortle(parsed.bortle),
+    };
   } catch {
     return UBICACION_INICIAL;
   }
@@ -172,11 +220,7 @@ function leerUbicacionGuardada(): Ubicacion {
 
 function leerFavoritosGuardados(): UbicacionFavorita[] {
   try {
-    const guardado = localStorage.getItem(CLAVE_FAVORITOS);
-    if (!guardado) return [];
-    const parsed: unknown = JSON.parse(guardado);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(esUbicacionFavoritaValida).slice(0, MAX_FAVORITOS);
+    return parsearFavoritosGuardados(localStorage.getItem(CLAVE_FAVORITOS));
   } catch {
     return [];
   }
@@ -255,8 +299,15 @@ function validarFormularioUbicacion(form: FormularioUbicacion): {
       latitud: lat,
       longitud: lon,
       altitud: alt,
+      bortle: normalizarEscalaBortle(form.bortle),
     },
   };
+}
+
+function obtenerClaseOptionSelect(tema: TemaVisual): string {
+  if (tema === 'rojo') return 'bg-black text-red-500';
+  if (tema === 'claro') return 'bg-white text-slate-900';
+  return 'bg-slate-950 text-slate-100';
 }
 
 function obtenerClaseBotonAplicar(tema: TemaVisual): string {
@@ -362,6 +413,7 @@ export function App() {
     latitud: String(ubicacion.latitud),
     longitud: String(ubicacion.longitud),
     altitud: String(ubicacion.altitud),
+    bortle: normalizarEscalaBortle(ubicacion.bortle),
   }));
 
   const [editandoUbicacion, setEditandoUbicacion] = useState(false);
@@ -371,6 +423,7 @@ export function App() {
   const [errorGPS, setErrorGPS] = useState<string | null>(null);
   const gpsRequestIdRef = useRef<number>(0);
   const altitudActualRef = useRef<number>(ubicacion.altitud);
+  const bortleActualRef = useRef<EscalaBortle>(normalizarEscalaBortle(ubicacion.bortle));
 
   const [fechaStr, setFechaStr] = useState<string>(() => formatearFechaParaInput(new Date()));
   const [reproduciendo, setReproduciendo] = useState(false);
@@ -434,15 +487,18 @@ export function App() {
   );
 
   const hayErroresUbicacion = Object.keys(erroresUbicacion).length > 0;
+  const bortleActual = normalizarEscalaBortle(ubicacion.bortle);
   const ubicacionSinCambios =
     ubicacionFormularioValida !== null &&
     ubicacionFormularioValida.nombre === ubicacion.nombre &&
     ubicacionFormularioValida.latitud === ubicacion.latitud &&
     ubicacionFormularioValida.longitud === ubicacion.longitud &&
-    ubicacionFormularioValida.altitud === ubicacion.altitud;
+    ubicacionFormularioValida.altitud === ubicacion.altitud &&
+    normalizarEscalaBortle(ubicacionFormularioValida.bortle) === bortleActual;
 
   useEffect(() => {
     altitudActualRef.current = ubicacion.altitud;
+    bortleActualRef.current = normalizarEscalaBortle(ubicacion.bortle);
     if (omitirGuardadoUbicacionRef.current) {
       omitirGuardadoUbicacionRef.current = false;
       return;
@@ -544,6 +600,23 @@ export function App() {
   const cuerpos = useMemo(
     () => calcularCielo(fechaSeleccionada, coordenadasEstables),
     [fechaSeleccionada, coordenadasEstables]
+  );
+
+  const datosLunares = useMemo<DatosLunares>(() => {
+    const luna = cuerpos.find((c) => c.tipo === 'luna');
+    if (!luna) {
+      return { iluminacion: 0, altitudGrados: -90, faseNombre: 'Luna Nueva' };
+    }
+    return {
+      iluminacion: (luna.iluminacion ?? 0) / 100,
+      altitudGrados: luna.altitud,
+      faseNombre: luna.faseLunar ?? 'Luna',
+    };
+  }, [cuerpos]);
+
+  const calidadCielo = useMemo(
+    () => calcularCalidadCielo(estadoMeteo.datos?.nubesTotal ?? 0, bortleActual, datosLunares),
+    [estadoMeteo.datos?.nubesTotal, bortleActual, datosLunares]
   );
 
   const estrellas = useMemo(
@@ -688,10 +761,21 @@ export function App() {
     };
   }, [astroSeleccionado, cuerpos, estrellas, messier]);
 
-  const actualizarCampoUbicacion = (campo: keyof FormularioUbicacion, valor: string) => {
+  const actualizarCampoUbicacion = (
+    campo: Exclude<keyof FormularioUbicacion, 'bortle'>,
+    valor: string
+  ) => {
     const valorSanitizado =
       campo === 'nombre' ? valor.slice(0, MAX_NOMBRE_UBICACION) : valor;
     setFormUbicacion((prev) => ({ ...prev, [campo]: valorSanitizado }));
+    setErrorGPS(null);
+    setAvisoFavorito(null);
+  };
+
+  const actualizarBortleUbicacion = (valor: string) => {
+    const numero = Number(valor);
+    if (!esEscalaBortleValida(numero)) return;
+    setFormUbicacion((prev) => ({ ...prev, bortle: numero }));
     setErrorGPS(null);
     setAvisoFavorito(null);
   };
@@ -703,14 +787,16 @@ export function App() {
     const { ubicacionValida } = validarFormularioUbicacion(formUbicacion);
     if (!ubicacionValida) return;
 
+    const bortle = normalizarEscalaBortle(ubicacionValida.bortle);
     gpsRequestIdRef.current += 1;
     setCargandoGPS(false);
-    setUbicacion(ubicacionValida);
+    setUbicacion({ ...ubicacionValida, bortle });
     setFormUbicacion({
       nombre: ubicacionValida.nombre,
       latitud: String(ubicacionValida.latitud),
       longitud: String(ubicacionValida.longitud),
       altitud: String(ubicacionValida.altitud),
+      bortle,
     });
   };
 
@@ -723,12 +809,21 @@ export function App() {
     }
 
     const nombreLimpio = ubicacionValida.nombre.trim() || 'Observatorio sin nombre';
-    const candidata: Ubicacion = {
+    const bortle = normalizarEscalaBortle(ubicacionValida.bortle);
+    const candidata: Ubicacion & { bortle: EscalaBortle } = {
       ...ubicacionValida,
       nombre: nombreLimpio,
+      bortle,
     };
 
-    if (favoritos.some((fav) => esUbicacionDuplicada(fav, candidata))) {
+    const duplicado = favoritos.find((fav) => esUbicacionDuplicada(fav, candidata));
+    if (duplicado) {
+      if (duplicado.bortle !== bortle) {
+        setFavoritos((prev) =>
+          prev.map((fav) => (fav.id === duplicado.id ? { ...fav, bortle } : fav))
+        );
+        return;
+      }
       setAvisoFavorito('Ya existe un favorito con ese nombre o en coordenadas muy cercanas.');
       return;
     }
@@ -741,6 +836,7 @@ export function App() {
     const nuevoFavorito: UbicacionFavorita = {
       ...candidata,
       id: generarIdFavorito(),
+      bortle,
     };
     setFavoritos((prev) => [...prev, nuevoFavorito]);
   };
@@ -750,11 +846,13 @@ export function App() {
     setCargandoGPS(false);
     setErrorGPS(null);
     setAvisoFavorito(null);
+    const bortle = normalizarEscalaBortle(fav.bortle);
     const seleccionada: Ubicacion = {
       nombre: fav.nombre,
       latitud: fav.latitud,
       longitud: fav.longitud,
       altitud: fav.altitud,
+      bortle,
     };
     setUbicacion(seleccionada);
     setFormUbicacion({
@@ -762,6 +860,7 @@ export function App() {
       latitud: String(seleccionada.latitud),
       longitud: String(seleccionada.longitud),
       altitud: String(seleccionada.altitud),
+      bortle,
     });
   };
 
@@ -805,6 +904,7 @@ export function App() {
       latitud: String(UBICACION_INICIAL.latitud),
       longitud: String(UBICACION_INICIAL.longitud),
       altitud: String(UBICACION_INICIAL.altitud),
+      bortle: BORTLE_POR_DEFECTO,
     });
     setFavoritos([]);
     setTema('oscuro');
@@ -884,6 +984,7 @@ export function App() {
           longitud: lon,
           altitud: alt,
           nombre: 'Ubicación GPS Actual',
+          bortle: bortleActualRef.current,
         };
         setUbicacion(nuevaUbicacion);
         setFormUbicacion({
@@ -891,6 +992,7 @@ export function App() {
           latitud: String(nuevaUbicacion.latitud),
           longitud: String(nuevaUbicacion.longitud),
           altitud: String(nuevaUbicacion.altitud),
+          bortle: bortleActualRef.current,
         });
         setCargandoGPS(false);
       },
@@ -1012,7 +1114,7 @@ export function App() {
             )}
 
             <form onSubmit={aplicarUbicacionManual} className="space-y-3" noValidate>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-sm">
                 <label className="space-y-1">
                   <span className="text-xs opacity-70">Nombre del lugar</span>
                   <input
@@ -1082,6 +1184,25 @@ export function App() {
                     </span>
                   )}
                 </label>
+                <label className="space-y-1">
+                  <span className="text-xs opacity-70">Escala Bortle (1–9)</span>
+                  <select
+                    aria-label="Escala Bortle de contaminación lumínica (1 a 9)"
+                    value={formUbicacion.bortle}
+                    onChange={(e) => actualizarBortleUbicacion(e.target.value)}
+                    className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent text-xs cursor-pointer ${claseEsquemaInput}`}
+                  >
+                    {NIVELES_BORTLE.map((nivel) => (
+                      <option
+                        key={nivel}
+                        value={nivel}
+                        className={obtenerClaseOptionSelect(tema)}
+                      >
+                        {DESCRIPCIONES_BORTLE[nivel]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
               <div className="flex justify-end">
                 <button
@@ -1123,11 +1244,12 @@ export function App() {
                         <button
                           type="button"
                           onClick={() => cargarUbicacionFavorita(fav)}
-                          title={`${fav.nombre} (${fav.latitud}°, ${fav.longitud}° · ${fav.altitud}m)`}
+                          title={`${fav.nombre} (${fav.latitud}°, ${fav.longitud}° · ${fav.altitud}m · Bortle ${fav.bortle})`}
                           className="pl-3 pr-2 py-1 cursor-pointer flex items-center gap-1.5 font-medium"
                         >
                           <MapPin className="w-3 h-3 opacity-75 shrink-0" aria-hidden="true" />
                           <span>{fav.nombre}</span>
+                          <span className="font-mono text-[10px] opacity-70">B{fav.bortle}</span>
                         </button>
                         <button
                           type="button"
@@ -1441,6 +1563,8 @@ export function App() {
                     trayectoria={trayectoriaAstro}
                     onSeleccionarAstro={setAstroSeleccionado}
                     contadorFoco={contadorFoco}
+                    magnitudLimiteVisible={calidadCielo.magnitudLimiteVisible}
+                    bortle={bortleActual}
                   />
                 </div>
 
@@ -1463,6 +1587,8 @@ export function App() {
                   aviso={estadoMeteo.aviso}
                   tema={tema}
                   claseTarjeta={clasesTarjeta}
+                  calidadCielo={calidadCielo}
+                  bortle={bortleActual}
                   onSeleccionarHora={(fechaHora) => {
                     if (Number.isNaN(fechaHora.getTime())) return;
                     setReproduciendo(false);
@@ -1575,6 +1701,7 @@ export function App() {
         <Compass3DModal
           tema={tema}
           cuerpos={cuerpos}
+          ubicacion={ubicacion}
           objetivoSeleccionado={objetivoBrujula}
           onCerrar={cerrarBrujula}
         />

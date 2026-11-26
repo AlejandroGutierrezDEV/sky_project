@@ -9,11 +9,17 @@ import type {
   ObjetivoBrujula,
   OrientacionBrujula,
   TemaVisual,
+  Ubicacion,
 } from '../types/astronomy';
+import {
+  calcularDeclinacionMagnetica,
+  formatearDeclinacionMagnetica,
+} from '../utils/astronomia/declinacionMagnetica';
 
 interface Compass3DModalProps {
   tema: TemaVisual;
   cuerpos: CuerpoCeleste[];
+  ubicacion: Pick<Ubicacion, 'latitud' | 'longitud'>;
   objetivoSeleccionado?: ObjetivoBrujula | null;
   onCerrar: () => void;
 }
@@ -22,6 +28,17 @@ interface Compass3DModalProps {
 
 function normalizarAngulo(angulo: number): number {
   return ((angulo % 360) + 360) % 360;
+}
+
+/** Convierte rumbo magnético a acimut geográfico verdadero aplicando la declinación local. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function aplicarDeclinacionMagnetica(
+  rumboMagnetico: number,
+  declinacionGrados: number
+): number {
+  if (!Number.isFinite(rumboMagnetico)) return 0;
+  const declinacion = Number.isFinite(declinacionGrados) ? declinacionGrados : 0;
+  return normalizarAngulo(rumboMagnetico + declinacion);
 }
 
 /** Diferencia por el camino más corto en el círculo, en el rango [-180, 180). */
@@ -293,12 +310,26 @@ const SELECTOR_ENFOCABLES =
 export function Compass3DModal({
   tema,
   cuerpos,
+  ubicacion,
   objetivoSeleccionado = null,
   onCerrar,
 }: Compass3DModalProps) {
   const paleta = PALETAS[tema];
   const idTitulo = useId();
   const idDescripcion = useId();
+
+  const declinacionMagnetica = useMemo(
+    () => calcularDeclinacionMagnetica(ubicacion.latitud, ubicacion.longitud),
+    [ubicacion.latitud, ubicacion.longitud]
+  );
+  const etiquetaDeclinacion = useMemo(
+    () => formatearDeclinacionMagnetica(declinacionMagnetica),
+    [declinacionMagnetica]
+  );
+  const declinacionRef = useRef(declinacionMagnetica);
+  useEffect(() => {
+    declinacionRef.current = declinacionMagnetica;
+  }, [declinacionMagnetica]);
 
   const panelRef = useRef<HTMLDivElement | null>(null);
   const botonCerrarRef = useRef<HTMLButtonElement | null>(null);
@@ -478,8 +509,9 @@ export function Compass3DModal({
       let absoluta = false;
 
       if (typeof datos.webkitCompassHeading === 'number' && Number.isFinite(datos.webkitCompassHeading)) {
-        // Safari iOS: rumbo magnético absoluto referido al Norte, compensando rotación de pantalla
-        rumbo = normalizarAngulo(datos.webkitCompassHeading + anguloPantalla);
+        // Safari iOS: rumbo magnético absoluto referido al Norte magnético -> aplicar declinación local
+        const rumboMagnetico = normalizarAngulo(datos.webkitCompassHeading + anguloPantalla);
+        rumbo = aplicarDeclinacionMagnetica(rumboMagnetico, declinacionRef.current);
         absoluta = true;
         if (beta !== null || gamma !== null) {
           altitudApuntado = calcularOrientacionDesdeSensores(
@@ -499,7 +531,9 @@ export function Compass3DModal({
           gamma ?? 0,
           anguloPantalla
         );
-        rumbo = orientacion.rumbo;
+        rumbo = absoluta
+          ? aplicarDeclinacionMagnetica(orientacion.rumbo, declinacionRef.current)
+          : orientacion.rumbo;
         altitudApuntado = beta !== null || gamma !== null ? orientacion.altitudApuntado : 0;
       }
 
@@ -729,6 +763,11 @@ export function Compass3DModal({
             <p id={idDescripcion} className="text-xs opacity-75 mt-1">
               Gira con tu dispositivo o arrastra el disco. Los marcadores del anillo exterior son la
               Luna, los planetas y el astro seleccionado sobre el horizonte.
+            </p>
+            <p className="inline-flex items-center gap-1.5 mt-1.5 px-2 py-0.5 rounded-md border border-current/20 bg-current/5 font-mono text-[11px] opacity-80">
+              <span>Decl. Mag: {etiquetaDeclinacion}</span>
+              <span aria-hidden="true">·</span>
+              <span>Norte geográfico</span>
             </p>
           </div>
           <button
