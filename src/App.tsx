@@ -65,6 +65,12 @@ const CLASES_CONTENEDOR: Record<TemaVisual, string> = {
   rojo: 'bg-transparent text-red-500',
 };
 
+const COLOR_TEMA_META: Record<TemaVisual, string> = {
+  oscuro: '#020617',
+  claro: '#dbeafe',
+  rojo: '#000000',
+};
+
 const CLASES_TARJETA: Record<TemaVisual, string> = {
   oscuro:
     'hud-esquinas hud-oscuro bg-slate-900/55 backdrop-blur-md border-cyan-400/15',
@@ -387,6 +393,10 @@ export function App() {
 
   useEffect(() => {
     guardarEnStorage(CLAVE_TEMA, tema);
+    const metaThemeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (metaThemeColor) {
+      metaThemeColor.content = COLOR_TEMA_META[tema];
+    }
   }, [tema]);
 
   useEffect(() => {
@@ -753,8 +763,16 @@ export function App() {
         });
         setCargandoGPS(false);
       },
-      () => {
-        setErrorGPS('No se pudo obtener el GPS. Revisa los permisos o inténtalo de nuevo.');
+      (err) => {
+        if (err.code === 1) {
+          setErrorGPS('Permiso de ubicación denegado. Actívalo en los ajustes del navegador.');
+        } else if (err.code === 2) {
+          setErrorGPS('Señal GPS no disponible en este momento.');
+        } else if (err.code === 3) {
+          setErrorGPS('Tiempo de espera agotado al obtener la ubicación GPS.');
+        } else {
+          setErrorGPS('No se pudo obtener el GPS. Revisa los permisos o inténtalo de nuevo.');
+        }
         setCargandoGPS(false);
       },
       { enableHighAccuracy: false, timeout: 10000 }
@@ -789,7 +807,9 @@ export function App() {
   const claseEsquemaInput = tema !== 'claro' ? '[color-scheme:dark]' : '';
 
   return (
-    <div className={`tema-${tema} relative min-h-screen transition-colors duration-300 ${clasesContenedor}`}>
+    <div
+      className={`tema-${tema} relative min-h-screen transition-colors duration-300 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] ${clasesContenedor}`}
+    >
       <StarfieldBackground tema={tema} />
       <Navbar
         tema={tema}
@@ -815,27 +835,27 @@ export function App() {
 
         {/* Panel desplegable de Ubicación */}
         {editandoUbicacion && (
-          <section className={`p-4 rounded-2xl border ${clasesTarjeta} space-y-3`}>
+          <section id="panel-ubicacion" className={`p-4 rounded-2xl border ${clasesTarjeta} space-y-3`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="font-semibold text-sm flex items-center gap-2">
-                <MapPin className="w-4 h-4" /> Configurar punto de observación
+                <MapPin className="w-4 h-4" aria-hidden="true" /> Configurar punto de observación
               </h2>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={guardarUbicacionFavorita}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-current/30 hover:bg-current/10 cursor-pointer transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 min-h-10 sm:min-h-8 rounded-lg text-xs font-medium border border-current/30 hover:bg-current/10 cursor-pointer transition-colors"
                 >
-                  <Star className="w-3.5 h-3.5" />
+                  <Star className="w-3.5 h-3.5" aria-hidden="true" />
                   Guardar en favoritos
                 </button>
                 <button
                   type="button"
                   onClick={detectarGPS}
                   disabled={cargandoGPS}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-current/30 hover:bg-current/10 cursor-pointer disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-3 py-1.5 min-h-10 sm:min-h-8 rounded-lg text-xs font-medium border border-current/30 hover:bg-current/10 cursor-pointer disabled:opacity-50"
                 >
-                  <Crosshair className="w-3.5 h-3.5" />
+                  <Crosshair className="w-3.5 h-3.5" aria-hidden="true" />
                   {cargandoGPS ? 'Obteniendo GPS...' : 'Usar GPS del dispositivo'}
                 </button>
               </div>
@@ -866,51 +886,66 @@ export function App() {
                   type="text"
                   value={formUbicacion.nombre}
                   onChange={(e) => actualizarCampoUbicacion('nombre', e.target.value)}
-                  className={`w-full px-3 py-1.5 rounded-lg border border-current/25 bg-transparent ${claseEsquemaInput}`}
+                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent ${claseEsquemaInput}`}
                 />
               </label>
               <label className="space-y-1">
                 <span className="text-xs opacity-70">Latitud (°N)</span>
                 <input
                   type="number"
+                  inputMode="decimal"
                   min={-90}
                   max={90}
                   step="0.0001"
+                  aria-invalid={Boolean(erroresUbicacion.latitud)}
+                  aria-describedby={erroresUbicacion.latitud ? 'error-latitud' : undefined}
                   value={formUbicacion.latitud}
                   onChange={(e) => actualizarCampoUbicacion('latitud', e.target.value)}
-                  className={`w-full px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
                 />
                 {erroresUbicacion.latitud && (
-                  <span className="block text-[11px] opacity-90">{erroresUbicacion.latitud}</span>
+                  <span id="error-latitud" className="block text-[11px] opacity-90">
+                    {erroresUbicacion.latitud}
+                  </span>
                 )}
               </label>
               <label className="space-y-1">
                 <span className="text-xs opacity-70">Longitud (°E)</span>
                 <input
                   type="number"
+                  inputMode="decimal"
                   min={-180}
                   max={180}
                   step="0.0001"
+                  aria-invalid={Boolean(erroresUbicacion.longitud)}
+                  aria-describedby={erroresUbicacion.longitud ? 'error-longitud' : undefined}
                   value={formUbicacion.longitud}
                   onChange={(e) => actualizarCampoUbicacion('longitud', e.target.value)}
-                  className={`w-full px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
                 />
                 {erroresUbicacion.longitud && (
-                  <span className="block text-[11px] opacity-90">{erroresUbicacion.longitud}</span>
+                  <span id="error-longitud" className="block text-[11px] opacity-90">
+                    {erroresUbicacion.longitud}
+                  </span>
                 )}
               </label>
               <label className="space-y-1">
                 <span className="text-xs opacity-70">Altitud (metros)</span>
                 <input
                   type="number"
+                  inputMode="decimal"
                   min={-500}
                   max={9000}
+                  aria-invalid={Boolean(erroresUbicacion.altitud)}
+                  aria-describedby={erroresUbicacion.altitud ? 'error-altitud' : undefined}
                   value={formUbicacion.altitud}
                   onChange={(e) => actualizarCampoUbicacion('altitud', e.target.value)}
-                  className={`w-full px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
+                  className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono ${claseEsquemaInput}`}
                 />
                 {erroresUbicacion.altitud && (
-                  <span className="block text-[11px] opacity-90">{erroresUbicacion.altitud}</span>
+                  <span id="error-altitud" className="block text-[11px] opacity-90">
+                    {erroresUbicacion.altitud}
+                  </span>
                 )}
               </label>
             </div>
@@ -919,7 +954,7 @@ export function App() {
               <div className="pt-2 border-t border-current/15 space-y-2">
                 <div className="flex items-center justify-between text-xs opacity-75">
                   <span className="flex items-center gap-1.5 font-medium">
-                    <Star className="w-3.5 h-3.5" /> Observatorios favoritos
+                    <Star className="w-3.5 h-3.5" aria-hidden="true" /> Observatorios favoritos
                   </span>
                   <span className="font-mono">
                     {favoritos.length}/{MAX_FAVORITOS}
@@ -945,7 +980,7 @@ export function App() {
                           title={`${fav.nombre} (${fav.latitud}°, ${fav.longitud}° · ${fav.altitud}m)`}
                           className="pl-3 pr-2 py-1 cursor-pointer flex items-center gap-1.5 font-medium"
                         >
-                          <MapPin className="w-3 h-3 opacity-75 shrink-0" />
+                          <MapPin className="w-3 h-3 opacity-75 shrink-0" aria-hidden="true" />
                           <span>{fav.nombre}</span>
                         </button>
                         <button
@@ -955,7 +990,7 @@ export function App() {
                           title="Eliminar favorito"
                           className="pr-2.5 pl-1 py-1 opacity-60 hover:opacity-100 cursor-pointer"
                         >
-                          <X className="w-3 h-3" />
+                          <X className="w-3 h-3" aria-hidden="true" />
                         </button>
                       </div>
                     );
@@ -981,31 +1016,35 @@ export function App() {
               className={`p-4 rounded-2xl border ${clasesTarjeta} flex flex-wrap items-center justify-between gap-4`}
             >
               <div className="flex flex-wrap items-center gap-3">
-                <Calendar className="w-5 h-5 opacity-75" />
+                <Calendar className="w-5 h-5 opacity-75" aria-hidden="true" />
                 <input
                   type="datetime-local"
+                  aria-label="Fecha y hora de observación"
                   value={fechaStr}
                   onChange={(e) => manejarCambioFecha(e.target.value)}
-                  className={`px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono text-sm ${claseEsquemaInput}`}
+                  className={`w-full sm:w-auto min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent font-mono text-sm ${claseEsquemaInput}`}
                 />
-                <div className="flex items-center gap-1.5 text-xs">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
                   <button
+                    type="button"
                     onClick={() => ajustarTiempo('ahora')}
-                    className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
+                    className="min-h-10 sm:min-h-8 px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
                   >
                     Ahora
                   </button>
                   <button
+                    type="button"
                     onClick={() => ajustarTiempo('noche')}
-                    className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
+                    className="min-h-10 sm:min-h-8 px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer"
                   >
                     Esta noche 23:30
                   </button>
                   <button
+                    type="button"
                     onClick={() => ajustarTiempo('mas1h')}
-                    className="px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 flex items-center gap-1 cursor-pointer"
+                    className="min-h-10 sm:min-h-8 px-2.5 py-1.5 rounded-lg border border-current/25 hover:bg-current/10 flex items-center gap-1 cursor-pointer"
                   >
-                    <Clock className="w-3 h-3" /> +1h
+                    <Clock className="w-3 h-3" aria-hidden="true" /> +1h
                   </button>
                 </div>
                 {/* Control de Time-Lapse */}
@@ -1014,19 +1053,23 @@ export function App() {
                     type="button"
                     onClick={() => setReproduciendo((prev) => !prev)}
                     aria-pressed={reproduciendo}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                    className={`min-h-10 sm:min-h-8 flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
                       tema,
                       reproduciendo
                     )}`}
                   >
-                    {reproduciendo ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    {reproduciendo ? (
+                      <Pause className="w-3.5 h-3.5" aria-hidden="true" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5" aria-hidden="true" />
+                    )}
                     {reproduciendo ? 'Pausa' : 'Play'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setVelocidadMinPorSeg(15)}
                     aria-pressed={velocidadMinPorSeg === 15}
-                    className={`px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                    className={`min-h-10 sm:min-h-8 px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
                       tema,
                       velocidadMinPorSeg === 15
                     )}`}
@@ -1037,7 +1080,7 @@ export function App() {
                     type="button"
                     onClick={() => setVelocidadMinPorSeg(60)}
                     aria-pressed={velocidadMinPorSeg === 60}
-                    className={`px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
+                    className={`min-h-10 sm:min-h-8 px-2 py-1 rounded-lg font-mono cursor-pointer transition-colors ${obtenerClaseBotonControlActivo(
                       tema,
                       velocidadMinPorSeg === 60
                     )}`}
@@ -1048,9 +1091,9 @@ export function App() {
                 {estadoSolar && (
                   <span className="text-xs font-mono px-2.5 py-1 rounded-full border border-current/20 bg-current/5 flex items-center gap-1.5">
                     {estadoSolar.altitudSol >= 0 ? (
-                      <Sun className="w-3.5 h-3.5" />
+                      <Sun className="w-3.5 h-3.5" aria-hidden="true" />
                     ) : (
-                      <Moon className="w-3.5 h-3.5" />
+                      <Moon className="w-3.5 h-3.5" aria-hidden="true" />
                     )}
                     {estadoSolar.fase} (Sol {estadoSolar.altitudSol}°)
                   </span>
@@ -1058,11 +1101,11 @@ export function App() {
               </div>
 
               {/* Capas del Mapa */}
-              <div className="flex flex-wrap items-center gap-3 text-xs">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="opacity-70 flex items-center gap-1">
-                  <Layers className="w-3.5 h-3.5" /> Capas:
+                  <Layers className="w-3.5 h-3.5" aria-hidden="true" /> Capas:
                 </span>
-                <label className="flex items-center gap-1.5 cursor-pointer">
+                <label className="flex items-center gap-1.5 cursor-pointer min-h-10 sm:min-h-8 px-2.5 py-1 rounded-lg border border-current/20 hover:bg-current/10 transition-colors">
                   <input
                     type="checkbox"
                     checked={mostrarConstelaciones}
@@ -1070,7 +1113,7 @@ export function App() {
                   />
                   <span>Constelaciones</span>
                 </label>
-                <label className="flex items-center gap-1.5 cursor-pointer">
+                <label className="flex items-center gap-1.5 cursor-pointer min-h-10 sm:min-h-8 px-2.5 py-1 rounded-lg border border-current/20 hover:bg-current/10 transition-colors">
                   <input
                     type="checkbox"
                     checked={mostrarEtiquetasEstrellas}
@@ -1078,7 +1121,7 @@ export function App() {
                   />
                   <span>Estrellas</span>
                 </label>
-                <label className="flex items-center gap-1.5 cursor-pointer">
+                <label className="flex items-center gap-1.5 cursor-pointer min-h-10 sm:min-h-8 px-2.5 py-1 rounded-lg border border-current/20 hover:bg-current/10 transition-colors">
                   <input
                     type="checkbox"
                     checked={mostrarMessier}
@@ -1102,7 +1145,10 @@ export function App() {
                     {/* Buscador global de astros */}
                     <div ref={buscadorRef} className="relative w-full sm:w-72">
                       <div className="relative flex items-center">
-                        <Search className="w-3.5 h-3.5 opacity-60 absolute left-2.5 pointer-events-none" />
+                        <Search
+                          className="w-3.5 h-3.5 opacity-60 absolute left-2.5 pointer-events-none"
+                          aria-hidden="true"
+                        />
                         <input
                           type="text"
                           role="combobox"
@@ -1139,7 +1185,7 @@ export function App() {
                             aria-label="Limpiar búsqueda de astros"
                             className="absolute right-2 opacity-60 hover:opacity-100 cursor-pointer"
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <X className="w-3.5 h-3.5" aria-hidden="true" />
                           </button>
                         )}
                       </div>
@@ -1307,7 +1353,7 @@ export function App() {
 
                             <div className="text-xs flex flex-wrap items-center justify-between gap-2 opacity-85 font-mono">
                               <span className="flex items-center gap-1">
-                                <Compass className="w-3.5 h-3.5" />
+                                <Compass className="w-3.5 h-3.5" aria-hidden="true" />
                                 {obj.direccion} ({obj.acimut}°)
                               </span>
                               <span>Alt: {obj.altitud}°</span>

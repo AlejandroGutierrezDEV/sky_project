@@ -158,6 +158,7 @@ export function Navbar({
           setMenuAbierto(false);
         }}
         aria-expanded={panelUbicacionAbierto}
+        aria-controls="panel-ubicacion"
         title="Configurar punto de observación"
         className="flex min-w-0 items-center gap-1.5 px-2.5 min-h-11 md:min-h-9 rounded-lg border border-current/20 hover:bg-current/10 text-xs cursor-pointer transition-colors"
       >

@@ -34,6 +34,13 @@
     background-color: #7f1d1d;
     color: #f87171;
   }
+
+  button,
+  a,
+  input,
+  [role="slider"] {
+    -webkit-tap-highlight-color: transparent;
+  }
 }
 
 @layer utilities {
@@ -45,8 +52,10 @@
       opacity 200ms ease;
   }
 
-  .tarjeta-3d:hover {
-    transform: perspective(900px) translateY(-2px) rotateX(1.2deg);
+  @media (hover: hover) and (pointer: fine) {
+    .tarjeta-3d:hover {
+      transform: perspective(900px) translateY(-2px) rotateX(1.2deg);
+    }
   }
 
   /* ── Estética HUD de observatorio ─────────────────────────────── */

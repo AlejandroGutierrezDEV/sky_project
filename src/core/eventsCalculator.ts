@@ -4,10 +4,10 @@ import { LLUVIAS_ESTRELLAS } from '../data/meteorShowers';
 import { esEntradaAstronomicaValida } from './skyCalculator';
 
 const NOMBRES_ECLIPSE: Record<string, string> = {
-  Total: 'Total',
-  Partial: 'Parcial',
-  Annular: 'Anular',
-  Penumbra: 'Penumbral',
+  total: 'Total',
+  partial: 'Parcial',
+  annular: 'Anular',
+  penumbral: 'Penumbral',
 };
 
 function calcularDiasRestantes(desde: Date, hasta: Date): number {
@@ -50,14 +50,14 @@ function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoC
   for (let i = 0; i < 2; i++) {
     const lunar = Astronomy.SearchLunarEclipse(fechaBusqueda);
     const fechaPico = lunar.peak.date;
-    const tipoClave = String(lunar.kind);
+    const tipoClave = String(lunar.kind).toLowerCase();
     const tipoStr = NOMBRES_ECLIPSE[tipoClave] ?? 'Lunar';
 
     const eqLuna = Astronomy.Equator(Astronomy.Body.Moon, fechaPico, observador, true, true);
     const horLuna = Astronomy.Horizon(fechaPico, observador, eqLuna.ra, eqLuna.dec, 'normal');
 
     const resumen =
-      tipoClave === 'Penumbra'
+      tipoClave === 'penumbral'
         ? 'Eclipse penumbral (oscurecimiento sutil)'
         : `Oscurecimiento: ${Math.round(lunar.obscuration * 100)}%`;
 
@@ -90,7 +90,7 @@ function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoC
     const fechaPico = solar.peak.time.date;
 
     if (solar.peak.altitude > 0) {
-      const tipoStr = NOMBRES_ECLIPSE[String(solar.kind)] ?? 'Solar';
+      const tipoStr = NOMBRES_ECLIPSE[String(solar.kind).toLowerCase()] ?? 'Solar';
       eventos.push({
         id: `eclipse-solar-${fechaPico.getTime()}`,
         titulo: `Eclipse Solar ${tipoStr}`,

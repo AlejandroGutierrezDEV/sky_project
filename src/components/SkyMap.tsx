@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Globe, Compass, RotateCcw, X } from 'lucide-react';
 import type {
   AstroSeleccionado,
@@ -691,6 +691,8 @@ export function SkyMap({
   const arrastreRef = useRef<{
     activo: boolean;
     pointerId: number;
+    inicioX: number;
+    inicioY: number;
     ultimoX: number;
     ultimoY: number;
     movido: boolean;
@@ -919,10 +921,13 @@ export function SkyMap({
       arrastreRef.current = {
         activo: true,
         pointerId: e.pointerId,
+        inicioX: e.clientX,
+        inicioY: e.clientY,
         ultimoX: e.clientX,
         ultimoY: e.clientY,
         movido: false,
       };
+      return;
     }
     inspeccionarPuntero(e);
   };
@@ -932,7 +937,7 @@ export function SkyMap({
     if (modoVista === '3d' && arrastre && arrastre.activo && arrastre.pointerId === e.pointerId) {
       const dx = e.clientX - arrastre.ultimoX;
       const dy = e.clientY - arrastre.ultimoY;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+      if (Math.hypot(e.clientX - arrastre.inicioX, e.clientY - arrastre.inicioY) > 4) {
         arrastre.movido = true;
       }
       arrastre.ultimoX = e.clientX;
@@ -960,6 +965,10 @@ export function SkyMap({
     }
 
     if (fueArrastre) return;
+
+    if (modoVista === '3d') {
+      inspeccionarPuntero(e);
+    }
 
     const encontrado = buscarAstroEnPuntero(e);
     if (encontrado) {
@@ -991,6 +1000,32 @@ export function SkyMap({
     }
   };
 
+  const manejarKeyDown = (e: KeyboardEvent<HTMLCanvasElement>) => {
+    if (modoVista !== '3d') return;
+
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      cancelarAnimacionCamara();
+      setCamara((prev) => ({ ...prev, rotAz: normalizarAcimut(prev.rotAz - 10) }));
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      cancelarAnimacionCamara();
+      setCamara((prev) => ({ ...prev, rotAz: normalizarAcimut(prev.rotAz + 10) }));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      cancelarAnimacionCamara();
+      setCamara((prev) => ({ ...prev, tilt: Math.min(85, prev.tilt + 5) }));
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      cancelarAnimacionCamara();
+      setCamara((prev) => ({ ...prev, tilt: Math.max(12, prev.tilt - 5) }));
+    } else if (e.key === 'r' || e.key === 'R' || e.key === 'Home') {
+      e.preventDefault();
+      cancelarAnimacionCamara();
+      setCamara(CAMARA_INICIAL);
+    }
+  };
+
   const claseBotonVista = (activo: boolean) => {
     if (!activo) return 'opacity-70 hover:opacity-100';
     if (tema === 'rojo') return 'bg-red-950 text-red-500 border border-red-600';
@@ -1002,24 +1037,30 @@ export function SkyMap({
     <div className="relative flex flex-col items-center justify-center space-y-3">
       {/* Controles de Vista 2D / 3D */}
       <div className="w-full flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-1 p-1 rounded-xl border border-current/20 bg-current/5">
+        <div
+          role="group"
+          aria-label="Modo de proyección del mapa"
+          className="flex items-center gap-1 p-1 rounded-xl border border-current/20 bg-current/5"
+        >
           <button
             type="button"
+            aria-pressed={modoVista === '2d'}
             onClick={() => setModoVista('2d')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors ${claseBotonVista(
+            className={`min-h-10 sm:min-h-8 flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium cursor-pointer transition-colors ${claseBotonVista(
               modoVista === '2d'
             )}`}
           >
-            <Compass className="w-3.5 h-3.5" /> 2D Planisferio
+            <Compass className="w-3.5 h-3.5" aria-hidden="true" /> 2D Planisferio
           </button>
           <button
             type="button"
+            aria-pressed={modoVista === '3d'}
             onClick={() => setModoVista('3d')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors ${claseBotonVista(
+            className={`min-h-10 sm:min-h-8 flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium cursor-pointer transition-colors ${claseBotonVista(
               modoVista === '3d'
             )}`}
           >
-            <Globe className="w-3.5 h-3.5" /> 3D Bóveda
+            <Globe className="w-3.5 h-3.5" aria-hidden="true" /> 3D Bóveda
           </button>
         </div>
 
@@ -1033,9 +1074,9 @@ export function SkyMap({
                   cancelarAnimacionCamara();
                   setCamara(CAMARA_INICIAL);
                 }}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer transition-colors"
+                className="min-h-10 sm:min-h-8 flex items-center gap-1 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer transition-colors"
               >
-                <RotateCcw className="w-3 h-3" /> Centrar
+                <RotateCcw className="w-3 h-3" aria-hidden="true" /> Centrar
               </button>
             </>
           ) : (
@@ -1046,12 +1087,14 @@ export function SkyMap({
 
       <canvas
         ref={canvasRef}
+        tabIndex={0}
         role="img"
         aria-label={
           modoVista === '3d'
             ? 'Bóveda celeste interactiva en 3D con estrellas, constelaciones, objetos Messier y planetas'
             : 'Mapa celeste interactivo con estrellas, constelaciones, objetos Messier y planetas'
         }
+        onKeyDown={manejarKeyDown}
         onPointerDown={manejarPointerDown}
         onPointerMove={manejarPointerMove}
         onPointerUp={manejarPointerUp}
@@ -1075,22 +1118,30 @@ export function SkyMap({
             aria-label="Quitar selección de astro"
             className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-current/25 hover:bg-current/10 cursor-pointer transition-colors"
           >
-            <X className="w-3 h-3" /> Limpiar
+            <X className="w-3 h-3" aria-hidden="true" /> Limpiar
           </button>
         </div>
       )}
 
-      {hoverInfo && (
-        <div
-          className={`px-4 py-2 rounded-xl border text-xs font-mono flex flex-wrap items-center gap-4 ${CLASES_TOOLTIP[tema]}`}
-        >
-          <span className="font-bold text-sm">{hoverInfo.nombre}</span>
-          <span className="opacity-80">{hoverInfo.subtitulo}</span>
-          <span>Alt: {hoverInfo.altitud}°</span>
-          <span>Acimut: {hoverInfo.acimut}°</span>
-          <span>Mag: {hoverInfo.magnitud}</span>
-        </div>
-      )}
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className={`w-full min-h-11 px-4 py-2 rounded-xl border text-xs font-mono flex flex-wrap items-center justify-center gap-x-4 gap-y-1 ${CLASES_TOOLTIP[tema]}`}
+      >
+        {hoverInfo ? (
+          <>
+            <span className="font-bold text-sm">{hoverInfo.nombre}</span>
+            <span className="opacity-80">{hoverInfo.subtitulo}</span>
+            <span>Alt: {hoverInfo.altitud}°</span>
+            <span>Acimut: {hoverInfo.acimut}°</span>
+            <span>Mag: {hoverInfo.magnitud}</span>
+          </>
+        ) : (
+          <span className="font-sans opacity-65 text-center">
+            Toca o pasa el cursor sobre un astro para ver sus coordenadas
+          </span>
+        )}
+      </div>
     </div>
   );
 }

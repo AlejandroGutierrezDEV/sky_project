@@ -37,7 +37,7 @@ export function EventsPanel({
     <section className={`p-4 rounded-2xl border space-y-3 ${claseTarjeta}`}>
       <div className="flex items-center justify-between">
         <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75 flex items-center gap-2">
-          <CalendarClock className="w-4 h-4" /> Próximos Eventos Celestes
+          <CalendarClock className="w-4 h-4" aria-hidden="true" /> Próximos Eventos Celestes
         </h2>
         <span className="text-[11px] opacity-60">Lluvias y Eclipses</span>
       </div>
@@ -65,9 +65,15 @@ export function EventsPanel({
               <div className="flex items-start justify-between gap-2">
                 <span className="font-bold text-sm flex items-center gap-1.5">
                   {ev.tipo === 'lluvia' ? (
-                    <Sparkles className={`w-3.5 h-3.5 shrink-0 ${obtenerClaseIconoEvento(tema, 'lluvia')}`} />
+                    <Sparkles
+                      className={`w-3.5 h-3.5 shrink-0 ${obtenerClaseIconoEvento(tema, 'lluvia')}`}
+                      aria-hidden="true"
+                    />
                   ) : (
-                    <Eclipse className={`w-3.5 h-3.5 shrink-0 ${obtenerClaseIconoEvento(tema, 'eclipse')}`} />
+                    <Eclipse
+                      className={`w-3.5 h-3.5 shrink-0 ${obtenerClaseIconoEvento(tema, 'eclipse')}`}
+                      aria-hidden="true"
+                    />
                   )}
                   {ev.titulo}
                 </span>
@@ -86,10 +92,12 @@ export function EventsPanel({
                   {fechaTexto} · {ev.resumen}
                 </span>
                 <button
+                  type="button"
                   onClick={() => onSeleccionarFecha(ev.fechaPico)}
-                  className="inline-flex items-center gap-1 underline decoration-dotted hover:opacity-100 cursor-pointer font-sans font-medium"
+                  aria-label={`Ver ${ev.titulo} en el mapa celeste`}
+                  className="inline-flex items-center gap-1 min-h-9 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 no-underline hover:opacity-100 cursor-pointer font-sans font-medium transition-colors"
                 >
-                  Ver en mapa <ArrowUpRight className="w-3 h-3" />
+                  Ver en mapa <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
                 </button>
               </div>
               <p className="text-[11px] opacity-65">{ev.detalle}</p>
