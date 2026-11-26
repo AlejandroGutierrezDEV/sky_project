@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as EventoTecladoReact, PointerEvent as EventoPunteroReact } from 'react';
-import { Compass, Hand, Navigation, Smartphone, Target, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Compass, Hand, Navigation, Smartphone, Target, X } from 'lucide-react';
 import type {
   ConstructorOrientacionConPermiso,
   CuerpoCeleste,
@@ -52,6 +52,74 @@ const RADIO_MARCADORES = 187;
 const RADIO_MARCAS = 175;
 const MARGEN_ALINEACION = 8;
 const INCLINACION_VISUAL_MAX = 65;
+const UMBRAL_PROYECCION_HORIZONTAL = 0.15;
+const ALTITUD_MANUAL_MIN = -60;
+const ALTITUD_MANUAL_MAX = 90;
+const ALTITUD_MANUAL_INICIAL = 25;
+
+function obtenerAnguloPantalla(): number {
+  if (typeof window === 'undefined') return 0;
+  const angulo = window.screen?.orientation?.angle;
+  return typeof angulo === 'number' && Number.isFinite(angulo) ? normalizarAngulo(angulo) : 0;
+}
+
+/**
+ * Proyección matricial 3D estándar W3C (rotación intrínseca Z-X'-Y'') del vector
+ * de la cámara trasera (0, 0, -1) al marco terrestre ENU (Este-Norte-Arriba),
+ * compensando la rotación de pantalla (0°, 90°, 180°, 270°).
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function calcularOrientacionDesdeSensores(
+  alpha: number,
+  beta: number,
+  gamma: number,
+  anguloPantalla: number
+): { rumbo: number; altitudApuntado: number } {
+  const a = (alpha * Math.PI) / 180;
+  const b = (beta * Math.PI) / 180;
+  const g = (gamma * Math.PI) / 180;
+  const s = (normalizarAngulo(anguloPantalla) * Math.PI) / 180;
+
+  const ca = Math.cos(a);
+  const sa = Math.sin(a);
+  const cb = Math.cos(b);
+  const sb = Math.sin(b);
+  const cg = Math.cos(g);
+  const sg = Math.sin(g);
+
+  // Vector cámara trasera [0, 0, -1] proyectado por R = Rz(a) * Rx(b) * Ry(g)
+  // (invariante respecto a la rotación de pantalla Rz(-s) alrededor del eje Z del dispositivo)
+  const camX = -ca * sg - sa * sb * cg;
+  const camY = -sa * sg + ca * sb * cg;
+  const camZ = -cb * cg;
+
+  const altitudApuntado = (Math.asin(limitar(camZ, -1, 1)) * 180) / Math.PI;
+
+  let vx = camX;
+  let vy = camY;
+
+  // Cuando la proyección horizontal de la cámara trasera es casi nula (teléfono plano
+  // o apuntando cerca del cenit), proyectar el borde superior de la pantalla Rz(-s) * [0, 1, 0]
+  if (Math.hypot(vx, vy) < UMBRAL_PROYECCION_HORIZONTAL) {
+    const cs = Math.cos(s);
+    const ss = Math.sin(s);
+
+    // Primera y segunda columnas de R (ejes +X y +Y del dispositivo en ENU)
+    const r11 = ca * cg - sa * sb * sg;
+    const r21 = sa * cg + ca * sb * sg;
+    const r12 = -sa * cb;
+    const r22 = ca * cb;
+
+    // Si camZ > 0 (cámara apuntando casi al cenit), invertir el vector superior mantiene
+    // la continuidad del acimut sin salto de 180° al pasar de ~81° a 90° de elevación.
+    const signo = camZ > 0 ? -1 : 1;
+    vx = signo * (r11 * ss + r12 * cs);
+    vy = signo * (r21 * ss + r22 * cs);
+  }
+
+  const rumbo = normalizarAngulo((Math.atan2(vx, vy) * 180) / Math.PI);
+  return { rumbo, altitudApuntado };
+}
 
 interface MarcaGraduacion {
   angulo: number;
@@ -241,12 +309,24 @@ export function Compass3DModal({
   const [intentoSensor, setIntentoSensor] = useState(0);
   const [modoManual, setModoManual] = useState(false);
   const [rumboManual, setRumboManual] = useState(0);
-  const [inclinacionManual, setInclinacionManual] = useState(25);
-  const [visual, setVisual] = useState<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
+  const [altitudManual, setAltitudManual] = useState(ALTITUD_MANUAL_INICIAL);
+  const [visual, setVisual] = useState<OrientacionBrujula>({
+    rumbo: 0,
+    inclinacion: ALTITUD_MANUAL_INICIAL,
+    altitudApuntado: ALTITUD_MANUAL_INICIAL,
+  });
   const [movimientoReducido] = useState(prefiereMovimientoReducido);
 
-  const objetivoRef = useRef<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
-  const visualRef = useRef<OrientacionBrujula>({ rumbo: 0, inclinacion: 25 });
+  const objetivoRef = useRef<OrientacionBrujula>({
+    rumbo: 0,
+    inclinacion: ALTITUD_MANUAL_INICIAL,
+    altitudApuntado: ALTITUD_MANUAL_INICIAL,
+  });
+  const visualRef = useRef<OrientacionBrujula>({
+    rumbo: 0,
+    inclinacion: ALTITUD_MANUAL_INICIAL,
+    altitudApuntado: ALTITUD_MANUAL_INICIAL,
+  });
   const animacionIdRef = useRef<number>(0);
   const simulacionRef = useRef(true);
   const lecturaRecibidaRef = useRef(false);
@@ -311,10 +391,23 @@ export function Compass3DModal({
       const actual = visualRef.current;
       const difRumbo = diferenciaAngular(objetivo.rumbo, actual.rumbo);
       const difInclinacion = objetivo.inclinacion - actual.inclinacion;
+      const difAltitud = objetivo.altitudApuntado - actual.altitudApuntado;
 
-      if (Math.abs(difRumbo) < 0.05 && Math.abs(difInclinacion) < 0.05) {
-        if (actual.rumbo !== objetivo.rumbo || actual.inclinacion !== objetivo.inclinacion) {
-          const exacto = { rumbo: objetivo.rumbo, inclinacion: objetivo.inclinacion };
+      if (
+        Math.abs(difRumbo) < 0.05 &&
+        Math.abs(difInclinacion) < 0.05 &&
+        Math.abs(difAltitud) < 0.05
+      ) {
+        if (
+          actual.rumbo !== objetivo.rumbo ||
+          actual.inclinacion !== objetivo.inclinacion ||
+          actual.altitudApuntado !== objetivo.altitudApuntado
+        ) {
+          const exacto: OrientacionBrujula = {
+            rumbo: objetivo.rumbo,
+            inclinacion: objetivo.inclinacion,
+            altitudApuntado: objetivo.altitudApuntado,
+          };
           visualRef.current = exacto;
           setVisual(exacto);
         }
@@ -330,8 +423,12 @@ export function Compass3DModal({
         Math.abs(difInclinacion) < 0.05
           ? objetivo.inclinacion
           : actual.inclinacion + difInclinacion * factor;
+      const altitudApuntado =
+        Math.abs(difAltitud) < 0.05
+          ? objetivo.altitudApuntado
+          : actual.altitudApuntado + difAltitud * factor;
 
-      const siguiente = { rumbo, inclinacion };
+      const siguiente: OrientacionBrujula = { rumbo, inclinacion, altitudApuntado };
       visualRef.current = siguiente;
       setVisual(siguiente);
       animacionIdRef.current = window.requestAnimationFrame(paso);
@@ -353,10 +450,15 @@ export function Compass3DModal({
   useEffect(() => {
     simulacionRef.current = simulacion;
     if (simulacion) {
-      objetivoRef.current = { rumbo: normalizarAngulo(rumboManual), inclinacion: inclinacionManual };
+      const altitudAcotada = limitar(altitudManual, ALTITUD_MANUAL_MIN, ALTITUD_MANUAL_MAX);
+      objetivoRef.current = {
+        rumbo: normalizarAngulo(rumboManual),
+        inclinacion: limitar(altitudAcotada, -INCLINACION_VISUAL_MAX, INCLINACION_VISUAL_MAX),
+        altitudApuntado: altitudAcotada,
+      };
       programarSuavizado();
     }
-  }, [simulacion, rumboManual, inclinacionManual, programarSuavizado]);
+  }, [simulacion, rumboManual, altitudManual, programarSuavizado]);
 
   /* Escucha de sensores: deviceorientationabsolute (prioritario) + deviceorientation */
   useEffect(() => {
@@ -365,28 +467,50 @@ export function Compass3DModal({
     const procesarOrientacion = (evento: Event) => {
       if (!(evento instanceof DeviceOrientationEvent)) return;
       const datos = evento as EventoOrientacionDispositivo;
+      const anguloPantalla = obtenerAnguloPantalla();
+
+      const alpha = typeof datos.alpha === 'number' && Number.isFinite(datos.alpha) ? datos.alpha : null;
+      const beta = typeof datos.beta === 'number' && Number.isFinite(datos.beta) ? datos.beta : null;
+      const gamma = typeof datos.gamma === 'number' && Number.isFinite(datos.gamma) ? datos.gamma : null;
+
       let rumbo: number | null = null;
+      let altitudApuntado = 0;
       let absoluta = false;
 
       if (typeof datos.webkitCompassHeading === 'number' && Number.isFinite(datos.webkitCompassHeading)) {
-        // Safari iOS: rumbo magnético ya referido al Norte
-        rumbo = normalizarAngulo(datos.webkitCompassHeading);
+        // Safari iOS: rumbo magnético absoluto referido al Norte, compensando rotación de pantalla
+        rumbo = normalizarAngulo(datos.webkitCompassHeading + anguloPantalla);
         absoluta = true;
-      } else if (datos.alpha !== null && Number.isFinite(datos.alpha)) {
+        if (beta !== null || gamma !== null) {
+          altitudApuntado = calcularOrientacionDesdeSensores(
+            alpha ?? 0,
+            beta ?? 0,
+            gamma ?? 0,
+            anguloPantalla
+          ).altitudApuntado;
+        }
+      } else if (alpha !== null) {
         absoluta = evento.type === 'deviceorientationabsolute' || datos.absolute;
         // Si ya llegan lecturas absolutas, se descartan las relativas
         if (!absoluta && lecturaAbsolutaRef.current) return;
-        rumbo = normalizarAngulo(360 - datos.alpha);
+        const orientacion = calcularOrientacionDesdeSensores(
+          alpha,
+          beta ?? 0,
+          gamma ?? 0,
+          anguloPantalla
+        );
+        rumbo = orientacion.rumbo;
+        altitudApuntado = beta !== null || gamma !== null ? orientacion.altitudApuntado : 0;
       }
 
       if (rumbo === null) return;
       if (absoluta) lecturaAbsolutaRef.current = true;
 
-      const inclinacion =
-        datos.beta !== null && Number.isFinite(datos.beta) ? limitar(datos.beta, -90, 90) : 0;
+      const altitudAcotada = limitar(altitudApuntado, -90, 90);
+      const inclinacion = limitar(altitudAcotada, -INCLINACION_VISUAL_MAX, INCLINACION_VISUAL_MAX);
 
       if (!simulacionRef.current) {
-        objetivoRef.current = { rumbo, inclinacion };
+        objetivoRef.current = { rumbo, inclinacion, altitudApuntado: altitudAcotada };
         programarSuavizado();
       }
 
@@ -454,7 +578,9 @@ export function Compass3DModal({
 
   const pasarAModoManual = () => {
     setRumboManual(Math.round(visualRef.current.rumbo));
-    setInclinacionManual(Math.round(limitar(visualRef.current.inclinacion, -60, 60)));
+    setAltitudManual(
+      Math.round(limitar(visualRef.current.altitudApuntado, ALTITUD_MANUAL_MIN, ALTITUD_MANUAL_MAX))
+    );
     setModoManual(true);
   };
 
@@ -504,6 +630,9 @@ export function Compass3DModal({
     evento.preventDefault();
     if (!simulacion) {
       setRumboManual(normalizarAngulo(Math.round(visualRef.current.rumbo) + delta));
+      setAltitudManual(
+        Math.round(limitar(visualRef.current.altitudApuntado, ALTITUD_MANUAL_MIN, ALTITUD_MANUAL_MAX))
+      );
       setModoManual(true);
       return;
     }
@@ -514,7 +643,7 @@ export function Compass3DModal({
   /* Datos derivados */
   const rumboEntero = Math.round(visual.rumbo) % 360;
   const cardinal = direccionCardinal(visual.rumbo);
-  const inclinacionEntera = Math.round(visual.inclinacion);
+  const altitudEntera = Math.round(visual.altitudApuntado);
   const inclinacionVisual = limitar(visual.inclinacion, -INCLINACION_VISUAL_MAX, INCLINACION_VISUAL_MAX);
 
   const objetivosVisibles = useMemo<ObjetivoBrujula[]>(() => {
@@ -549,6 +678,20 @@ export function Compass3DModal({
       alineado = objetivo;
     }
   }
+
+  const difElevacion = alineado ? alineado.altitud - visual.altitudApuntado : null;
+  const alturaAlineada = difElevacion !== null && Math.abs(difElevacion) <= MARGEN_ALINEACION;
+  const gradosElevacion = difElevacion !== null ? Math.round(Math.abs(difElevacion)) : 0;
+  const direccionElevacion: 'alineada' | 'subir' | 'bajar' | null =
+    difElevacion === null ? null : alturaAlineada ? 'alineada' : difElevacion > 0 ? 'subir' : 'bajar';
+  const textoGuiaElevacion =
+    direccionElevacion === null
+      ? null
+      : direccionElevacion === 'alineada'
+        ? 'Altura alineada'
+        : direccionElevacion === 'subir'
+          ? `Sube el móvil ${gradosElevacion}°`
+          : `Baja el móvil ${gradosElevacion}°`;
 
   const mostrarBotonActivar =
     estadoSensor === 'inactivo' || estadoSensor === 'denegado' || estadoSensor === 'sin-lecturas';
@@ -609,7 +752,7 @@ export function Compass3DModal({
             aria-valuemin={0}
             aria-valuemax={359}
             aria-valuenow={rumboEntero}
-            aria-valuetext={`${rumboEntero} grados, ${cardinal}`}
+            aria-valuetext={`${rumboEntero} grados, ${cardinal}, altitud ${altitudEntera} grados`}
             onPointerDown={manejarPunteroAbajo}
             onPointerMove={manejarPunteroMovido}
             onPointerUp={finalizarArrastre}
@@ -793,9 +936,8 @@ export function Compass3DModal({
               {String(rumboEntero).padStart(3, '0')}°
             </span>
             <span className={`font-display font-bold text-sm mt-1 ${paleta.claseAcento}`}>{cardinal}</span>
-            <span className="font-mono text-[10px] opacity-75 mt-0.5">
-              Incl {inclinacionEntera > 0 ? '+' : ''}
-              {inclinacionEntera}°
+            <span className="font-mono text-[10px] opacity-75 mt-0.5 tabular-nums">
+              Alt {altitudEntera}°
             </span>
           </div>
         </div>
@@ -804,11 +946,27 @@ export function Compass3DModal({
         <div aria-live="polite" className="min-h-12 mt-3 flex items-center justify-center">
           {alineado ? (
             <p
-              className={`alineacion-pulso inline-flex items-center gap-2 px-3.5 py-2 rounded-full border text-sm font-medium ${paleta.claseAviso}`}
+              className={`alineacion-pulso inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-1 px-3.5 py-2 rounded-2xl border text-sm font-medium text-center ${
+                alturaAlineada ? paleta.claseEstadoOk : paleta.claseAviso
+              }`}
             >
-              <Target className="w-4 h-4" aria-hidden="true" />
-              Apuntando hacia {alineado.nombre} ·{' '}
-              <span className="font-mono">Alt {Math.round(alineado.altitud)}°</span>
+              <Target className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>
+                Apuntando hacia {alineado.nombre} ·{' '}
+                <span className="font-mono">Alt {Math.round(alineado.altitud)}°</span>
+              </span>
+              {textoGuiaElevacion && (
+                <span className="inline-flex items-center gap-1 font-mono text-xs font-semibold">
+                  {direccionElevacion === 'alineada' ? (
+                    <Check className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  ) : direccionElevacion === 'subir' ? (
+                    <ArrowUp className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <ArrowDown className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  )}
+                  {textoGuiaElevacion}
+                </span>
+              )}
             </p>
           ) : (
             <p className="text-xs opacity-65 text-center">
@@ -885,23 +1043,23 @@ export function Compass3DModal({
               </label>
               <label className="block">
                 <span className="flex items-center justify-between text-xs">
-                  <span>Inclinación</span>
-                  <span className="font-mono">
-                    {inclinacionManual > 0 ? '+' : ''}
-                    {inclinacionManual}°
+                  <span>Altitud de apuntado</span>
+                  <span className="font-mono tabular-nums">
+                    {altitudManual > 0 ? '+' : ''}
+                    {altitudManual}°
                   </span>
                 </span>
                 <input
                   type="range"
-                  min={-60}
-                  max={60}
+                  min={ALTITUD_MANUAL_MIN}
+                  max={ALTITUD_MANUAL_MAX}
                   step={1}
-                  value={inclinacionManual}
+                  value={altitudManual}
                   onChange={(e) => {
                     const valor = Number(e.target.value);
                     if (!Number.isFinite(valor)) return;
                     setModoManual(true);
-                    setInclinacionManual(limitar(valor, -60, 60));
+                    setAltitudManual(limitar(valor, ALTITUD_MANUAL_MIN, ALTITUD_MANUAL_MAX));
                   }}
                   className={`rango-hud ${paleta.claseAcento}`}
                 />
