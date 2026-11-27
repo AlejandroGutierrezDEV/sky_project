@@ -221,7 +221,7 @@ export interface EstadoCieloSolar {
   fase: FaseCrepusculo;
 }
 
-export type CategoriaAstro = 'cuerpo' | 'estrella' | 'messier';
+export type CategoriaAstro = 'cuerpo' | 'estrella' | 'messier' | 'constelacion';
 
 export interface AstroSeleccionado {
   id: string;

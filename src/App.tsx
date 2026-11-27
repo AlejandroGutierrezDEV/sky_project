@@ -42,10 +42,12 @@ import { MoonPhase3D } from './components/MoonPhase3D';
 import { Navbar } from './components/Navbar';
 import { AstronomyGuide } from './components/AstronomyGuide';
 import { Compass3DModal } from './components/Compass3DModal';
+import { CelestialDetailSheet } from './components/CelestialDetailSheet';
 import {
   HojaImpresionSesion,
   PlanificadorSesionModal,
 } from './components/PlanificadorSesionModal';
+import { useCelestialFocus } from './hooks/useCelestialFocus';
 import { usePreferenciasMapa } from './hooks/usePreferenciasMapa';
 import { useTemaVisual } from './hooks/useTemaVisual';
 import {
@@ -65,6 +67,7 @@ import {
   esEscalaBortleValida,
   normalizarEscalaBortle,
 } from './utils/astronomia/calidadCielo';
+import type { LiveEphemerisSnapshot } from './types/celestialDetails';
 import type {
   AstroSeleccionado,
   CategoriaAstro,
@@ -86,7 +89,7 @@ import type {
 const CLAVE_UBICACION = 'skyproject_ubicacion';
 const CLAVE_FAVORITOS = 'skyproject_favoritos_v1';
 const MAX_FAVORITOS = 8;
-const MAX_RESULTADOS_BUSQUEDA = 6;
+const MAX_RESULTADOS_BUSQUEDA = 8;
 const MAX_NOMBRE_UBICACION = 80;
 const UMBRAL_COORD_DUPLICADA = 0.01;
 
@@ -461,7 +464,6 @@ export function App() {
   const [fechaStr, setFechaStr] = useState<string>(() => formatearFechaParaInput(new Date()));
   const [reproduciendo, setReproduciendo] = useState(false);
   const [velocidadMinPorSeg, setVelocidadMinPorSeg] = useState<15 | 60>(15);
-  const [astroSeleccionado, setAstroSeleccionado] = useState<AstroSeleccionado | null>(null);
   const [contadorFoco, setContadorFoco] = useState(0);
 
   const [busquedaAstro, setBusquedaAstro] = useState('');
@@ -473,6 +475,28 @@ export function App() {
   const [vistaActiva, setVistaActiva] = useState<VistaActiva>('observatorio');
   const [brujulaAbierta, setBrujulaAbierta] = useState(false);
   const [planificadorAbierto, setPlanificadorAbierto] = useState(false);
+
+  const {
+    selectedBodyId,
+    isFocusActive,
+    isSheetOpen,
+    sheetStatus,
+    sheetData,
+    errorMessage,
+    selectBody,
+    toggleSheet,
+    clearFocus,
+  } = useCelestialFocus({
+    disableEscapeKey: brujulaAbierta || planificadorAbierto || buscadorAbierto,
+  });
+
+  const enfocarAstro = useCallback(
+    (bodyId: string) => {
+      selectBody(bodyId);
+      setContadorFoco((prev) => prev + 1);
+    },
+    [selectBody]
+  );
   const {
     preferencias,
     toggleCapa,
@@ -649,6 +673,7 @@ export function App() {
     constelaciones,
     estrellasCompletas,
     messierCompletos,
+    constelacionesCompletas,
     magnitudLimiteEfectiva,
     totalMessierSobreHorizonte,
   } = useFiltrosCatalogo({
@@ -657,6 +682,103 @@ export function App() {
     magnitudLimiteVisible: calidadCielo.magnitudLimiteVisible,
     filtros: filtrosCatalogo,
   });
+
+  const contextoSeleccionado = useMemo<{
+    astro: AstroSeleccionado | null;
+    ephemeris: LiveEphemerisSnapshot | null;
+    fallbackName: string;
+    fallbackSubtitle: string;
+  }>(() => {
+    if (!selectedBodyId) {
+      return {
+        astro: null,
+        ephemeris: null,
+        fallbackName: 'Objeto celeste',
+        fallbackSubtitle: 'Catálogo astronómico',
+      };
+    }
+
+    const cuerpo = cuerpos.find((c) => c.id === selectedBodyId);
+    if (cuerpo) {
+      return {
+        astro: { id: cuerpo.id, nombre: cuerpo.nombre, categoria: 'cuerpo' },
+        ephemeris: {
+          azimuthDeg: cuerpo.acimut,
+          altitudeDeg: cuerpo.altitud,
+          isAboveHorizon: cuerpo.altitud > 0,
+          magnitude: cuerpo.magnitud,
+        },
+        fallbackName: cuerpo.nombre,
+        fallbackSubtitle: cuerpo.tipo === 'luna' ? 'Luna' : 'Planeta del Sistema Solar',
+      };
+    }
+
+    const constelacion = constelacionesCompletas.find((c) => c.codigo === selectedBodyId);
+    if (constelacion) {
+      const tieneVisible = constelacion.segmentos.some(
+        (s) => s.desde.altitud >= 0 && s.hasta.altitud >= 0
+      );
+      return {
+        astro: {
+          id: constelacion.codigo,
+          nombre: constelacion.nombreEs,
+          categoria: 'constelacion',
+        },
+        ephemeris: {
+          azimuthDeg: constelacion.centroAcimut,
+          altitudeDeg: constelacion.centroAltitud,
+          isAboveHorizon: tieneVisible || constelacion.centroAltitud >= 0,
+        },
+        fallbackName: constelacion.nombreEs,
+        fallbackSubtitle: `Constelación IAU · ${constelacion.nombreLatin} (${constelacion.codigo})`,
+      };
+    }
+
+    const objMessier = messierCompletos.find((m) => m.id === selectedBodyId);
+    if (objMessier) {
+      const nombreMessier = objMessier.nombreComun
+        ? `${objMessier.id} · ${objMessier.nombreComun}`
+        : `${objMessier.id} · ${objMessier.nombreNGC}`;
+      return {
+        astro: { id: objMessier.id, nombre: nombreMessier, categoria: 'messier' },
+        ephemeris: {
+          azimuthDeg: objMessier.acimut,
+          altitudeDeg: objMessier.altitud,
+          isAboveHorizon: objMessier.altitud >= 0,
+          magnitude: objMessier.magnitud,
+        },
+        fallbackName: nombreMessier,
+        fallbackSubtitle: `${objMessier.tipo} (${objMessier.nombreNGC}) · ${obtenerNombreConstelacionIAU(
+          objMessier.constelacionIAU
+        )}`,
+      };
+    }
+
+    const estrella = estrellasCompletas.find((e) => e.id === selectedBodyId);
+    if (estrella) {
+      const nombreEstrella = estrella.nombre ?? estrella.id;
+      return {
+        astro: { id: estrella.id, nombre: nombreEstrella, categoria: 'estrella' },
+        ephemeris: {
+          azimuthDeg: estrella.acimut,
+          altitudeDeg: estrella.altitud,
+          isAboveHorizon: estrella.altitud >= 0,
+          magnitude: estrella.magnitud,
+        },
+        fallbackName: nombreEstrella,
+        fallbackSubtitle: `Estrella (${estrella.id}) · ${obtenerConstelacionEstrella(estrella.id)}`,
+      };
+    }
+
+    return {
+      astro: null,
+      ephemeris: null,
+      fallbackName: selectedBodyId,
+      fallbackSubtitle: 'Catálogo astronómico',
+    };
+  }, [selectedBodyId, cuerpos, constelacionesCompletas, messierCompletos, estrellasCompletas]);
+
+  const astroSeleccionado = contextoSeleccionado.astro;
 
   const {
     objetivosPlanificados,
@@ -683,7 +805,7 @@ export function App() {
   );
 
   const objetivoDetalleSeleccionado = useMemo<EntradaObjetivoSesion | null>(() => {
-    if (!astroSeleccionado) return null;
+    if (!astroSeleccionado || astroSeleccionado.categoria === 'constelacion') return null;
     if (astroSeleccionado.categoria === 'messier') {
       const obj = messierCompletos.find((m) => m.id === astroSeleccionado.id);
       if (!obj) return null;
@@ -737,6 +859,35 @@ export function App() {
           sobreHorizonte: cuerpo.altitud > 0,
           textoBusqueda: nombreNorm,
           prioridadInicio: nombreNorm.startsWith(consulta),
+        });
+      }
+    }
+
+    for (const constelacion of constelacionesCompletas) {
+      const nombreEsNorm = normalizarTextoBusqueda(constelacion.nombreEs);
+      const nombreLatinNorm = normalizarTextoBusqueda(constelacion.nombreLatin);
+      const codigoNorm = normalizarTextoBusqueda(constelacion.codigo);
+      if (
+        nombreEsNorm.includes(consulta) ||
+        nombreLatinNorm.includes(consulta) ||
+        codigoNorm.includes(consulta)
+      ) {
+        const tieneVisible = constelacion.segmentos.some(
+          (s) => s.desde.altitud >= 0 && s.hasta.altitud >= 0
+        );
+        coincidencias.push({
+          id: constelacion.codigo,
+          categoria: 'constelacion',
+          nombreSeleccion: constelacion.nombreEs,
+          titulo: constelacion.nombreEs,
+          subtitulo: `Constelación (${constelacion.codigo}) · ${constelacion.nombreLatin}`,
+          altitud: constelacion.centroAltitud,
+          sobreHorizonte: tieneVisible || constelacion.centroAltitud >= 0,
+          textoBusqueda: `${nombreEsNorm} ${nombreLatinNorm} ${codigoNorm}`,
+          prioridadInicio:
+            nombreEsNorm.startsWith(consulta) ||
+            nombreLatinNorm.startsWith(consulta) ||
+            codigoNorm === consulta,
         });
       }
     }
@@ -801,7 +952,7 @@ export function App() {
         return b.altitud - a.altitud;
       })
       .slice(0, MAX_RESULTADOS_BUSQUEDA);
-  }, [busquedaAstro, cuerpos, estrellasCompletas, messierCompletos]);
+  }, [busquedaAstro, cuerpos, constelacionesCompletas, estrellasCompletas, messierCompletos]);
 
   const trayectoriaAstro = useMemo(
     () =>
@@ -850,6 +1001,25 @@ export function App() {
         color: '#fde68a',
       };
     }
+    if (astroSeleccionado.categoria === 'constelacion') {
+      const constelacion = constelacionesCompletas.find(
+        (c) => c.codigo === astroSeleccionado.id
+      );
+      if (
+        !constelacion ||
+        constelacion.centroAltitud <= 0 ||
+        !Number.isFinite(constelacion.centroAcimut)
+      ) {
+        return null;
+      }
+      return {
+        id: `constelacion-${constelacion.codigo}`,
+        nombre: constelacion.nombreEs,
+        acimut: constelacion.centroAcimut,
+        altitud: constelacion.centroAltitud,
+        color: '#38bdf8',
+      };
+    }
     const objMessier = messierCompletos.find((m) => m.id === astroSeleccionado.id);
     if (!objMessier || objMessier.altitud <= 0 || !Number.isFinite(objMessier.acimut)) return null;
     const nombreMessier = objMessier.nombreComun
@@ -862,7 +1032,7 @@ export function App() {
       altitud: objMessier.altitud,
       color: '#34d399',
     };
-  }, [astroSeleccionado, cuerpos, estrellasCompletas, messierCompletos]);
+  }, [astroSeleccionado, cuerpos, constelacionesCompletas, estrellasCompletas, messierCompletos]);
 
   const actualizarCampoUbicacion = (
     campo: Exclude<keyof FormularioUbicacion, 'bortle'>,
@@ -1025,13 +1195,10 @@ export function App() {
       }
     } else if (resultado.categoria === 'estrella' && !preferencias.capas.estrellas) {
       toggleCapa('estrellas', true);
+    } else if (resultado.categoria === 'constelacion' && !preferencias.capas.constelaciones) {
+      toggleCapa('constelaciones', true);
     }
-    setAstroSeleccionado({
-      id: resultado.id,
-      nombre: resultado.nombreSeleccion,
-      categoria: resultado.categoria,
-    });
-    setContadorFoco((prev) => prev + 1);
+    enfocarAstro(resultado.id);
     setBusquedaAstro(resultado.titulo);
     setBuscadorAbierto(false);
     setIndiceResultadoActivo(0);
@@ -1157,32 +1324,19 @@ export function App() {
           toggleCapa('messier', true);
         }
         setFiltrosCatalogo(FILTROS_CATALOGO_POR_DEFECTO);
-        setAstroSeleccionado({
-          id: idOriginal,
-          nombre: `${objetivo.codigo} · ${objetivo.nombre}`,
-          categoria: 'messier',
-        });
+        enfocarAstro(idOriginal);
       } else if (objetivo.categoria === 'estrella') {
         const idOriginal = objetivo.id.replace(/^estrella-/, '');
         if (!preferencias.capas.estrellas) {
           toggleCapa('estrellas', true);
         }
-        setAstroSeleccionado({
-          id: idOriginal,
-          nombre: objetivo.codigo,
-          categoria: 'estrella',
-        });
+        enfocarAstro(idOriginal);
       } else {
         const idOriginal = objetivo.id.replace(/^planeta-/, '');
-        setAstroSeleccionado({
-          id: idOriginal,
-          nombre: objetivo.nombre,
-          categoria: 'cuerpo',
-        });
+        enfocarAstro(idOriginal);
       }
-      setContadorFoco((prev) => prev + 1);
     },
-    [preferencias.capas.estrellas, preferencias.capas.messier, toggleCapa]
+    [preferencias.capas.estrellas, preferencias.capas.messier, toggleCapa, enfocarAstro]
   );
 
   const clasesContenedor = CLASES_CONTENEDOR[tema];
@@ -1719,6 +1873,9 @@ export function App() {
                     estrellas={estrellas}
                     messier={messier}
                     constelaciones={constelaciones}
+                    estrellasCompletas={estrellasCompletas}
+                    messierCompletos={messierCompletos}
+                    constelacionesCompletas={constelacionesCompletas}
                     tema={tema}
                     modoMapa={preferencias.modoMapa}
                     onCambiarModoMapa={setModoMapa}
@@ -1726,8 +1883,19 @@ export function App() {
                     mostrarEstrellas={preferencias.capas.estrellas}
                     mostrarMessier={preferencias.capas.messier}
                     astroSeleccionado={astroSeleccionado}
+                    focusedBodyId={isFocusActive ? selectedBodyId : null}
+                    focusedBodyName={sheetData?.name ?? contextoSeleccionado.fallbackName}
+                    isSheetOpen={isSheetOpen}
+                    onToggleSheet={toggleSheet}
+                    onClearFocus={clearFocus}
                     trayectoria={trayectoriaAstro}
-                    onSeleccionarAstro={setAstroSeleccionado}
+                    onSeleccionarAstro={(astro) => {
+                      if (astro) {
+                        enfocarAstro(astro.id);
+                      } else {
+                        clearFocus();
+                      }
+                    }}
                     contadorFoco={contadorFoco}
                     magnitudLimiteVisible={magnitudLimiteEfectiva}
                     bortle={bortleActual}
@@ -1806,13 +1974,13 @@ export function App() {
                         <button
                           type="button"
                           aria-pressed={estaSeleccionado}
-                          onClick={() =>
-                            setAstroSeleccionado((prev) =>
-                              prev?.categoria === 'cuerpo' && prev.id === obj.id
-                                ? null
-                                : { id: obj.id, nombre: obj.nombre, categoria: 'cuerpo' }
-                            )
-                          }
+                          onClick={() => {
+                            if (estaSeleccionado) {
+                              clearFocus();
+                            } else {
+                              enfocarAstro(obj.id);
+                            }
+                          }}
                           className="w-full text-left cursor-pointer p-3.5"
                         >
                           <div className="flex items-center gap-3.5">
@@ -1898,6 +2066,27 @@ export function App() {
           </>
         )}
       </div>
+
+      {vistaActiva === 'observatorio' && (
+        <CelestialDetailSheet
+          isOpen={isSheetOpen}
+          status={sheetStatus}
+          sheet={sheetData}
+          fallbackName={contextoSeleccionado.fallbackName}
+          fallbackSubtitle={contextoSeleccionado.fallbackSubtitle}
+          ephemeris={contextoSeleccionado.ephemeris}
+          errorMessage={errorMessage}
+          tema={tema}
+          onMinimize={() => toggleSheet(false)}
+          onCloseAll={clearFocus}
+          onRetry={selectedBodyId ? () => enfocarAstro(selectedBodyId) : undefined}
+          objetivoSesion={objetivoDetalleSeleccionado}
+          esObjetivoEnSesion={
+            objetivoDetalleSeleccionado ? idsEnSesion.has(objetivoDetalleSeleccionado.id) : false
+          }
+          onToggleObjetivo={toggleObjetivo}
+        />
+      )}
 
       {brujulaAbierta && (
         <Compass3DModal
