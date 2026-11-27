@@ -2,6 +2,11 @@ import * as Astronomy from 'astronomy-engine';
 import type { EventoCeleste, Ubicacion } from '../types/astronomy';
 import { LLUVIAS_ESTRELLAS } from '../data/meteorShowers';
 import { esEntradaAstronomicaValida } from './skyCalculator';
+import {
+  crearFechaUTCDesdeCivil,
+  normalizarZonaHoraria,
+  obtenerComponentesDiaCivil,
+} from '../utils/lunarCalculations';
 
 const NOMBRES_ECLIPSE: Record<string, string> = {
   total: 'Total',
@@ -10,34 +15,56 @@ const NOMBRES_ECLIPSE: Record<string, string> = {
   penumbral: 'Penumbral',
 };
 
-function calcularDiasRestantes(desde: Date, hasta: Date): number {
-  const inicioDia = new Date(desde.getFullYear(), desde.getMonth(), desde.getDate()).getTime();
-  const finDia = new Date(hasta.getFullYear(), hasta.getMonth(), hasta.getDate()).getTime();
+function calcularDiasRestantesEnZona(desde: Date, hasta: Date, timezone: string): number {
+  const cDesde = obtenerComponentesDiaCivil(desde, timezone);
+  const cHasta = obtenerComponentesDiaCivil(hasta, timezone);
+  const inicioDia = Date.UTC(cDesde.anio, cDesde.mes - 1, cDesde.dia);
+  const finDia = Date.UTC(cHasta.anio, cHasta.mes - 1, cHasta.dia);
   return Math.round((finDia - inicioDia) / (1000 * 60 * 60 * 24));
 }
 
-function obtenerProximasLluvias(fechaBase: Date): EventoCeleste[] {
-  const anioActual = fechaBase.getFullYear();
+function obtenerProximasLluvias(fechaBase: Date, timezone: string): EventoCeleste[] {
+  const { anio: anioActual } = obtenerComponentesDiaCivil(fechaBase, timezone);
 
   return LLUVIAS_ESTRELLAS.map((lluvia) => {
-    let fechaPico = new Date(anioActual, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
-    if (calcularDiasRestantes(fechaBase, fechaPico) < 0) {
-      fechaPico = new Date(anioActual + 1, lluvia.mesPico - 1, lluvia.diaPico, 23, 30);
+    let fechaPico = crearFechaUTCDesdeCivil(
+      anioActual,
+      lluvia.mesPico,
+      lluvia.diaPico,
+      23,
+      30,
+      timezone
+    );
+    if (calcularDiasRestantesEnZona(fechaBase, fechaPico, timezone) < 0) {
+      fechaPico = crearFechaUTCDesdeCivil(
+        anioActual + 1,
+        lluvia.mesPico,
+        lluvia.diaPico,
+        23,
+        30,
+        timezone
+      );
     }
 
+    const anioPico = obtenerComponentesDiaCivil(fechaPico, timezone).anio;
+
     return {
-      id: `lluvia-${lluvia.id}-${fechaPico.getFullYear()}`,
+      id: `lluvia-${lluvia.id}-${anioPico}`,
       titulo: lluvia.nombre,
       tipo: 'lluvia' as const,
       fechaPico,
-      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
+      diasRestantes: calcularDiasRestantesEnZona(fechaBase, fechaPico, timezone),
       resumen: `Máximo ~${lluvia.thz} meteoros/h`,
       detalle: `Radiante: Const. ${lluvia.radiante}`,
     };
   });
 }
 
-function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoCeleste[] {
+function obtenerProximosEclipses(
+  fechaBase: Date,
+  ubicacion: Ubicacion,
+  timezone: string
+): EventoCeleste[] {
   const eventos: EventoCeleste[] = [];
   const observador = new Astronomy.Observer(
     ubicacion.latitud,
@@ -71,7 +98,7 @@ function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoC
       titulo: `Eclipse Lunar ${tipoStr}`,
       tipo: 'eclipse',
       fechaPico,
-      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
+      diasRestantes: calcularDiasRestantesEnZona(fechaBase, fechaPico, timezone),
       resumen,
       detalle,
     });
@@ -104,7 +131,7 @@ function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoC
         titulo: `Eclipse Solar ${tipoStr}`,
         tipo: 'eclipse',
         fechaPico,
-        diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
+        diasRestantes: calcularDiasRestantesEnZona(fechaBase, fechaPico, timezone),
         resumen: `Ocultación local: ${porcentajeOcultacion}%`,
         detalle: `Altura del Sol en máximo: ${solar.peak.altitude.toFixed(1)}°`,
       });
@@ -125,7 +152,7 @@ function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoC
       titulo: `Eclipse Solar ${tipoStr}`,
       tipo: 'eclipse',
       fechaPico,
-      diasRestantes: calcularDiasRestantes(fechaBase, fechaPico),
+      diasRestantes: calcularDiasRestantesEnZona(fechaBase, fechaPico, timezone),
       resumen: `Ocultación local: ${porcentajeOcultacion}%`,
       detalle: `No visible desde tu ubicación (Sol bajo el horizonte: ${primerEclipseSolar.peak.altitude.toFixed(1)}°)`,
     });
@@ -137,8 +164,14 @@ function obtenerProximosEclipses(fechaBase: Date, ubicacion: Ubicacion): EventoC
 export function calcularProximosEventos(fechaBase: Date, ubicacion: Ubicacion): EventoCeleste[] {
   if (!esEntradaAstronomicaValida(fechaBase, ubicacion)) return [];
 
-  const lluvias = obtenerProximasLluvias(fechaBase);
-  const eclipses = obtenerProximosEclipses(fechaBase, ubicacion);
+  const zonaHoraria = normalizarZonaHoraria(
+    ubicacion.timezone,
+    ubicacion.latitud,
+    ubicacion.longitud
+  );
+
+  const lluvias = obtenerProximasLluvias(fechaBase, zonaHoraria);
+  const eclipses = obtenerProximosEclipses(fechaBase, ubicacion, zonaHoraria);
 
   return [...lluvias, ...eclipses]
     .sort((a, b) => a.fechaPico.getTime() - b.fechaPico.getTime())

@@ -8,6 +8,7 @@ import type {
   EstrellaCalculada,
   FaseCrepusculo,
   MessierCalculado,
+  MoonPhaseName,
   PuntoTrayectoria,
   SegmentoHorizontalConstelacion,
   Ubicacion,
@@ -15,6 +16,12 @@ import type {
 import { CATALOGO_MESSIER } from '../data/messier110';
 import { CATALOGO_ESTRELLAS } from '../data/estrellasMag4';
 import { CONSTELACIONES_IAU } from '../data/constelacionesIAU';
+import {
+  formatearHoraEnZona,
+  normalizarZonaHoraria,
+  obtenerLimitesDiaCivilUTC,
+  obtenerNombreFaseLunarDesdeAngulo,
+} from '../utils/lunarCalculations';
 
 const CUERPOS_A_CALCULAR: {
   body: Astronomy.Body;
@@ -50,15 +57,8 @@ function gradosADireccion(acimut: number): string {
   return puntos[indice];
 }
 
-function obtenerNombreFaseLunar(angulo: number): string {
-  if (angulo < 22.5 || angulo >= 337.5) return 'Luna Nueva';
-  if (angulo < 67.5) return 'Luna Creciente';
-  if (angulo < 112.5) return 'Cuarto Creciente';
-  if (angulo < 157.5) return 'Gibosa Creciente';
-  if (angulo < 202.5) return 'Luna Llena';
-  if (angulo < 247.5) return 'Gibosa Menguante';
-  if (angulo < 292.5) return 'Cuarto Menguante';
-  return 'Luna Menguante';
+function obtenerNombreFaseLunar(angulo: number): MoonPhaseName {
+  return obtenerNombreFaseLunarDesdeAngulo(angulo);
 }
 
 function clasificarFaseSolar(altitudSol: number): FaseCrepusculo {
@@ -133,7 +133,7 @@ export function calcularCielo(fecha: Date, ubicacion: Ubicacion): CuerpoCeleste[
     const brillo = Astronomy.Illumination(body, fecha);
     const constelacion = Astronomy.Constellation(ecuatorialJ2000.ra, ecuatorialJ2000.dec);
 
-    let faseLunar: string | undefined;
+    let faseLunar: MoonPhaseName | undefined;
     let anguloFase: number | undefined;
     if (tipo === 'luna') {
       anguloFase = Astronomy.MoonPhase(fecha);
@@ -289,7 +289,10 @@ export function calcularConstelaciones(
   });
 }
 
-function formatearHoraEtiqueta(fecha: Date): string {
+function formatearHoraEtiqueta(fecha: Date, timezone?: string): string {
+  if (timezone) {
+    return formatearHoraEnZona(fecha, timezone);
+  }
   const horas = String(fecha.getHours()).padStart(2, '0');
   const minutos = String(fecha.getMinutes()).padStart(2, '0');
   return `${horas}:${minutos}`;
@@ -327,7 +330,7 @@ export function calcularTrayectoriaAstro(
       puntos.push({
         altitud: Number(horizontal.altitude.toFixed(1)),
         acimut: Number(horizontal.azimuth.toFixed(1)),
-        horaEtiqueta: formatearHoraEtiqueta(fechaPaso),
+        horaEtiqueta: formatearHoraEtiqueta(fechaPaso, ubicacion.timezone),
       });
     }
     return puntos;
@@ -358,7 +361,7 @@ export function calcularTrayectoriaAstro(
     puntos.push({
       altitud: Number(horizontal.altitude.toFixed(1)),
       acimut: Number(horizontal.azimuth.toFixed(1)),
-      horaEtiqueta: formatearHoraEtiqueta(fechaPaso),
+      horaEtiqueta: formatearHoraEtiqueta(fechaPaso, ubicacion.timezone),
     });
   }
 
@@ -388,8 +391,15 @@ export function calcularTransitoCuerpo(
     ubicacion.altitud
   );
 
-  const inicioDia = new Date(fecha);
-  inicioDia.setHours(0, 0, 0, 0);
+  const zonaHoraria = normalizarZonaHoraria(
+    ubicacion.timezone,
+    ubicacion.latitud,
+    ubicacion.longitud
+  );
+  const { inicioDiaUTC, finDiaUTC } = obtenerLimitesDiaCivilUTC(fecha, zonaHoraria);
+  const inicioMs = inicioDiaUTC.getTime();
+  const finMs = finDiaUTC.getTime();
+  const duracionDias = (finMs - inicioMs) / 86_400_000;
 
   let salida: Date | null = null;
   let puesta: Date | null = null;
@@ -397,15 +407,33 @@ export function calcularTransitoCuerpo(
   let alturaMaxima: number | null = null;
 
   try {
-    const eventoSalida = Astronomy.SearchRiseSet(cuerpoDef.body, observador, 1, inicioDia, 1);
-    if (eventoSalida) salida = eventoSalida.date;
+    const eventoSalida = Astronomy.SearchRiseSet(
+      cuerpoDef.body,
+      observador,
+      1,
+      inicioDiaUTC,
+      duracionDias
+    );
+    if (eventoSalida) {
+      const ms = eventoSalida.date.getTime();
+      if (ms >= inicioMs && ms < finMs) salida = eventoSalida.date;
+    }
   } catch {
     // Mantiene salida en null en latitudes o fechas sin orto
   }
 
   try {
-    const eventoPuesta = Astronomy.SearchRiseSet(cuerpoDef.body, observador, -1, inicioDia, 1);
-    if (eventoPuesta) puesta = eventoPuesta.date;
+    const eventoPuesta = Astronomy.SearchRiseSet(
+      cuerpoDef.body,
+      observador,
+      -1,
+      inicioDiaUTC,
+      duracionDias
+    );
+    if (eventoPuesta) {
+      const ms = eventoPuesta.date.getTime();
+      if (ms >= inicioMs && ms < finMs) puesta = eventoPuesta.date;
+    }
   } catch {
     // Mantiene puesta en null en latitudes o fechas sin ocaso
   }
@@ -415,7 +443,7 @@ export function calcularTransitoCuerpo(
       cuerpoDef.body,
       observador,
       0,
-      inicioDia,
+      inicioDiaUTC,
       1
     );
     culminacion = eventoCulminacion.time.date;
