@@ -17,13 +17,13 @@ function formatearBadgeDias(dias: number): string {
 
 function obtenerClaseIconoEvento(tema: TemaVisual, tipo: EventoCeleste['tipo']): string {
   if (tema === 'rojo') return 'text-red-500';
-  if (tema === 'claro') return tipo === 'lluvia' ? 'text-amber-600' : 'text-sky-600';
+  if (tema === 'claro') return tipo === 'lluvia' ? 'text-amber-700' : 'text-sky-700';
   return tipo === 'lluvia' ? 'text-amber-400' : 'text-sky-400';
 }
 
 function obtenerClaseBadgeDias(tema: TemaVisual): string {
   if (tema === 'rojo') return 'border-red-600 text-red-500';
-  if (tema === 'claro') return 'border-sky-600/40 bg-sky-500/10 text-sky-700';
+  if (tema === 'claro') return 'border-sky-700/40 bg-sky-50 text-sky-800';
   return 'border-sky-500/40 bg-sky-500/10 text-sky-400';
 }
 

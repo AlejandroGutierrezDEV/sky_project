@@ -81,8 +81,8 @@ export function StarfieldBackground({ tema }: Readonly<StarfieldBackgroundProps>
 
     const dibujarClaro = () => {
       const grad = ctx.createLinearGradient(0, 0, 0, alto);
-      grad.addColorStop(0, '#dbeafe');
-      grad.addColorStop(0.35, '#eef2ff');
+      grad.addColorStop(0, '#e2e8f0');
+      grad.addColorStop(0.45, '#e8eef7');
       grad.addColorStop(1, '#f1f5f9');
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, ancho, alto);

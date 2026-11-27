@@ -1,5 +1,42 @@
 export type TemaVisual = 'oscuro' | 'claro' | 'rojo';
 
+export type ThemeMode = 'dark' | 'light';
+
+export interface CelestialThemePalette {
+  /** Color de fondo del canvas/escena */
+  background: string;
+  /** Color base de la esfera/cúpula celeste */
+  domeSurface: string;
+  /** Opacidad de la cúpula (0 a 1) */
+  domeOpacity: number;
+  /** Líneas de cuadrícula (azimut, altitud, eclíptica) */
+  gridPrimary: string;
+  gridSecondary: string;
+  horizonLine: string;
+  /** Puntos cardinales y etiquetas de texto en la bóveda */
+  labelText: string;
+  labelHalo: string;
+  /** Colores por defecto de astros y constelaciones */
+  starDefault: string;
+  constellationLine: string;
+  highlightAccent: string;
+}
+
+export interface ThemePalettes {
+  dark: CelestialThemePalette;
+  light: CelestialThemePalette;
+}
+
+/** Type guard obligatorio para validar lectura desde localStorage */
+export function isThemeMode(value: unknown): value is ThemeMode {
+  return value === 'dark' || value === 'light';
+}
+
+/** Type guard para los tres temas visuales soportados por SkyProject */
+export function esTemaVisual(valor: unknown): valor is TemaVisual {
+  return valor === 'oscuro' || valor === 'claro' || valor === 'rojo';
+}
+
 export type EscalaBortle = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 export interface DatosLunares {

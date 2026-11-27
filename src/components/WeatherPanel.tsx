@@ -24,9 +24,9 @@ const ESTILOS_VEREDICTO_OSCURO: Record<CondicionesMeteo['veredicto'], string> = 
 };
 
 const ESTILOS_VEREDICTO_CLARO: Record<CondicionesMeteo['veredicto'], string> = {
-  Excelente: 'border-emerald-600/40 bg-emerald-500/15 text-emerald-700',
-  Aceptable: 'border-amber-600/40 bg-amber-500/15 text-amber-700',
-  Desfavorable: 'border-rose-600/40 bg-rose-500/15 text-rose-700',
+  Excelente: 'border-emerald-700/40 bg-emerald-50 text-emerald-800',
+  Aceptable: 'border-amber-700/40 bg-amber-50 text-amber-800',
+  Desfavorable: 'border-rose-700/40 bg-rose-50 text-rose-800',
 };
 
 const ESTILOS_CALIDAD_OSCURO: Record<CalidadCieloCalculada['veredicto'], string> = {
@@ -37,10 +37,10 @@ const ESTILOS_CALIDAD_OSCURO: Record<CalidadCieloCalculada['veredicto'], string>
 };
 
 const ESTILOS_CALIDAD_CLARO: Record<CalidadCieloCalculada['veredicto'], string> = {
-  Excelente: 'border-emerald-600/40 bg-emerald-500/15 text-emerald-700',
-  Bueno: 'border-sky-600/40 bg-sky-500/15 text-sky-700',
-  Regular: 'border-amber-600/40 bg-amber-500/15 text-amber-700',
-  Malo: 'border-rose-600/40 bg-rose-500/15 text-rose-700',
+  Excelente: 'border-emerald-700/40 bg-emerald-50 text-emerald-800',
+  Bueno: 'border-sky-700/40 bg-sky-50 text-sky-800',
+  Regular: 'border-amber-700/40 bg-amber-50 text-amber-800',
+  Malo: 'border-rose-700/40 bg-rose-50 text-rose-800',
 };
 
 const ESTILOS_CALIDAD_ROJO: Record<CalidadCieloCalculada['veredicto'], string> = {

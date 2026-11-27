@@ -47,6 +47,7 @@ import {
   PlanificadorSesionModal,
 } from './components/PlanificadorSesionModal';
 import { usePreferenciasMapa } from './hooks/usePreferenciasMapa';
+import { useTemaVisual } from './hooks/useTemaVisual';
 import {
   usePlanificadorSesion,
   type EntradaObjetivoSesion,
@@ -83,7 +84,6 @@ import type {
 } from './types/astronomy';
 
 const CLAVE_UBICACION = 'skyproject_ubicacion';
-const CLAVE_TEMA = 'skyproject_tema';
 const CLAVE_FAVORITOS = 'skyproject_favoritos_v1';
 const MAX_FAVORITOS = 8;
 const MAX_RESULTADOS_BUSQUEDA = 6;
@@ -104,22 +104,16 @@ const CLASES_CONTENEDOR: Record<TemaVisual, string> = {
   rojo: 'bg-transparent text-red-500',
 };
 
-const COLOR_TEMA_META: Record<TemaVisual, string> = {
-  oscuro: '#020617',
-  claro: '#dbeafe',
-  rojo: '#000000',
-};
-
 const CLASES_TARJETA: Record<TemaVisual, string> = {
   oscuro:
     'hud-esquinas hud-oscuro bg-slate-900/55 backdrop-blur-md border-cyan-400/15',
-  claro: 'hud-esquinas hud-claro bg-white/80 backdrop-blur-md border-slate-200/90 shadow-md shadow-slate-900/5',
+  claro: 'hud-esquinas hud-claro bg-slate-50/92 backdrop-blur-md border-slate-300 shadow-md shadow-slate-900/8',
   rojo: 'hud-esquinas hud-rojo bg-black/90 border-red-900/70',
 };
 
 const CLASES_HOVER_TARJETA: Record<TemaVisual, string> = {
   oscuro: 'hover:border-sky-500/40',
-  claro: 'hover:border-slate-300 hover:shadow-lg',
+  claro: 'hover:border-slate-400 hover:shadow-lg',
   rojo: 'hover:border-red-600/80',
 };
 
@@ -260,18 +254,6 @@ function esUbicacionDuplicada(a: Ubicacion, b: Ubicacion): boolean {
   return mismoNombre || coordenadasCercanas;
 }
 
-function leerTemaGuardado(): TemaVisual {
-  try {
-    const guardado = localStorage.getItem(CLAVE_TEMA);
-    if (guardado === 'oscuro' || guardado === 'claro' || guardado === 'rojo') {
-      return guardado;
-    }
-    return 'oscuro';
-  } catch {
-    return 'oscuro';
-  }
-}
-
 function guardarEnStorage(clave: string, valor: string): void {
   try {
     localStorage.setItem(clave, valor);
@@ -323,19 +305,19 @@ function validarFormularioUbicacion(form: FormularioUbicacion): {
 
 function obtenerClaseOptionSelect(tema: TemaVisual): string {
   if (tema === 'rojo') return 'bg-black text-red-500';
-  if (tema === 'claro') return 'bg-white text-slate-900';
+  if (tema === 'claro') return 'bg-slate-50 text-slate-900';
   return 'bg-slate-950 text-slate-100';
 }
 
 function obtenerClaseBotonAplicar(tema: TemaVisual): string {
   if (tema === 'rojo') return 'border-red-600 bg-red-950/70 text-red-400 hover:bg-red-950';
-  if (tema === 'claro') return 'border-sky-600 bg-sky-600 text-white hover:bg-sky-700';
+  if (tema === 'claro') return 'border-sky-700 bg-sky-700 text-white hover:bg-sky-800';
   return 'border-sky-500/60 bg-sky-600 text-white hover:bg-sky-500';
 }
 
 function obtenerClaseErrorInline(tema: TemaVisual): string {
   if (tema === 'rojo') return 'border-red-600 bg-red-950/40 text-red-400';
-  if (tema === 'claro') return 'border-rose-300 bg-rose-50 text-rose-700';
+  if (tema === 'claro') return 'border-rose-400 bg-rose-50 text-rose-800';
   return 'border-rose-500/40 bg-rose-500/10 text-rose-300';
 }
 
@@ -347,9 +329,9 @@ function obtenerEstadoVisibilidadCuerpo(cuerpo: CuerpoCeleste): {
     return { etiqueta: 'Sobre el horizonte', opacidad: 'opacity-100' };
   }
   if (cuerpo.altitud > 0) {
-    return { etiqueta: 'Muy bajo en el horizonte', opacidad: 'opacity-80' };
+    return { etiqueta: 'Muy bajo en el horizonte', opacidad: 'opacity-85' };
   }
-  return { etiqueta: 'Bajo el horizonte', opacidad: 'opacity-45' };
+  return { etiqueta: 'Bajo el horizonte', opacidad: 'opacity-65' };
 }
 
 function formatearFechaParaInput(fecha: Date): string {
@@ -381,21 +363,22 @@ function obtenerClaseTarjetaSeleccionada(tema: TemaVisual): string {
 
 function obtenerClaseDesplegableBusqueda(tema: TemaVisual): string {
   if (tema === 'rojo') return 'bg-black border-red-700 text-red-500 shadow-lg shadow-black/80';
-  if (tema === 'claro') return 'bg-white border-slate-300 text-slate-900 shadow-lg shadow-slate-900/10';
+  if (tema === 'claro')
+    return 'bg-slate-50/95 border-slate-300 text-slate-900 shadow-lg shadow-slate-900/12 backdrop-blur-md';
   return 'bg-slate-950/95 border-slate-700 text-slate-100 shadow-xl shadow-black/60 backdrop-blur-md';
 }
 
 function obtenerClaseItemBusqueda(tema: TemaVisual, activo: boolean): string {
   if (!activo) return 'hover:bg-current/10';
   if (tema === 'rojo') return 'bg-red-950/80 text-red-400';
-  if (tema === 'claro') return 'bg-sky-50 text-sky-900';
+  if (tema === 'claro') return 'bg-sky-100 text-slate-900';
   return 'bg-sky-500/20 text-sky-100';
 }
 
 function obtenerClaseInsigniaHorizonte(tema: TemaVisual, sobreHorizonte: boolean): string {
-  if (!sobreHorizonte) return 'border-current/20 opacity-65';
+  if (!sobreHorizonte) return 'border-current/25 opacity-75';
   if (tema === 'rojo') return 'border-red-600/80 bg-red-950/50 text-red-400';
-  if (tema === 'claro') return 'border-emerald-300 bg-emerald-50 text-emerald-700';
+  if (tema === 'claro') return 'border-emerald-400 bg-emerald-50 text-emerald-800';
   return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300';
 }
 
@@ -486,7 +469,7 @@ export function App() {
   const [indiceResultadoActivo, setIndiceResultadoActivo] = useState(0);
   const buscadorRef = useRef<HTMLDivElement | null>(null);
 
-  const [tema, setTema] = useState<TemaVisual>(leerTemaGuardado);
+  const { tema, setTema, restablecerTema } = useTemaVisual();
   const [vistaActiva, setVistaActiva] = useState<VistaActiva>('observatorio');
   const [brujulaAbierta, setBrujulaAbierta] = useState(false);
   const [planificadorAbierto, setPlanificadorAbierto] = useState(false);
@@ -503,7 +486,6 @@ export function App() {
   const [avisoReset, setAvisoReset] = useState<string | null>(null);
   const timeoutResetRef = useRef<number | null>(null);
   const omitirGuardadoUbicacionRef = useRef(true);
-  const omitirGuardadoTemaRef = useRef(true);
   const omitirGuardadoFavoritosRef = useRef(true);
 
   const coordenadasEstables = useMemo<Ubicacion>(
@@ -559,18 +541,6 @@ export function App() {
     }
     guardarEnStorage(CLAVE_UBICACION, JSON.stringify(ubicacion));
   }, [ubicacion]);
-
-  useEffect(() => {
-    const metaThemeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-    if (metaThemeColor) {
-      metaThemeColor.content = COLOR_TEMA_META[tema];
-    }
-    if (omitirGuardadoTemaRef.current) {
-      omitirGuardadoTemaRef.current = false;
-      return;
-    }
-    guardarEnStorage(CLAVE_TEMA, tema);
-  }, [tema]);
 
   useEffect(() => {
     if (omitirGuardadoFavoritosRef.current) {
@@ -1022,7 +992,6 @@ export function App() {
     }
     setConfirmandoReset(false);
     omitirGuardadoUbicacionRef.current = ubicacion !== UBICACION_INICIAL;
-    omitirGuardadoTemaRef.current = tema !== 'oscuro';
     omitirGuardadoFavoritosRef.current = favoritos.length > 0;
 
     resetearDatosLocales();
@@ -1041,7 +1010,7 @@ export function App() {
       bortle: BORTLE_POR_DEFECTO,
     });
     setFavoritos([]);
-    setTema('oscuro');
+    restablecerTema();
     setAvisoReset('Datos locales restablecidos a los valores iniciales.');
   };
 

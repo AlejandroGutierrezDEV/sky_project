@@ -51,7 +51,7 @@ const ETIQUETA_CATEGORIA: Readonly<Record<CategoriaAstroObjetivo, string>> = {
 
 const CLASE_PANEL_MODAL: Record<TemaVisual, string> = {
   oscuro: 'bg-slate-950/95 border-cyan-400/25 text-slate-100 shadow-2xl shadow-black/80',
-  claro: 'bg-white border-slate-300 text-slate-900 shadow-2xl shadow-slate-900/20',
+  claro: 'bg-slate-50 border-slate-300 text-slate-900 shadow-2xl shadow-slate-900/20',
   rojo: 'bg-black border-red-800 text-red-500 shadow-2xl shadow-black',
 };
 
