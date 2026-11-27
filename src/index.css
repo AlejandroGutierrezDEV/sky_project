@@ -21,8 +21,44 @@
     letter-spacing: -0.01em;
   }
 
+  /* Tokens semánticos por tema visual */
+  .tema-oscuro {
+    --superficie-base: #020617;
+    --superficie-tarjeta: rgb(15 23 42 / 0.55);
+    --borde-tarjeta: rgb(34 211 238 / 0.15);
+    --texto-primario: #f1f5f9;
+    --texto-secundario: #cbd5e1;
+    --texto-atenuado: #94a3b8;
+  }
+
+  /* Modo Claro: pizarra/papel astronómico suave con alto contraste WCAG AA */
+  .tema-claro {
+    --superficie-base: #e2e8f0;
+    --superficie-tarjeta: #f8fafc;
+    --borde-tarjeta: #cbd5e1;
+    --texto-primario: #0f172a;
+    --texto-secundario: #334155;
+    --texto-atenuado: #64748b;
+    accent-color: #0369a1;
+  }
+
+  .tema-claro *:focus-visible {
+    outline-color: #0369a1;
+  }
+
+  .tema-claro ::selection {
+    background-color: #bae6fd;
+    color: #0f172a;
+  }
+
   /* Filtro Rojo: ningún acento del navegador puede salir del espectro rojo */
   .tema-rojo {
+    --superficie-base: #000000;
+    --superficie-tarjeta: rgb(0 0 0 / 0.9);
+    --borde-tarjeta: rgb(127 29 29 / 0.7);
+    --texto-primario: #ef4444;
+    --texto-secundario: #dc2626;
+    --texto-atenuado: #b91c1c;
     accent-color: #dc2626;
   }
 
@@ -92,9 +128,9 @@
       0 20px 25px -5px rgb(0 0 0 / 0.3);
   }
 
-  /* Claro: acabado limpio de instrumento */
+  /* Claro: acabado limpio de carta técnica con borde definido */
   .hud-claro {
-    --hud-color: rgb(71 85 105 / 0.45);
+    --hud-color: rgb(51 65 85 / 0.5);
   }
 
   /* Rojo: líneas finas rojo oscuro, sin brillo */

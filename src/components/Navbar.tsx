@@ -53,13 +53,13 @@ const OPCIONES_TEMA: { tema: TemaVisual; etiqueta: string; Icono: typeof Moon; t
 const CLASES_BARRA: Record<TemaVisual, string> = {
   oscuro:
     'bg-slate-950/60 backdrop-blur-xl border-b border-cyan-400/15 shadow-[0_1px_24px_-12px_rgb(34_211_238/0.35)]',
-  claro: 'bg-white/70 backdrop-blur-xl border-b border-slate-200/90 shadow-sm shadow-slate-900/5',
+  claro: 'bg-slate-50/90 backdrop-blur-xl border-b border-slate-300 text-slate-900 shadow-sm shadow-slate-900/8',
   rojo: 'bg-black border-b border-red-900/80',
 };
 
 const CLASES_MENU_MOVIL: Record<TemaVisual, string> = {
   oscuro: 'bg-slate-950/90 backdrop-blur-xl border-cyan-400/15',
-  claro: 'bg-white/95 backdrop-blur-xl border-slate-200',
+  claro: 'bg-slate-50/95 backdrop-blur-xl border-slate-300 text-slate-900',
   rojo: 'bg-black border-red-900/80',
 };
 
@@ -70,22 +70,22 @@ const CLASE_ACENTO: Record<TemaVisual, string> = {
 };
 
 function obtenerClaseNavActiva(tema: TemaVisual, activo: boolean): string {
-  if (!activo) return 'border-transparent opacity-75 hover:opacity-100 hover:bg-current/5';
+  if (!activo) return 'border-transparent opacity-80 hover:opacity-100 hover:bg-current/5';
   if (tema === 'rojo') return 'border-red-700 bg-red-950/70 text-red-400';
-  if (tema === 'claro') return 'border-slate-900 bg-slate-900 text-white';
+  if (tema === 'claro') return 'border-slate-900 bg-slate-900 text-slate-50';
   return 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200';
 }
 
 function obtenerClaseBotonTema(temaActual: TemaVisual, boton: TemaVisual): string {
-  if (temaActual !== boton) return 'opacity-70 hover:opacity-100';
+  if (temaActual !== boton) return 'opacity-80 hover:opacity-100';
   if (boton === 'oscuro') return 'bg-cyan-600/90 text-white';
-  if (boton === 'claro') return 'bg-slate-800 text-white';
+  if (boton === 'claro') return 'bg-slate-900 text-slate-50';
   return 'bg-red-950 text-red-500 border border-red-600';
 }
 
 function obtenerClaseBotonBrujula(tema: TemaVisual): string {
   if (tema === 'rojo') return 'border-red-700 bg-red-950/50 text-red-400 hover:bg-red-950';
-  if (tema === 'claro') return 'border-slate-300 bg-white text-slate-900 hover:border-sky-600 hover:text-sky-700';
+  if (tema === 'claro') return 'border-slate-300 bg-slate-100/90 text-slate-900 hover:border-sky-700 hover:text-sky-800';
   return 'border-cyan-400/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 hover:border-cyan-300/70';
 }
 
@@ -143,6 +143,7 @@ export function Navbar({
           key={opcion}
           type="button"
           onClick={() => onCambiarTema(opcion)}
+          aria-label={`Cambiar a ${titulo.toLowerCase()}`}
           aria-pressed={tema === opcion}
           title={titulo}
           className={`flex flex-1 items-center justify-center gap-1.5 px-2.5 min-h-11 md:min-h-8 rounded-lg text-xs font-medium cursor-pointer transition-colors ${obtenerClaseBotonTema(
