@@ -39,6 +39,51 @@ export function esTemaVisual(valor: unknown): valor is TemaVisual {
 
 export type EscalaBortle = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
+export interface GeoCoordinates {
+  latitude: number; // Rango válido: [-90, 90]
+  longitude: number; // Rango válido: [-180, 180]
+  timezone: string; // Formato IANA (ej. "Europe/Madrid")
+  name?: string;
+}
+
+export type MoonPhaseName =
+  | 'Luna Nueva'
+  | 'Luna Creciente'
+  | 'Cuarto Creciente'
+  | 'Gibosa Creciente'
+  | 'Luna Llena'
+  | 'Gibosa Menguante'
+  | 'Cuarto Menguante'
+  | 'Luna Menguante';
+
+export interface LunarData {
+  phase: number; // Normalizado [0, 1)
+  phaseName: MoonPhaseName;
+  illumination: number; // Porcentaje [0, 100]
+  ageDays: number; // Días del ciclo sinódico (~0 - 29.53)
+  moonrise: Date | null; // null si es circumpolar o no sale ese día
+  moonset: Date | null; // null si no se pone ese día
+  nextFullMoon: Date;
+  nextNewMoon: Date;
+}
+
+export interface DailyHighlightItem {
+  id: string;
+  category: 'lunar' | 'solar' | 'planetary' | 'meteor' | 'visibility';
+  title: string;
+  subtitle: string;
+  timestamp?: Date;
+  priority: 1 | 2 | 3; // 1 = Máxima relevancia hoy
+  badgeText?: string;
+}
+
+export interface TodayHighlightsState {
+  items: DailyHighlightItem[];
+  isLoading: boolean;
+  error: string | null;
+  lastUpdated: Date | null;
+}
+
 export interface DatosLunares {
   iluminacion: number; // 0 a 1 (0% a 100%)
   altitudGrados: number; // -90 a +90
@@ -58,6 +103,7 @@ export interface Ubicacion {
   altitud: number;
   nombre: string;
   bortle?: EscalaBortle;
+  timezone?: string;
 }
 
 export interface UbicacionFavorita extends Ubicacion {
@@ -79,7 +125,7 @@ export interface CuerpoCeleste {
   decGrados?: number;
   constelacionIAU?: string;
   iluminacion?: number;
-  faseLunar?: string;
+  faseLunar?: MoonPhaseName;
   anguloFase?: number;
   visible: boolean;
   color: string;

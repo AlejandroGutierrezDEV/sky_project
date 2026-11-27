@@ -1,10 +1,15 @@
 import { CalendarClock, Sparkles, Eclipse, ArrowUpRight } from 'lucide-react';
 import type { EventoCeleste, TemaVisual } from '../types/astronomy';
+import {
+  ZONA_HORARIA_POR_DEFECTO,
+  formatearFechaCortaEnZona,
+} from '../utils/lunarCalculations';
 
 interface EventsPanelProps {
   eventos: EventoCeleste[];
   tema: TemaVisual;
   claseTarjeta: string;
+  timezone?: string;
   onSeleccionarFecha: (fecha: Date) => void;
 }
 
@@ -31,6 +36,7 @@ export function EventsPanel({
   eventos,
   tema,
   claseTarjeta,
+  timezone = ZONA_HORARIA_POR_DEFECTO,
   onSeleccionarFecha,
 }: Readonly<EventsPanelProps>) {
   return (
@@ -44,11 +50,7 @@ export function EventsPanel({
 
       <div className="space-y-2.5">
         {eventos.map((ev) => {
-          const fechaTexto = ev.fechaPico.toLocaleDateString('es-ES', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-          });
+          const fechaTexto = formatearFechaCortaEnZona(ev.fechaPico, timezone);
 
           const claseHoverEvento =
             tema === 'rojo'

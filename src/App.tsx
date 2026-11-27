@@ -47,7 +47,11 @@ import {
   HojaImpresionSesion,
   PlanificadorSesionModal,
 } from './components/PlanificadorSesionModal';
+import { TodayHighlightsWidget } from './components/widgets/TodayHighlightsWidget';
 import { useCelestialFocus } from './hooks/useCelestialFocus';
+import { useLocation, MAX_NOMBRE_UBICACION, esUbicacionValida } from './hooks/useLocation';
+import { useLunarData } from './hooks/useLunarData';
+import { useTodayHighlights } from './hooks/useTodayHighlights';
 import { usePreferenciasMapa } from './hooks/usePreferenciasMapa';
 import { useTemaVisual } from './hooks/useTemaVisual';
 import {
@@ -67,6 +71,14 @@ import {
   esEscalaBortleValida,
   normalizarEscalaBortle,
 } from './utils/astronomia/calidadCielo';
+import {
+  TEXTO_SIN_OCASO,
+  TEXTO_SIN_ORTO,
+  esZonaHorariaIANAValida,
+  formatearHoraEnZona,
+  inferirZonaHorariaPorCoordenadas,
+  normalizarZonaHoraria,
+} from './utils/lunarCalculations';
 import type { LiveEphemerisSnapshot } from './types/celestialDetails';
 import type {
   AstroSeleccionado,
@@ -86,20 +98,25 @@ import type {
   VistaActiva,
 } from './types/astronomy';
 
-const CLAVE_UBICACION = 'skyproject_ubicacion';
 const CLAVE_FAVORITOS = 'skyproject_favoritos_v1';
 const MAX_FAVORITOS = 8;
 const MAX_RESULTADOS_BUSQUEDA = 8;
-const MAX_NOMBRE_UBICACION = 80;
 const UMBRAL_COORD_DUPLICADA = 0.01;
 
-const UBICACION_INICIAL: Ubicacion = {
-  latitud: 39.47,
-  longitud: -0.38,
-  altitud: 150,
-  nombre: 'Mi Observatorio (Valencia)',
-  bortle: BORTLE_POR_DEFECTO,
-};
+const ZONAS_HORARIAS_COMUNES: readonly { id: string; etiqueta: string }[] = [
+  { id: 'auto', etiqueta: 'Automática (según coordenadas)' },
+  { id: 'Europe/Madrid', etiqueta: 'Europe/Madrid (Península)' },
+  { id: 'Atlantic/Canary', etiqueta: 'Atlantic/Canary (Canarias)' },
+  { id: 'Europe/London', etiqueta: 'Europe/London (UTC/BST)' },
+  { id: 'Europe/Berlin', etiqueta: 'Europe/Berlin (Europa Central)' },
+  { id: 'Arctic/Longyearbyen', etiqueta: 'Arctic/Longyearbyen (Ártico)' },
+  { id: 'America/New_York', etiqueta: 'America/New_York (Este EE. UU.)' },
+  { id: 'America/Los_Angeles', etiqueta: 'America/Los_Angeles (Pacífico)' },
+  { id: 'America/Santiago', etiqueta: 'America/Santiago (Chile / Andes)' },
+  { id: 'Asia/Tokyo', etiqueta: 'Asia/Tokyo (Japón)' },
+  { id: 'Australia/Sydney', etiqueta: 'Australia/Sydney (Australia)' },
+  { id: 'UTC', etiqueta: 'UTC (Tiempo Universal)' },
+];
 
 const CLASES_CONTENEDOR: Record<TemaVisual, string> = {
   oscuro: 'bg-transparent text-slate-100',
@@ -126,6 +143,7 @@ interface FormularioUbicacion {
   longitud: string;
   altitud: string;
   bortle: EscalaBortle;
+  timezone: string;
 }
 
 interface ErroresUbicacion {
@@ -154,29 +172,6 @@ function normalizarTextoBusqueda(texto: string): string {
     .trim();
 }
 
-function esUbicacionValida(valor: unknown): valor is Ubicacion {
-  if (typeof valor !== 'object' || valor === null) return false;
-  const obj = valor as Record<string, unknown>;
-  const bortleValido = obj.bortle === undefined || esEscalaBortleValida(obj.bortle);
-  return (
-    typeof obj.nombre === 'string' &&
-    obj.nombre.length <= MAX_NOMBRE_UBICACION &&
-    typeof obj.latitud === 'number' &&
-    Number.isFinite(obj.latitud) &&
-    obj.latitud >= -90 &&
-    obj.latitud <= 90 &&
-    typeof obj.longitud === 'number' &&
-    Number.isFinite(obj.longitud) &&
-    obj.longitud >= -180 &&
-    obj.longitud <= 180 &&
-    typeof obj.altitud === 'number' &&
-    Number.isFinite(obj.altitud) &&
-    obj.altitud >= -500 &&
-    obj.altitud <= 9000 &&
-    bortleValido
-  );
-}
-
 function normalizarUbicacionFavorita(valor: unknown): UbicacionFavorita | null {
   if (typeof valor !== 'object' || valor === null) return null;
   const obj = valor as Record<string, unknown>;
@@ -190,6 +185,7 @@ function normalizarUbicacionFavorita(valor: unknown): UbicacionFavorita | null {
     longitud: valor.longitud,
     altitud: valor.altitud,
     bortle: normalizarEscalaBortle(valor.bortle),
+    timezone: normalizarZonaHoraria(valor.timezone, valor.latitud, valor.longitud),
   };
 }
 
@@ -214,21 +210,6 @@ export function parsearFavoritosGuardados(raw: string | null): UbicacionFavorita
     return resultados;
   } catch {
     return [];
-  }
-}
-
-function leerUbicacionGuardada(): Ubicacion {
-  try {
-    const guardada = localStorage.getItem(CLAVE_UBICACION);
-    if (!guardada) return UBICACION_INICIAL;
-    const parsed: unknown = JSON.parse(guardada);
-    if (!esUbicacionValida(parsed)) return UBICACION_INICIAL;
-    return {
-      ...parsed,
-      bortle: normalizarEscalaBortle(parsed.bortle),
-    };
-  } catch {
-    return UBICACION_INICIAL;
   }
 }
 
@@ -294,6 +275,11 @@ function validarFormularioUbicacion(form: FormularioUbicacion): {
     return { errores, ubicacionValida: null };
   }
 
+  const timezoneResuelta =
+    form.timezone === 'auto' || !esZonaHorariaIANAValida(form.timezone)
+      ? inferirZonaHorariaPorCoordenadas(lat, lon)
+      : form.timezone;
+
   return {
     errores,
     ubicacionValida: {
@@ -302,6 +288,7 @@ function validarFormularioUbicacion(form: FormularioUbicacion): {
       longitud: lon,
       altitud: alt,
       bortle: normalizarEscalaBortle(form.bortle),
+      timezone: timezoneResuelta,
     },
   };
 }
@@ -342,13 +329,6 @@ function formatearFechaParaInput(fecha: Date): string {
   const copia = new Date(valida);
   copia.setMinutes(copia.getMinutes() - copia.getTimezoneOffset());
   return copia.toISOString().slice(0, 16);
-}
-
-function formatearHoraLocal(fecha: Date | null): string {
-  if (!fecha || Number.isNaN(fecha.getTime())) return '—';
-  const horas = String(fecha.getHours()).padStart(2, '0');
-  const minutos = String(fecha.getMinutes()).padStart(2, '0');
-  return `${horas}:${minutos}`;
 }
 
 function obtenerClaseBotonControlActivo(tema: TemaVisual, activo: boolean): string {
@@ -443,23 +423,28 @@ function construirObjetivoPlaneta(cuerpo: CuerpoCeleste): EntradaObjetivoSesion 
 }
 
 export function App() {
-  const [ubicacion, setUbicacion] = useState<Ubicacion>(leerUbicacionGuardada);
+  const {
+    ubicacion,
+    coordinates,
+    cargandoGPS,
+    errorGPS,
+    actualizarUbicacion,
+    detectarGPS: detectarGPSHook,
+    limpiarErrorGPS,
+    restablecerUbicacion,
+  } = useLocation();
   const [formUbicacion, setFormUbicacion] = useState<FormularioUbicacion>(() => ({
     nombre: ubicacion.nombre,
     latitud: String(ubicacion.latitud),
     longitud: String(ubicacion.longitud),
     altitud: String(ubicacion.altitud),
     bortle: normalizarEscalaBortle(ubicacion.bortle),
+    timezone: coordinates.timezone,
   }));
 
   const [editandoUbicacion, setEditandoUbicacion] = useState(false);
   const [favoritos, setFavoritos] = useState<UbicacionFavorita[]>(leerFavoritosGuardados);
   const [avisoFavorito, setAvisoFavorito] = useState<string | null>(null);
-  const [cargandoGPS, setCargandoGPS] = useState(false);
-  const [errorGPS, setErrorGPS] = useState<string | null>(null);
-  const gpsRequestIdRef = useRef<number>(0);
-  const altitudActualRef = useRef<number>(ubicacion.altitud);
-  const bortleActualRef = useRef<EscalaBortle>(normalizarEscalaBortle(ubicacion.bortle));
 
   const [fechaStr, setFechaStr] = useState<string>(() => formatearFechaParaInput(new Date()));
   const [reproduciendo, setReproduciendo] = useState(false);
@@ -509,7 +494,6 @@ export function App() {
   const [confirmandoReset, setConfirmandoReset] = useState(false);
   const [avisoReset, setAvisoReset] = useState<string | null>(null);
   const timeoutResetRef = useRef<number | null>(null);
-  const omitirGuardadoUbicacionRef = useRef(true);
   const omitirGuardadoFavoritosRef = useRef(true);
 
   const coordenadasEstables = useMemo<Ubicacion>(
@@ -518,8 +502,9 @@ export function App() {
       longitud: ubicacion.longitud,
       altitud: ubicacion.altitud,
       nombre: '',
+      timezone: coordinates.timezone,
     }),
-    [ubicacion.latitud, ubicacion.longitud, ubicacion.altitud]
+    [ubicacion.latitud, ubicacion.longitud, ubicacion.altitud, coordinates.timezone]
   );
 
   const fechaSeleccionada = useMemo(() => {
@@ -528,7 +513,7 @@ export function App() {
   }, [fechaStr]);
 
   const claveHoraUTC = fechaSeleccionada.toISOString().slice(0, 13);
-  const claveConsultaMeteo = `${claveHoraUTC}|${coordenadasEstables.latitud.toFixed(2)}|${coordenadasEstables.longitud.toFixed(2)}`;
+  const claveConsultaMeteo = `${claveHoraUTC}|${coordenadasEstables.latitud.toFixed(2)}|${coordenadasEstables.longitud.toFixed(2)}|${coordinates.timezone}`;
   const [estadoMeteo, setEstadoMeteo] = useState<{
     clave: string;
     datos: CondicionesMeteo | null;
@@ -554,17 +539,8 @@ export function App() {
     ubicacionFormularioValida.latitud === ubicacion.latitud &&
     ubicacionFormularioValida.longitud === ubicacion.longitud &&
     ubicacionFormularioValida.altitud === ubicacion.altitud &&
-    normalizarEscalaBortle(ubicacionFormularioValida.bortle) === bortleActual;
-
-  useEffect(() => {
-    altitudActualRef.current = ubicacion.altitud;
-    bortleActualRef.current = normalizarEscalaBortle(ubicacion.bortle);
-    if (omitirGuardadoUbicacionRef.current) {
-      omitirGuardadoUbicacionRef.current = false;
-      return;
-    }
-    guardarEnStorage(CLAVE_UBICACION, JSON.stringify(ubicacion));
-  }, [ubicacion]);
+    normalizarEscalaBortle(ubicacionFormularioValida.bortle) === bortleActual &&
+    (ubicacionFormularioValida.timezone ?? coordinates.timezone) === coordinates.timezone;
 
   useEffect(() => {
     if (omitirGuardadoFavoritosRef.current) {
@@ -650,17 +626,36 @@ export function App() {
     [fechaSeleccionada, coordenadasEstables]
   );
 
+  const { lunarData } = useLunarData(coordinates, fechaSeleccionada, ubicacion.altitud);
+
+  const {
+    items: destacadosHoy,
+    isLoading: cargandoDestacados,
+    error: errorDestacados,
+    lastUpdated: destacadosActualizadosEn,
+    refetch: recargarDestacados,
+  } = useTodayHighlights(coordinates, lunarData, {
+    referenceDate: fechaSeleccionada,
+    altitudeMeters: ubicacion.altitud,
+    bortle: bortleActual,
+    meteo: estadoMeteo.datos,
+  });
+
   const datosLunares = useMemo<DatosLunares>(() => {
     const luna = cuerpos.find((c) => c.tipo === 'luna');
     if (!luna) {
-      return { iluminacion: 0, altitudGrados: -90, faseNombre: 'Luna Nueva' };
+      return {
+        iluminacion: lunarData ? lunarData.illumination / 100 : 0,
+        altitudGrados: -90,
+        faseNombre: lunarData?.phaseName ?? 'Luna Nueva',
+      };
     }
     return {
-      iluminacion: (luna.iluminacion ?? 0) / 100,
+      iluminacion: (lunarData ? lunarData.illumination : (luna.iluminacion ?? 0)) / 100,
       altitudGrados: luna.altitud,
-      faseNombre: luna.faseLunar ?? 'Luna',
+      faseNombre: lunarData?.phaseName ?? luna.faseLunar ?? 'Luna',
     };
-  }, [cuerpos]);
+  }, [cuerpos, lunarData]);
 
   const calidadCielo = useMemo(
     () => calcularCalidadCielo(estadoMeteo.datos?.nubesTotal ?? 0, bortleActual, datosLunares),
@@ -962,20 +957,15 @@ export function App() {
     [astroSeleccionado, fechaSeleccionada, coordenadasEstables]
   );
 
-  const diaSeleccionado = fechaStr.slice(0, 10);
-
   const transitoSeleccionado: EfemeridesTransito | null = useMemo(() => {
     if (!astroSeleccionado || astroSeleccionado.categoria !== 'cuerpo') return null;
-    const fechaDia = new Date(`${diaSeleccionado}T12:00:00`);
-    const baseValida = Number.isNaN(fechaDia.getTime()) ? new Date() : fechaDia;
-    return calcularTransitoCuerpo(astroSeleccionado.id, baseValida, coordenadasEstables);
-  }, [astroSeleccionado, diaSeleccionado, coordenadasEstables]);
+    return calcularTransitoCuerpo(astroSeleccionado.id, fechaSeleccionada, coordenadasEstables);
+  }, [astroSeleccionado, fechaSeleccionada, coordenadasEstables]);
 
-  const eventos = useMemo(() => {
-    const fechaDia = new Date(`${diaSeleccionado}T12:00:00`);
-    const baseValida = Number.isNaN(fechaDia.getTime()) ? new Date() : fechaDia;
-    return calcularProximosEventos(baseValida, coordenadasEstables);
-  }, [diaSeleccionado, coordenadasEstables]);
+  const eventos = useMemo(
+    () => calcularProximosEventos(fechaSeleccionada, coordenadasEstables),
+    [fechaSeleccionada, coordenadasEstables]
+  );
 
   const objetivoBrujula = useMemo<ObjetivoBrujula | null>(() => {
     if (!astroSeleccionado) return null;
@@ -1041,7 +1031,7 @@ export function App() {
     const valorSanitizado =
       campo === 'nombre' ? valor.slice(0, MAX_NOMBRE_UBICACION) : valor;
     setFormUbicacion((prev) => ({ ...prev, [campo]: valorSanitizado }));
-    setErrorGPS(null);
+    limpiarErrorGPS();
     setAvisoFavorito(null);
   };
 
@@ -1049,27 +1039,31 @@ export function App() {
     const numero = Number(valor);
     if (!esEscalaBortleValida(numero)) return;
     setFormUbicacion((prev) => ({ ...prev, bortle: numero }));
-    setErrorGPS(null);
+    limpiarErrorGPS();
     setAvisoFavorito(null);
   };
 
   const aplicarUbicacionManual = (evento: FormEvent<HTMLFormElement>) => {
     evento.preventDefault();
-    setErrorGPS(null);
+    limpiarErrorGPS();
     setAvisoFavorito(null);
     const { ubicacionValida } = validarFormularioUbicacion(formUbicacion);
     if (!ubicacionValida) return;
 
     const bortle = normalizarEscalaBortle(ubicacionValida.bortle);
-    gpsRequestIdRef.current += 1;
-    setCargandoGPS(false);
-    setUbicacion({ ...ubicacionValida, bortle });
+    const timezone = normalizarZonaHoraria(
+      ubicacionValida.timezone,
+      ubicacionValida.latitud,
+      ubicacionValida.longitud
+    );
+    actualizarUbicacion({ ...ubicacionValida, bortle, timezone });
     setFormUbicacion({
       nombre: ubicacionValida.nombre,
       latitud: String(ubicacionValida.latitud),
       longitud: String(ubicacionValida.longitud),
       altitud: String(ubicacionValida.altitud),
       bortle,
+      timezone,
     });
   };
 
@@ -1083,17 +1077,23 @@ export function App() {
 
     const nombreLimpio = ubicacionValida.nombre.trim() || 'Observatorio sin nombre';
     const bortle = normalizarEscalaBortle(ubicacionValida.bortle);
+    const timezone = normalizarZonaHoraria(
+      ubicacionValida.timezone,
+      ubicacionValida.latitud,
+      ubicacionValida.longitud
+    );
     const candidata: Ubicacion & { bortle: EscalaBortle } = {
       ...ubicacionValida,
       nombre: nombreLimpio,
       bortle,
+      timezone,
     };
 
     const duplicado = favoritos.find((fav) => esUbicacionDuplicada(fav, candidata));
     if (duplicado) {
-      if (duplicado.bortle !== bortle) {
+      if (duplicado.bortle !== bortle || duplicado.timezone !== timezone) {
         setFavoritos((prev) =>
-          prev.map((fav) => (fav.id === duplicado.id ? { ...fav, bortle } : fav))
+          prev.map((fav) => (fav.id === duplicado.id ? { ...fav, bortle, timezone } : fav))
         );
         return;
       }
@@ -1110,30 +1110,32 @@ export function App() {
       ...candidata,
       id: generarIdFavorito(),
       bortle,
+      timezone,
     };
     setFavoritos((prev) => [...prev, nuevoFavorito]);
   };
 
   const cargarUbicacionFavorita = (fav: UbicacionFavorita) => {
-    gpsRequestIdRef.current += 1;
-    setCargandoGPS(false);
-    setErrorGPS(null);
+    limpiarErrorGPS();
     setAvisoFavorito(null);
     const bortle = normalizarEscalaBortle(fav.bortle);
+    const timezone = normalizarZonaHoraria(fav.timezone, fav.latitud, fav.longitud);
     const seleccionada: Ubicacion = {
       nombre: fav.nombre,
       latitud: fav.latitud,
       longitud: fav.longitud,
       altitud: fav.altitud,
       bortle,
+      timezone,
     };
-    setUbicacion(seleccionada);
+    actualizarUbicacion(seleccionada);
     setFormUbicacion({
       nombre: seleccionada.nombre,
       latitud: String(seleccionada.latitud),
       longitud: String(seleccionada.longitud),
       altitud: String(seleccionada.altitud),
       bortle,
+      timezone,
     });
   };
 
@@ -1161,23 +1163,20 @@ export function App() {
       timeoutResetRef.current = null;
     }
     setConfirmandoReset(false);
-    omitirGuardadoUbicacionRef.current = ubicacion !== UBICACION_INICIAL;
     omitirGuardadoFavoritosRef.current = favoritos.length > 0;
 
     resetearDatosLocales();
     limpiarSesion();
 
-    gpsRequestIdRef.current += 1;
-    setCargandoGPS(false);
-    setErrorGPS(null);
     setAvisoFavorito(null);
-    setUbicacion(UBICACION_INICIAL);
+    const defecto = restablecerUbicacion();
     setFormUbicacion({
-      nombre: UBICACION_INICIAL.nombre,
-      latitud: String(UBICACION_INICIAL.latitud),
-      longitud: String(UBICACION_INICIAL.longitud),
-      altitud: String(UBICACION_INICIAL.altitud),
+      nombre: defecto.nombre,
+      latitud: String(defecto.latitud),
+      longitud: String(defecto.longitud),
+      altitud: String(defecto.altitud),
       bortle: BORTLE_POR_DEFECTO,
+      timezone: normalizarZonaHoraria(defecto.timezone, defecto.latitud, defecto.longitud),
     });
     setFavoritos([]);
     restablecerTema();
@@ -1241,54 +1240,22 @@ export function App() {
   };
 
   const detectarGPS = () => {
-    setErrorGPS(null);
-    if (!navigator.geolocation) {
-      setErrorGPS('Tu navegador no soporta geolocalización.');
-      return;
-    }
-    const requestId = ++gpsRequestIdRef.current;
-    setCargandoGPS(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        if (requestId !== gpsRequestIdRef.current) return;
-        const lat = Number(pos.coords.latitude.toFixed(4));
-        const lon = Number(pos.coords.longitude.toFixed(4));
-        const alt =
-          pos.coords.altitude !== null && Number.isFinite(pos.coords.altitude)
-            ? Math.min(9000, Math.max(-500, Math.round(pos.coords.altitude)))
-            : altitudActualRef.current;
-        const nuevaUbicacion: Ubicacion = {
-          latitud: lat,
-          longitud: lon,
-          altitud: alt,
-          nombre: 'Ubicación GPS Actual',
-          bortle: bortleActualRef.current,
-        };
-        setUbicacion(nuevaUbicacion);
+    detectarGPSHook({
+      onResuelta: (nuevaUbicacion) => {
         setFormUbicacion({
           nombre: nuevaUbicacion.nombre,
           latitud: String(nuevaUbicacion.latitud),
           longitud: String(nuevaUbicacion.longitud),
           altitud: String(nuevaUbicacion.altitud),
-          bortle: bortleActualRef.current,
+          bortle: normalizarEscalaBortle(nuevaUbicacion.bortle),
+          timezone: normalizarZonaHoraria(
+            nuevaUbicacion.timezone,
+            nuevaUbicacion.latitud,
+            nuevaUbicacion.longitud
+          ),
         });
-        setCargandoGPS(false);
       },
-      (err) => {
-        if (requestId !== gpsRequestIdRef.current) return;
-        if (err.code === 1) {
-          setErrorGPS('Permiso de ubicación denegado. Actívalo en los ajustes del navegador.');
-        } else if (err.code === 2) {
-          setErrorGPS('Señal GPS no disponible en este momento.');
-        } else if (err.code === 3) {
-          setErrorGPS('Tiempo de espera agotado al obtener la ubicación GPS.');
-        } else {
-          setErrorGPS('No se pudo obtener el GPS. Revisa los permisos o inténtalo de nuevo.');
-        }
-        setCargandoGPS(false);
-      },
-      { enableHighAccuracy: false, timeout: 10000 }
-    );
+    });
   };
 
   const ajustarTiempo = (modo: 'ahora' | 'noche' | 'mas1h') => {
@@ -1421,7 +1388,7 @@ export function App() {
             )}
 
             <form onSubmit={aplicarUbicacionManual} className="space-y-3" noValidate>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 text-sm">
                 <label className="space-y-1">
                   <span className="text-xs opacity-70">Nombre del lugar</span>
                   <input
@@ -1508,6 +1475,34 @@ export function App() {
                         {DESCRIPCIONES_BORTLE[nivel]}
                       </option>
                     ))}
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs opacity-70">Zona horaria (IANA)</span>
+                  <select
+                    aria-label="Zona horaria IANA del observatorio"
+                    value={formUbicacion.timezone}
+                    onChange={(e) => actualizarCampoUbicacion('timezone', e.target.value)}
+                    className={`w-full min-h-10 px-3 py-1.5 rounded-lg border border-current/25 bg-transparent text-xs font-mono cursor-pointer ${claseEsquemaInput}`}
+                  >
+                    {ZONAS_HORARIAS_COMUNES.map((zona) => (
+                      <option
+                        key={zona.id}
+                        value={zona.id}
+                        className={obtenerClaseOptionSelect(tema)}
+                      >
+                        {zona.etiqueta}
+                      </option>
+                    ))}
+                    {formUbicacion.timezone !== 'auto' &&
+                      !ZONAS_HORARIAS_COMUNES.some((z) => z.id === formUbicacion.timezone) && (
+                        <option
+                          value={formUbicacion.timezone}
+                          className={obtenerClaseOptionSelect(tema)}
+                        >
+                          {formUbicacion.timezone} (Actual)
+                        </option>
+                      )}
                   </select>
                 </label>
               </div>
@@ -1741,6 +1736,24 @@ export function App() {
               </div>
             </section>
 
+            {/* Widget Destacados de hoy */}
+            <TodayHighlightsWidget
+              items={destacadosHoy}
+              isLoading={cargandoDestacados}
+              error={errorDestacados}
+              lastUpdated={destacadosActualizadosEn}
+              timezone={coordinates.timezone}
+              locationName={coordinates.name}
+              tema={tema}
+              claseTarjeta={clasesTarjeta}
+              onRetry={recargarDestacados}
+              onSelectTimestamp={(fechaObjetivo) => {
+                if (Number.isNaN(fechaObjetivo.getTime())) return;
+                setReproduciendo(false);
+                setFechaStr(formatearFechaParaInput(fechaObjetivo));
+              }}
+            />
+
             {/* Contenido Principal: Mapa Celeste + Eventos / Meteo y Efemérides */}
             <main className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               {/* Columna Izquierda: Bóveda Celeste + Próximos Eventos */}
@@ -1914,6 +1927,7 @@ export function App() {
                   eventos={eventos}
                   tema={tema}
                   claseTarjeta={clasesTarjeta}
+                  timezone={coordinates.timezone}
                   onSeleccionarFecha={(fechaEvento) => {
                     setReproduciendo(false);
                     setFechaStr(formatearFechaParaInput(fechaEvento));
@@ -2016,23 +2030,65 @@ export function App() {
                                 <span>Mag: {obj.magnitud}</span>
                                 {obj.faseLunar && (
                                   <span>
-                                    {obj.faseLunar} ({obj.iluminacion}%)
+                                    {lunarData ? lunarData.phaseName : obj.faseLunar} (
+                                    {lunarData ? Math.round(lunarData.illumination) : obj.iluminacion}%)
                                   </span>
                                 )}
                               </div>
+
+                              {obj.tipo === 'luna' && lunarData && (
+                                <div className="mt-1.5 text-[11px] font-mono opacity-75 flex flex-wrap items-center gap-x-3 gap-y-1">
+                                  <span>Edad: {lunarData.ageDays.toFixed(1)} d</span>
+                                  <span>
+                                    Orto:{' '}
+                                    {formatearHoraEnZona(
+                                      lunarData.moonrise,
+                                      coordinates.timezone,
+                                      TEXTO_SIN_ORTO
+                                    )}
+                                  </span>
+                                  <span>
+                                    Ocaso:{' '}
+                                    {formatearHoraEnZona(
+                                      lunarData.moonset,
+                                      coordinates.timezone,
+                                      TEXTO_SIN_OCASO
+                                    )}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </div>
 
                           {estaSeleccionado && transitoSeleccionado && (
                             <div className="mt-2.5 pt-2 border-t border-current/15 text-xs font-mono flex flex-wrap items-center justify-between gap-2 opacity-90">
-                              <span>Salida: {formatearHoraLocal(transitoSeleccionado.salida)}</span>
                               <span>
-                                Culminación: {formatearHoraLocal(transitoSeleccionado.culminacion)}
+                                Salida:{' '}
+                                {formatearHoraEnZona(
+                                  transitoSeleccionado.salida,
+                                  coordinates.timezone,
+                                  TEXTO_SIN_ORTO
+                                )}
+                              </span>
+                              <span>
+                                Culminación:{' '}
+                                {formatearHoraEnZona(
+                                  transitoSeleccionado.culminacion,
+                                  coordinates.timezone,
+                                  '—'
+                                )}
                                 {transitoSeleccionado.alturaMaxima !== null
                                   ? ` (${transitoSeleccionado.alturaMaxima}°)`
                                   : ''}
                               </span>
-                              <span>Puesta: {formatearHoraLocal(transitoSeleccionado.puesta)}</span>
+                              <span>
+                                Puesta:{' '}
+                                {formatearHoraEnZona(
+                                  transitoSeleccionado.puesta,
+                                  coordinates.timezone,
+                                  TEXTO_SIN_OCASO
+                                )}
+                              </span>
                             </div>
                           )}
                         </button>
