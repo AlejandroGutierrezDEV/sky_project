@@ -197,6 +197,16 @@
     background: currentColor;
     border: 3px solid color-mix(in srgb, currentColor 35%, black);
   }
+
+  /* Barra de desplazamiento oculta para carruseles horizontales táctiles */
+  .ocultar-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .ocultar-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 @keyframes brujula-oscilar {

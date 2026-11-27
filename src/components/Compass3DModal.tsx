@@ -15,12 +15,16 @@ import {
   calcularDeclinacionMagnetica,
   formatearDeclinacionMagnetica,
 } from '../utils/astronomia/declinacionMagnetica';
+import { useCompassFilter } from '../hooks/useCompassFilter';
+import { CompassFilter } from './CompassFilter';
 
 interface Compass3DModalProps {
   tema: TemaVisual;
   cuerpos: CuerpoCeleste[];
   ubicacion: Pick<Ubicacion, 'latitud' | 'longitud'>;
   objetivoSeleccionado?: ObjetivoBrujula | null;
+  cargandoCuerpos?: boolean;
+  errorCuerpos?: string | null;
   onCerrar: () => void;
 }
 
@@ -312,6 +316,8 @@ export function Compass3DModal({
   cuerpos,
   ubicacion,
   objetivoSeleccionado = null,
+  cargandoCuerpos = false,
+  errorCuerpos = null,
   onCerrar,
 }: Compass3DModalProps) {
   const paleta = PALETAS[tema];
@@ -680,40 +686,86 @@ export function Compass3DModal({
   const altitudEntera = Math.round(visual.altitudApuntado);
   const inclinacionVisual = limitar(visual.inclinacion, -INCLINACION_VISUAL_MAX, INCLINACION_VISUAL_MAX);
 
-  const objetivosVisibles = useMemo<ObjetivoBrujula[]>(() => {
-    const lista: ObjetivoBrujula[] = cuerpos
-      .filter((c) => c.altitud > 0 && Number.isFinite(c.acimut))
-      .map((c) => ({
-        id: c.id,
-        nombre: c.nombre,
-        acimut: c.acimut,
-        altitud: c.altitud,
-        color: c.color,
-      }));
+  const {
+    selectedFilter,
+    setSelectedFilter,
+    planetOptions,
+    activePlanets,
+    isLoading: cargandoFiltro,
+    error: errorFiltro,
+  } = useCompassFilter({
+    cuerpos,
+    isLoading: cargandoCuerpos,
+    error: errorCuerpos,
+  });
 
+  const planetaEnfocado =
+    selectedFilter === 'all' ? null : (activePlanets[0] ?? null);
+
+  const objetivosEnDisco = useMemo<ObjetivoBrujula[]>(() => {
+    const listaPlanetas: ObjetivoBrujula[] = activePlanets.map((planeta) => ({
+      id: planeta.id,
+      nombre: planeta.name,
+      acimut: planeta.azimuthDeg,
+      altitud: planeta.altitudeDeg,
+      color: planeta.accentColor ?? '#e2e8f0',
+      bajoHorizonte: !planeta.isAboveHorizon,
+    }));
+
+    // Cuando hay un planeta enfocado, el disco se centra exclusivamente en ese planeta
+    if (selectedFilter !== 'all') {
+      return listaPlanetas;
+    }
+
+    const lista: ObjetivoBrujula[] = [...listaPlanetas];
+
+    // En modo 'all' añadimos también la Luna sobre el horizonte
+    for (const cuerpo of cuerpos) {
+      if (cuerpo.tipo === 'luna' && cuerpo.altitud > 0 && Number.isFinite(cuerpo.acimut)) {
+        lista.unshift({
+          id: cuerpo.id,
+          nombre: cuerpo.nombre,
+          acimut: cuerpo.acimut,
+          altitud: cuerpo.altitud,
+          color: cuerpo.color,
+          bajoHorizonte: false,
+        });
+      }
+    }
+
+    // Y el astro seleccionado en el mapa (estrella/Messier/etc.) si está sobre el horizonte
     if (
       objetivoSeleccionado &&
       objetivoSeleccionado.altitud > 0 &&
       Number.isFinite(objetivoSeleccionado.acimut) &&
-      !lista.some((item) => item.id === objetivoSeleccionado.id)
+      !lista.some(
+        (item) => item.id.toLowerCase() === objetivoSeleccionado.id.toLowerCase()
+      )
     ) {
-      lista.unshift(objetivoSeleccionado);
+      lista.unshift({ ...objetivoSeleccionado, bajoHorizonte: false });
     }
 
     return lista;
-  }, [cuerpos, objetivoSeleccionado]);
+  }, [activePlanets, cuerpos, objetivoSeleccionado, selectedFilter]);
 
-  let alineado: ObjetivoBrujula | null = null;
-  let mejorDiferencia = Number.POSITIVE_INFINITY;
-  for (const objetivo of objetivosVisibles) {
-    const dif = Math.abs(diferenciaAngular(objetivo.acimut, visual.rumbo));
-    if (dif <= MARGEN_ALINEACION && dif < mejorDiferencia) {
-      mejorDiferencia = dif;
-      alineado = objetivo;
+  const alineado = useMemo<ObjetivoBrujula | null>(() => {
+    let candidato: ObjetivoBrujula | null = null;
+    let mejorDiferencia = Number.POSITIVE_INFINITY;
+    for (const objetivo of objetivosEnDisco) {
+      // En vista 'all' evitamos saltar alertas de alineación por planetas bajo el horizonte
+      if (selectedFilter === 'all' && objetivo.bajoHorizonte) continue;
+      const dif = Math.abs(diferenciaAngular(objetivo.acimut, visual.rumbo));
+      if (dif <= MARGEN_ALINEACION && dif < mejorDiferencia) {
+        mejorDiferencia = dif;
+        candidato = objetivo;
+      }
     }
-  }
+    return candidato;
+  }, [objetivosEnDisco, selectedFilter, visual.rumbo]);
 
-  const difElevacion = alineado ? alineado.altitud - visual.altitudApuntado : null;
+  const alineadoBajoHorizonte = Boolean(alineado?.bajoHorizonte);
+  const difElevacion =
+    alineado && !alineadoBajoHorizonte ? alineado.altitud - visual.altitudApuntado : null;
   const alturaAlineada = difElevacion !== null && Math.abs(difElevacion) <= MARGEN_ALINEACION;
   const gradosElevacion = difElevacion !== null ? Math.round(Math.abs(difElevacion)) : 0;
   const direccionElevacion: 'alineada' | 'subir' | 'bajar' | null =
@@ -896,15 +948,41 @@ export function Compass3DModal({
                     fill={paleta.sur}
                   />
 
+                  {/* Línea guía radial hacia el planeta enfocado */}
+                  {planetaEnfocado && (() => {
+                    const destino = puntoPolar(planetaEnfocado.azimuthDeg, RADIO_MARCADORES - 12);
+                    return (
+                      <line
+                        x1={CENTRO}
+                        y1={CENTRO}
+                        x2={destino.x}
+                        y2={destino.y}
+                        stroke={paleta.acento}
+                        strokeWidth="1.75"
+                        strokeDasharray={planetaEnfocado.isAboveHorizon ? '4 3' : '2 4'}
+                        opacity={planetaEnfocado.isAboveHorizon ? 0.75 : 0.55}
+                      />
+                    );
+                  })()}
+
                   {/* Marcadores astronómicos en su acimut real */}
-                  {objetivosVisibles.map((objetivo) => {
+                  {objetivosEnDisco.map((objetivo) => {
                     const p = puntoPolar(objetivo.acimut, RADIO_MARCADORES);
                     const esAlineado = alineado?.id === objetivo.id;
-                    const esSeleccionado = objetivoSeleccionado?.id === objetivo.id;
+                    const esEnfocado = planetaEnfocado?.id === objetivo.id;
+                    const esSeleccionado =
+                      esEnfocado ||
+                      objetivoSeleccionado?.id.toLowerCase() === objetivo.id.toLowerCase();
+                    const bajoHorizonte = Boolean(objetivo.bajoHorizonte);
                     const color = paleta.marcadorFijo ?? objetivo.color;
                     const etiqueta = etiquetaMarcador(objetivo.nombre);
+                    const opacidadMarcador = bajoHorizonte && !esEnfocado ? 0.5 : 1;
                     return (
-                      <g key={objetivo.id} transform={`rotate(${visual.rumbo} ${p.x} ${p.y})`}>
+                      <g
+                        key={objetivo.id}
+                        transform={`rotate(${visual.rumbo} ${p.x} ${p.y})`}
+                        opacity={opacidadMarcador}
+                      >
                         {(esAlineado || esSeleccionado) && (
                           <circle
                             cx={p.x}
@@ -912,17 +990,30 @@ export function Compass3DModal({
                             r={14}
                             fill="none"
                             stroke={paleta.acento}
-                            strokeWidth={esAlineado ? '2' : '1.4'}
-                            strokeDasharray={esAlineado ? undefined : '3 2'}
+                            strokeWidth={esAlineado || esEnfocado ? '2' : '1.4'}
+                            strokeDasharray={bajoHorizonte || !esAlineado ? '3 2' : undefined}
                           />
                         )}
                         <circle
                           cx={p.x}
                           cy={p.y}
                           r={9.5}
-                          fill={esAlineado ? paleta.acento : color}
-                          stroke={paleta.esfera}
-                          strokeWidth="1.5"
+                          fill={
+                            bajoHorizonte
+                              ? paleta.esfera
+                              : esAlineado
+                                ? paleta.acento
+                                : color
+                          }
+                          stroke={
+                            bajoHorizonte
+                              ? tema === 'claro'
+                                ? paleta.textoSuave
+                                : color
+                              : paleta.esfera
+                          }
+                          strokeWidth={bajoHorizonte ? '1.8' : '1.5'}
+                          strokeDasharray={bajoHorizonte ? '2.5 2' : undefined}
                         />
                         <text
                           x={p.x}
@@ -932,7 +1023,15 @@ export function Compass3DModal({
                           fontSize={etiqueta.length > 2 ? '7.5' : '8.5'}
                           fontWeight={700}
                           fontFamily="'Space Grotesk Variable', system-ui, sans-serif"
-                          fill={tema === 'rojo' ? '#000000' : '#0f172a'}
+                          fill={
+                            bajoHorizonte
+                              ? tema === 'claro'
+                                ? paleta.texto
+                                : color
+                              : tema === 'rojo'
+                                ? '#000000'
+                                : '#0f172a'
+                          }
                         >
                           {etiqueta}
                         </text>
@@ -986,13 +1085,23 @@ export function Compass3DModal({
           {alineado ? (
             <p
               className={`alineacion-pulso inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-1 px-3.5 py-2 rounded-2xl border text-sm font-medium text-center ${
-                alturaAlineada ? paleta.claseEstadoOk : paleta.claseAviso
+                alineadoBajoHorizonte
+                  ? paleta.claseEstadoAviso
+                  : alturaAlineada
+                    ? paleta.claseEstadoOk
+                    : paleta.claseAviso
               }`}
             >
               <Target className="w-4 h-4 shrink-0" aria-hidden="true" />
               <span>
                 Apuntando hacia {alineado.nombre} ·{' '}
-                <span className="font-mono">Alt {Math.round(alineado.altitud)}°</span>
+                {alineadoBajoHorizonte ? (
+                  <span className="font-mono">
+                    Bajo el horizonte · {Math.round(alineado.altitud)}°
+                  </span>
+                ) : (
+                  <span className="font-mono">Alt {Math.round(alineado.altitud)}°</span>
+                )}
               </span>
               {textoGuiaElevacion && (
                 <span className="inline-flex items-center gap-1 font-mono text-xs font-semibold">
@@ -1007,11 +1116,19 @@ export function Compass3DModal({
                 </span>
               )}
             </p>
+          ) : planetaEnfocado ? (
+            <p className="text-xs opacity-80 text-center font-mono">
+              {planetaEnfocado.name} · Az {Math.round(planetaEnfocado.azimuthDeg)}° (
+              {direccionCardinal(planetaEnfocado.azimuthDeg)}) ·{' '}
+              {planetaEnfocado.isAboveHorizon
+                ? `Alt ${Math.round(planetaEnfocado.altitudeDeg)}°`
+                : `Bajo el horizonte · ${Math.round(planetaEnfocado.altitudeDeg)}°`}
+            </p>
           ) : (
             <p className="text-xs opacity-65 text-center">
-              {objetivosVisibles.length > 0
+              {objetivosEnDisco.length > 0
                 ? 'Gira hasta situar un marcador bajo la línea de fe superior.'
-                : 'Ahora mismo no hay objetivos visibles sobre el horizonte.'}
+                : 'Ahora mismo no hay objetivos disponibles en la brújula.'}
             </p>
           )}
         </div>
@@ -1109,40 +1226,15 @@ export function Compass3DModal({
             </fieldset>
           )}
 
-          {/* Astros visibles */}
-          {objetivosVisibles.length > 0 && (
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-65 mb-1.5">
-                Sobre el horizonte
-              </p>
-              <ul className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
-                {objetivosVisibles.map((objetivo) => {
-                  const esAlineado = alineado?.id === objetivo.id;
-                  return (
-                    <li
-                      key={objetivo.id}
-                      className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border ${
-                        esAlineado ? paleta.claseAviso : 'border-current/15'
-                      }`}
-                    >
-                      <span className="flex items-center gap-1.5 min-w-0">
-                        <span
-                          className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: paleta.marcadorFijo ?? objetivo.color }}
-                          aria-hidden="true"
-                        />
-                        <span className="truncate font-medium">{objetivo.nombre}</span>
-                      </span>
-                      <span className="font-mono opacity-80 shrink-0">
-                        {Math.round(objetivo.acimut)}° · {Math.round(objetivo.altitud)}°
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-              <p className="text-[10px] opacity-55 mt-1 font-mono">Acimut · Altitud</p>
-            </div>
-          )}
+          {/* Filtro inferior de todos los planetas del Sistema Solar */}
+          <CompassFilter
+            tema={tema}
+            selectedFilter={selectedFilter}
+            onSelectFilter={setSelectedFilter}
+            planetOptions={planetOptions}
+            isLoading={cargandoFiltro}
+            error={errorFiltro}
+          />
         </div>
       </div>
     </div>
