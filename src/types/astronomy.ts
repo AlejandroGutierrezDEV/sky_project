@@ -286,6 +286,53 @@ export interface ObjetivoBrujula {
   acimut: number;
   altitud: number;
   color: string;
+  bajoHorizonte?: boolean;
+}
+
+export const SOLAR_SYSTEM_PLANET_IDS = [
+  'mercury',
+  'venus',
+  'mars',
+  'jupiter',
+  'saturn',
+  'uranus',
+  'neptune',
+] as const;
+
+export type PlanetId = (typeof SOLAR_SYSTEM_PLANET_IDS)[number];
+
+/** 'all' muestra todos los planetas en la brújula; un PlanetId enfoca solo ese planeta */
+export type CompassPlanetFilter = PlanetId | 'all';
+
+export interface CompassPlanetOption {
+  id: PlanetId;
+  name: string;
+  /** Azimut en grados [0, 360) */
+  azimuthDeg: number;
+  /** Altitud en grados [-90, 90] */
+  altitudeDeg: number;
+  /** True si altitudeDeg > 0 */
+  isAboveHorizon: boolean;
+  /** Color identificativo consistente con el mapa/bóveda */
+  accentColor?: string;
+}
+
+export interface UseCompassFilterResult {
+  selectedFilter: CompassPlanetFilter;
+  setSelectedFilter: (filter: CompassPlanetFilter) => void;
+  planetOptions: CompassPlanetOption[];
+  activePlanets: CompassPlanetOption[];
+  isLoading: boolean;
+  error: string | null;
+}
+
+/** Type guard para validar entradas externas o persistencia en localStorage */
+export function isCompassPlanetFilter(value: unknown): value is CompassPlanetFilter {
+  return (
+    value === 'all' ||
+    (typeof value === 'string' &&
+      (SOLAR_SYSTEM_PLANET_IDS as readonly string[]).includes(value))
+  );
 }
 
 export type ModoMapa = '2D' | '3D';
