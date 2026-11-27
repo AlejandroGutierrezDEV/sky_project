@@ -333,6 +333,10 @@ export function calcularTrayectoriaAstro(
     return puntos;
   }
 
+  if (astro.categoria === 'constelacion') {
+    return [];
+  }
+
   const catalogo =
     astro.categoria === 'estrella'
       ? CATALOGO_ESTRELLAS.find((e) => e.id === astro.id)

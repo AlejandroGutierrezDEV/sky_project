@@ -156,6 +156,7 @@ export interface ResultadoFiltrosCatalogo {
   constelaciones: ConstelacionCalculada[];
   estrellasCompletas: EstrellaCalculada[];
   messierCompletos: MessierCalculado[];
+  constelacionesCompletas: ConstelacionCalculada[];
   magnitudLimiteEfectiva: number;
   totalMessierSobreHorizonte: number;
 }
@@ -203,6 +204,7 @@ export function useFiltrosCatalogo({
     constelaciones: resultadoFiltrado.constelaciones,
     estrellasCompletas: catalogosCalculados.estrellasCompletas,
     messierCompletos: catalogosCalculados.messierCompletos,
+    constelacionesCompletas: catalogosCalculados.constelacionesCompletas,
     magnitudLimiteEfectiva: resultadoFiltrado.magnitudLimiteEfectiva,
     totalMessierSobreHorizonte: resultadoFiltrado.totalMessierSobreHorizonte,
   };
