@@ -1,39 +1,18 @@
-# Reglas del Proyecto - SkyProject
+# Contrato de Arquitectura — SkyProject
 
-## Idioma y comunicación
-- Responde siempre en **español** (explicaciones, comentarios en el código, mensajes de error e interfaz de usuario).
-- Mantén respuestas directas, técnicas y orientadas a la acción.
+## Stack y reglas base
+- **Stack:** React 19, TypeScript (`strict: true`, prohibido `any`), Vite, Tailwind CSS v4, `astronomy-engine`, `lucide-react` y Vitest.
+- **Idioma:** Todo el código nuevo (tipos, hooks, servicios, componentes, comentarios y UI) debe escribirse en **español** para mantener coherencia con el dominio del proyecto.
+- **Seguridad y fronteras:** Validar siempre `localStorage`, inputs y respuestas HTTP con *type guards* y `try/catch`. Prohibido usar `alert()`, `confirm()` o `prompt()`.
+- **Temas visuales:** Cualquier componente nuevo debe soportar `oscuro`, `claro` y `rojo` (en `rojo`, cero píxeles blancos, azules o amarillos; solo espectro rojo sobre negro).
 
-## Stack y arquitectura
-- **Frontend:** React, TypeScript (modo estricto), Vite y Tailwind CSS v4.
-- **Motor astronómico:** `astronomy-engine` (cálculo local y *offline-first*).
-- **Meteorología:** API de Open-Meteo con caché en `localStorage`.
-- **Objetivo móvil:** Compatibilidad con diseño táctil y futuro empaquetado con Capacitor (Android).
-- **Estructura principal:**
-  - `src/types/`: Interfaces y tipos compartidos (`astronomy.ts`).
-  - `src/core/`: Lógica de negocio y servicios (`skyCalculator.ts`, `eventsCalculator.ts`, `weatherService.ts`).
-  - `src/data/`: Catálogos estáticos (`brightStars.ts`, `messierCatalog.ts`).
-  - `src/components/`: Componentes visuales (`SkyMap.tsx`, `WeatherPanel.tsx`, `EventsPanel.tsx`).
+## Única Fuente de Verdad (NO duplicar)
+Antes de crear un archivo nuevo en `src/`, reutiliza obligatoriamente los existentes:
+- **Tipos de dominio:** `src/types/astronomy.ts`
+- **Catálogos astronómicos:** `src/data/estrellasMag4.ts`, `src/data/messier110.ts`, `src/data/constelacionesIAU.ts` y `src/data/meteorShowers.ts` *(prohibido crear catálogos paralelos)*.
+- **Motor astronómico:** `src/core/skyCalculator.ts`, `src/core/eventsCalculator.ts` y `src/utils/lunarCalculations.ts` *(usar siempre `astronomy-engine`, nunca aproximaciones manuales paralelas)*.
+- **Meteorología (Open-Meteo):** `src/core/weatherService.ts` *(centralizar aquí las peticiones y la caché LRU; no crear clientes HTTP duplicados)*.
+- **Ubicación y tiempo:** Usar siempre `useLocation` (`coordinates` con zona IANA) y formatear horas con `formatearHoraEnZona(..., timezone)`. Prohibido usar `new Date().getHours()` o `toLocaleTimeString()` sin zona horaria explícita.
 
-## Estándares de código y robustez
-- **TypeScript estricto:** Prohibido usar `any`. Tipar siempre props, estados y respuestas de APIs.
-- **Validación defensiva:**
-  - Envolver siempre `JSON.parse` / lecturas de `localStorage` en bloques `try/catch` con *fallback* seguro.
-  - Sanitizar entradas de usuario antes de pasarlas a `astronomy-engine` (latitud en `[-90, 90]`, longitud en `[-180, 180]`, altitud finita y fechas válidas evitando `Invalid Date`).
-- **Zonas horarias:** Usar **UTC** para sincronizar las consultas y búsquedas horarias de Open-Meteo.
-- **React y ESLint:** Respetar todas las reglas de React Hooks (evitar `setState` síncrono dentro de `useEffect`).
-- **UX y temas:**
-  - Prohibido usar `window.alert()` o `confirm()`; mostrar errores de forma integrada en la UI.
-  - Mantener compatibilidad con los tres temas visuales (`oscuro`, `claro` y `rojo` para visión nocturna).
-
-## Ahorro de cuota y flujo de trabajo
-- **Solo lectura cuando se pida análisis:** No ejecutes comandos en la terminal ni modifiques archivos si únicamente se solicita revisar, auditar o explicar código.
-- **Cambios incrementales:** Evita reescribir archivos completos si solo cambian líneas concretas; entrega únicamente los bloques a modificar salvo que se pida explícitamente el archivo entero.
-- **Sin dependencias innecesarias:** Prioriza soluciones nativas o librerías gratuitas ya instaladas en el proyecto.
-
-## Reglas transversales obligatorias
-- TypeScript en modo estricto (prohibido `any`).
-- Compatibilidad total con los 3 temas (`oscuro`, `claro`, `rojo`) y `prefers-reduced-motion`.
-- Prohibido usar `alert()`, `confirm()` o `prompt()`.
-- Validar siempre `localStorage`, APIs y entradas de usuario con *type guards* y `try/catch`.
-- Ejecutar `npm run lint` y `npm run build` al finalizar cada tarea.
+## Verificación obligatoria antes de terminar
+Ejecutar siempre `npm run lint`, `npx tsc --noEmit`, `npm test` y `npm run build`.
