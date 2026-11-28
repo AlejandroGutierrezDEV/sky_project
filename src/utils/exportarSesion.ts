@@ -162,7 +162,7 @@ export function generarMarkdownSesion(
 
 /**
  * Descarga la hoja de observación nocturna como archivo Markdown (.md)
- * revocando siempre la URL temporal del Blob para liberar memoria.
+ * difiriendo la revocación de la URL del Blob para compatibilidad con WebViews móviles.
  */
 export function descargarSesionMarkdown(
   objetivos: ObjetivoPlanificado[],
@@ -174,6 +174,7 @@ export function descargarSesionMarkdown(
   const blob = new Blob([contenido], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
 
+  let descargaDisparada = false;
   try {
     const enlace = document.createElement('a');
     enlace.href = url;
@@ -182,8 +183,20 @@ export function descargarSesionMarkdown(
     document.body.appendChild(enlace);
     enlace.click();
     document.body.removeChild(enlace);
+    descargaDisparada = true;
   } finally {
-    URL.revokeObjectURL(url);
+    if (descargaDisparada) {
+      const revocar = () => {
+        URL.revokeObjectURL(url);
+      };
+      if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
+        window.setTimeout(revocar, 1500);
+      } else {
+        globalThis.setTimeout(revocar, 1500);
+      }
+    } else {
+      URL.revokeObjectURL(url);
+    }
   }
 }
 

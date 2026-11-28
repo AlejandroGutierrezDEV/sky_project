@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useId, useRef } from 'react';
 import type { KeyboardEvent as EventoTecladoReact } from 'react';
 import { AlertCircle, EyeOff, Loader2 } from 'lucide-react';
 import type {
@@ -88,12 +88,17 @@ export function CompassFilter({
   error,
 }: CompassFilterProps) {
   const clases = CLASES_TEMA[tema];
+  const idTituloFiltro = useId();
   const botonesRef = useRef<Array<HTMLButtonElement | null>>([]);
 
   const planetaSeleccionado =
     selectedFilter === 'all'
       ? null
       : (planetOptions.find((p) => p.id === selectedFilter) ?? null);
+
+  const haySeleccionValida =
+    selectedFilter === 'all' || planetaSeleccionado !== null;
+  const esTodosEnfocable = selectedFilter === 'all' || !haySeleccionValida;
 
   const totalVisibles = planetOptions.filter((p) => p.isAboveHorizon).length;
 
@@ -160,7 +165,7 @@ export function CompassFilter({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-70">
+        <p id={idTituloFiltro} className="text-[10px] uppercase tracking-[0.2em] font-mono opacity-70">
           Filtro de planetas
         </p>
         <p className="text-[10px] font-mono opacity-65 tabular-nums">
@@ -170,7 +175,7 @@ export function CompassFilter({
 
       <div
         role="radiogroup"
-        aria-label="Filtrar planetas en la brújula"
+        aria-labelledby={idTituloFiltro}
         className="flex flex-nowrap items-center gap-2 overflow-x-auto snap-x snap-mandatory ocultar-scrollbar pb-1 -mx-0.5 px-0.5"
       >
         {/* Opción "Todos" */}
@@ -180,10 +185,11 @@ export function CompassFilter({
           }}
           type="button"
           role="radio"
+          tabIndex={esTodosEnfocable ? 0 : -1}
           aria-checked={selectedFilter === 'all'}
           onClick={() => onSelectFilter('all')}
           onKeyDown={(e) => manejarTeclaGrupo(e, 0)}
-          className={`snap-start shrink-0 inline-flex items-center gap-1.5 px-3 min-h-10 rounded-xl border text-xs font-semibold cursor-pointer transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 ${
+          className={`snap-start shrink-0 inline-flex items-center gap-1.5 px-3 min-h-11 sm:min-h-10 rounded-xl border text-xs font-semibold cursor-pointer transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 ${
             selectedFilter === 'all' ? clases.activo : clases.inactivoVisible
           }`}
         >
@@ -210,6 +216,7 @@ export function CompassFilter({
               }}
               type="button"
               role="radio"
+              tabIndex={seleccionado ? 0 : -1}
               aria-checked={seleccionado}
               aria-label={`${planeta.name}, acimut ${Math.round(planeta.azimuthDeg)} grados, ${
                 planeta.isAboveHorizon
@@ -218,7 +225,7 @@ export function CompassFilter({
               }`}
               onClick={() => onSelectFilter(planeta.id)}
               onKeyDown={(e) => manejarTeclaGrupo(e, indiceBoton)}
-              className={`snap-start shrink-0 inline-flex items-center gap-1.5 px-3 min-h-10 rounded-xl border text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 ${claseEstado}`}
+              className={`snap-start shrink-0 inline-flex items-center gap-1.5 px-3 min-h-11 sm:min-h-10 rounded-xl border text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 ${claseEstado}`}
             >
               <span
                 aria-hidden="true"

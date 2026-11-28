@@ -8,6 +8,7 @@ import type {
   EstrellaCatalogo,
   InstrumentoObservacion,
   ObjetoMessier,
+  TemaVisual,
   TipoObjetoMessier,
 } from '../types/astronomy';
 import type {
@@ -264,13 +265,15 @@ const ETIQUETA_INSTRUMENTO: Readonly<Record<InstrumentoObservacion, string>> = {
   Telescopio: 'Telescopio',
 };
 
-function estimarClaseEspectral(bv: number | undefined): {
+export interface InfoEspectralEstrella {
   clase: string;
   temperatura: string;
   colorPrimario: string;
   colorSecundario: string;
   descripcionColor: string;
-} {
+}
+
+export function estimarClaseEspectral(bv: number | undefined): InfoEspectralEstrella {
   if (bv === undefined || !Number.isFinite(bv)) {
     return {
       clase: 'Estrella de secuencia',
@@ -332,6 +335,25 @@ function estimarClaseEspectral(bv: number | undefined): {
     colorSecundario: '#dc2626',
     descripcionColor: 'rojo anaranjado',
   };
+}
+
+/**
+ * Calcula los colores espectrales de vista previa de una estrella a partir de su índice B−V,
+ * aplicando salvaguarda estricta de espectro rojo cuando `tema === 'rojo'`.
+ */
+export function resolverColoresEstrellaBV(
+  bv: number | undefined,
+  tema: TemaVisual
+): InfoEspectralEstrella {
+  const info = estimarClaseEspectral(bv);
+  if (tema === 'rojo') {
+    return {
+      ...info,
+      colorPrimario: '#ef4444',
+      colorSecundario: '#dc2626',
+    };
+  }
+  return info;
 }
 
 function distanciaAngularGrados(

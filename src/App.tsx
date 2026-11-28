@@ -65,6 +65,7 @@ import {
   useFiltrosCatalogo,
 } from './hooks/useFiltrosCatalogo';
 import { obtenerNombreConstelacionIAU } from './data/constelacionesIAU';
+import { resolverColoresEstrellaBV } from './data/celestialDetails';
 import {
   BORTLE_POR_DEFECTO,
   DESCRIPCIONES_BORTLE,
@@ -457,6 +458,7 @@ export function App() {
   const [buscadorAbierto, setBuscadorAbierto] = useState(false);
   const [indiceResultadoActivo, setIndiceResultadoActivo] = useState(0);
   const buscadorRef = useRef<HTMLDivElement | null>(null);
+  const mapaContainerRef = useRef<HTMLDivElement | null>(null);
 
   const { tema, setTema, restablecerTema } = useTemaVisual();
   const [vistaActiva, setVistaActiva] = useState<VistaActiva>('observatorio');
@@ -785,6 +787,7 @@ export function App() {
           altitudeDeg: estrella.altitud,
           isAboveHorizon: estrella.altitud >= 0,
           magnitude: estrella.magnitud,
+          indiceColorBV: estrella.indiceColorBV,
         },
         fallbackName: nombreEstrella,
         fallbackSubtitle: `Estrella (${estrella.id}) · ${obtenerConstelacionEstrella(estrella.id)}`,
@@ -1024,7 +1027,7 @@ export function App() {
         nombre: estrella.nombre ?? estrella.id,
         acimut: estrella.acimut,
         altitud: estrella.altitud,
-        color: '#fde68a',
+        color: resolverColoresEstrellaBV(estrella.indiceColorBV, 'oscuro').colorPrimario,
       };
     }
     if (astroSeleccionado.categoria === 'constelacion') {
@@ -1324,8 +1327,25 @@ export function App() {
     window.scrollTo({ top: 0, behavior: reducido ? 'auto' : 'smooth' });
   };
 
+  const desplazarAlMapa = useCallback(() => {
+    const contenedor = mapaContainerRef.current;
+    if (!contenedor || typeof contenedor.scrollIntoView !== 'function') return;
+    const prefiereMovimientoReducido =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    contenedor.scrollIntoView({
+      behavior: prefiereMovimientoReducido ? 'auto' : 'smooth',
+      block: 'start',
+    });
+  }, []);
+
   const abrirBrujula = () => setBrujulaAbierta(true);
   const cerrarBrujula = useCallback(() => setBrujulaAbierta(false), []);
+  const apuntarEnBrujulaDesdeFicha = useCallback(() => {
+    toggleSheet(false);
+    setBrujulaAbierta(true);
+  }, [toggleSheet]);
   const abrirPlanificador = () => setPlanificadorAbierto(true);
   const cerrarPlanificador = useCallback(() => setPlanificadorAbierto(false), []);
 
@@ -1808,6 +1828,7 @@ export function App() {
                 if (Number.isNaN(fechaObjetivo.getTime())) return;
                 setReproduciendo(false);
                 setFechaSeleccionada(new Date(fechaObjetivo.getTime()));
+                desplazarAlMapa();
               }}
             />
 
@@ -1815,7 +1836,10 @@ export function App() {
             <main className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               {/* Columna Izquierda: Bóveda Celeste + Próximos Eventos */}
               <div className="lg:col-span-7 space-y-6">
-                <div className={`p-4 md:p-6 rounded-2xl border ${clasesTarjeta}`}>
+                <div
+                  ref={mapaContainerRef}
+                  className={`scroll-mt-20 p-4 md:p-6 rounded-2xl border ${clasesTarjeta}`}
+                >
                   <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                     <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75">
                       Bóveda Celeste en Tiempo Real
@@ -1989,6 +2013,7 @@ export function App() {
                   onSeleccionarFecha={(fechaEvento) => {
                     setReproduciendo(false);
                     setFechaSeleccionada(new Date(fechaEvento.getTime()));
+                    desplazarAlMapa();
                   }}
                 />
               </div>
@@ -2201,6 +2226,7 @@ export function App() {
           onMinimize={() => toggleSheet(false)}
           onCloseAll={clearFocus}
           onRetry={selectedBodyId ? () => enfocarAstro(selectedBodyId) : undefined}
+          onApuntarEnBrujula={astroSeleccionado ? apuntarEnBrujulaDesdeFicha : undefined}
           objetivoSesion={objetivoDetalleSeleccionado}
           esObjetivoEnSesion={
             objetivoDetalleSeleccionado ? idsEnSesion.has(objetivoDetalleSeleccionado.id) : false

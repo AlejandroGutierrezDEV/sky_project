@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import {
   AlertTriangle,
   Bookmark,
@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { CelestialPreview } from './CelestialPreview';
+import { resolverColoresEstrellaBV } from '../data/celestialDetails';
 import type { EntradaObjetivoSesion } from '../hooks/usePlanificadorSesion';
 import type { TemaVisual } from '../types/astronomy';
 import type {
@@ -34,6 +35,7 @@ export interface CelestialDetailSheetProps {
   onMinimize: () => void;
   onCloseAll: () => void;
   onRetry?: () => void;
+  onApuntarEnBrujula?: () => void;
   objetivoSesion?: EntradaObjetivoSesion | null;
   esObjetivoEnSesion?: boolean;
   onToggleObjetivo?: (astro: EntradaObjetivoSesion) => void;
@@ -178,20 +180,49 @@ export function CelestialDetailSheet({
   onMinimize,
   onCloseAll,
   onRetry,
+  onApuntarEnBrujula,
   objetivoSesion = null,
   esObjetivoEnSesion = false,
   onToggleObjetivo,
 }: Readonly<CelestialDetailSheetProps>) {
   const tituloId = useId();
+  const encabezadoFocoRef = useRef<HTMLDivElement | null>(null);
+  const elementoPrevioRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      elementoPrevioRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      encabezadoFocoRef.current?.focus();
+      return;
+    }
+
+    const previo = elementoPrevioRef.current;
+    elementoPrevioRef.current = null;
+    if (previo && previo.isConnected) {
+      previo.focus();
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      elementoPrevioRef.current = null;
+    };
+  }, []);
 
   if (!isOpen) return null;
 
   const tituloVisible = sheet?.name ?? fallbackName;
+  const tieneIndiceBV =
+    typeof ephemeris?.indiceColorBV === 'number' && Number.isFinite(ephemeris.indiceColorBV);
+  const infoEspectral = resolverColoresEstrellaBV(ephemeris?.indiceColorBV, tema);
   const visualFallback: CelestialVisualSpec = {
     kind: 'star_render',
-    primaryColor: '#7dd3fc',
-    secondaryColor: '#38bdf8',
-    altText: `Representación estelar genérica de ${tituloVisible}`,
+    primaryColor: infoEspectral.colorPrimario,
+    secondaryColor: infoEspectral.colorSecundario,
+    altText: tieneIndiceBV
+      ? `Representación estelar espectral de ${tituloVisible} (${infoEspectral.clase}, color ${infoEspectral.descripcionColor})`
+      : `Representación estelar genérica de ${tituloVisible}`,
   };
 
   return (
@@ -204,9 +235,13 @@ export function CelestialDetailSheet({
           tema
         )}`}
       >
-        {/* Cabecera fija con controles de minimizar y salir del foco */}
+        {/* Cabecera fija con foco inicial accesible y controles de acción */}
         <header className="px-4 py-3 border-b border-current/15 flex flex-wrap items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
+          <div
+            ref={encabezadoFocoRef}
+            tabIndex={-1}
+            className="flex items-center gap-2 min-w-0 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-current"
+          >
             <Compass className="w-4 h-4 shrink-0 opacity-80" aria-hidden="true" />
             <span className="text-xs font-semibold uppercase tracking-wider opacity-75 truncate">
               Ficha técnica · Modo Foco
@@ -214,12 +249,27 @@ export function CelestialDetailSheet({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {onApuntarEnBrujula && (
+              <button
+                type="button"
+                onClick={onApuntarEnBrujula}
+                aria-haspopup="dialog"
+                aria-label={`Apuntar hacia ${tituloVisible} en la Brújula 3D`}
+                className={`min-h-11 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none ${obtenerClasesBotonSecundario(
+                  tema
+                )}`}
+              >
+                <Compass className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>Apuntar en Brújula 3D</span>
+              </button>
+            )}
+
             {objetivoSesion && onToggleObjetivo && (
               <button
                 type="button"
                 aria-pressed={esObjetivoEnSesion}
                 onClick={() => onToggleObjetivo(objetivoSesion)}
-                className={`min-h-9 sm:min-h-8 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none ${obtenerClasesBotonObjetivo(
+                className={`min-h-11 sm:min-h-8 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none ${obtenerClasesBotonObjetivo(
                   tema,
                   esObjetivoEnSesion
                 )}`}
@@ -237,7 +287,7 @@ export function CelestialDetailSheet({
               type="button"
               onClick={onMinimize}
               aria-label="Ver en mapa y ocultar ficha manteniendo el foco"
-              className={`min-h-9 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none ${obtenerClasesBotonPrimario(
+              className={`min-h-11 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none ${obtenerClasesBotonPrimario(
                 tema
               )}`}
             >
@@ -249,7 +299,7 @@ export function CelestialDetailSheet({
               type="button"
               onClick={onCloseAll}
               aria-label="Cerrar ficha y mostrar todo el cielo"
-              className={`min-h-9 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none ${obtenerClasesBotonSecundario(
+              className={`min-h-11 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none ${obtenerClasesBotonSecundario(
                 tema
               )}`}
             >
@@ -321,7 +371,7 @@ export function CelestialDetailSheet({
                     <button
                       type="button"
                       onClick={onRetry}
-                      className="min-h-9 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-current/40 hover:bg-current/10 font-medium cursor-pointer"
+                      className="min-h-11 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-current/40 hover:bg-current/10 font-medium cursor-pointer"
                     >
                       <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
                       Reintentar carga
@@ -379,6 +429,24 @@ export function CelestialDetailSheet({
                         {formatearGrados(ephemeris.azimuthDeg)}
                       </span>
                     </div>
+                    {tieneIndiceBV && typeof ephemeris.indiceColorBV === 'number' && (
+                      <div className={`p-3 rounded-xl border col-span-2 sm:col-span-3 ${obtenerClasesTarjetaMetrica(tema)}`}>
+                        <span className="block text-[11px] opacity-70">
+                          Color espectral (índice B−V)
+                        </span>
+                        <span className="text-sm font-semibold flex flex-wrap items-center gap-2 mt-0.5">
+                          <span
+                            aria-hidden="true"
+                            className="w-3 h-3 rounded-full border border-current/30 shrink-0"
+                            style={{ backgroundColor: infoEspectral.colorPrimario }}
+                          />
+                          <span>{infoEspectral.clase}</span>
+                          <span className="font-mono text-xs opacity-75">
+                            B−V {ephemeris.indiceColorBV >= 0 ? `+${ephemeris.indiceColorBV.toFixed(2)}` : ephemeris.indiceColorBV.toFixed(2)} · {infoEspectral.temperatura}
+                          </span>
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

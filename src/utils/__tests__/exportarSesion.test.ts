@@ -55,6 +55,7 @@ const OBJETIVOS_EJEMPLO: ObjetivoPlanificado[] = [
 
 describe('Exportación de sesión nocturna (exportarSesion.ts)', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -109,7 +110,9 @@ describe('Exportación de sesión nocturna (exportarSesion.ts)', () => {
     expect(mdCanarias).toContain('01:42 (Alt. máx 78°)');
   });
 
-  it('revoca siempre la URL temporal del Blob al descargar el archivo .md', () => {
+  it('difiere 1500 ms la revocación de la URL temporal del Blob al descargar el archivo .md', () => {
+    vi.useFakeTimers();
+
     const createObjectURL = vi.fn(() => 'blob:skyproject-test-url');
     const revokeObjectURL = vi.fn();
     vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
@@ -128,6 +131,9 @@ describe('Exportación de sesión nocturna (exportarSesion.ts)', () => {
       createElement: vi.fn(() => enlaceMock),
       body: { appendChild, removeChild },
     });
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+    });
 
     descargarSesionMarkdown(OBJETIVOS_EJEMPLO, METADATOS);
 
@@ -136,6 +142,13 @@ describe('Exportación de sesión nocturna (exportarSesion.ts)', () => {
     expect(clickMock).toHaveBeenCalledTimes(1);
     expect(appendChild).toHaveBeenCalledWith(enlaceMock);
     expect(removeChild).toHaveBeenCalledWith(enlaceMock);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1499);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:skyproject-test-url');
   });
 

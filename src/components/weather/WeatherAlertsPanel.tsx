@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import {
   AlertOctagon,
   AlertTriangle,
@@ -283,7 +284,7 @@ function TarjetaAlerta({
           onClick={() => onDismiss(alert.id)}
           aria-label={`Descartar aviso de ${alert.title}`}
           title={`Descartar aviso de ${alert.title}`}
-          className="min-h-9 min-w-9 sm:min-h-7 sm:min-w-7 inline-flex items-center justify-center rounded-lg border border-current/20 hover:bg-current/10 opacity-80 hover:opacity-100 cursor-pointer transition-colors motion-reduce:transition-none shrink-0"
+          className="min-h-11 min-w-11 sm:min-h-7 sm:min-w-7 inline-flex items-center justify-center rounded-lg border border-current/20 hover:bg-current/10 opacity-80 hover:opacity-100 cursor-pointer transition-colors motion-reduce:transition-none shrink-0"
         >
           <X className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
@@ -304,6 +305,7 @@ export function WeatherAlertsPanel({
   tema = 'oscuro',
   claseTarjeta = '',
 }: Readonly<WeatherAlertsPanelProps>) {
+  const headingId = useId();
   const {
     alerts,
     activeAlerts,
@@ -343,14 +345,14 @@ export function WeatherAlertsPanel({
 
   return (
     <section
-      aria-labelledby="weather-alerts-heading"
+      aria-labelledby={headingId}
       aria-busy={isLoading}
       className={`p-4 rounded-2xl border space-y-3 ${claseBaseContenedor}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h2
-            id="weather-alerts-heading"
+            id={headingId}
             className="font-semibold text-sm uppercase tracking-wider opacity-80 flex items-center gap-2"
           >
             <ShieldAlert className="w-4 h-4 shrink-0" aria-hidden="true" />
@@ -375,7 +377,7 @@ export function WeatherAlertsPanel({
             <button
               type="button"
               onClick={restoreDismissed}
-              className="min-h-9 sm:min-h-8 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none"
+              className="min-h-11 sm:min-h-8 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none"
             >
               <Eye className="w-3.5 h-3.5" aria-hidden="true" />
               Restaurar ocultos ({dismissedCount})
@@ -385,7 +387,7 @@ export function WeatherAlertsPanel({
             type="button"
             onClick={refresh}
             aria-label="Actualizar avisos meteorológicos"
-            className="min-h-9 sm:min-h-8 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none"
+            className="min-h-11 sm:min-h-8 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 text-xs font-medium cursor-pointer transition-colors motion-reduce:transition-none"
           >
             <RefreshCw
               className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin motion-reduce:animate-none' : ''}`}
@@ -431,7 +433,7 @@ export function WeatherAlertsPanel({
           <button
             type="button"
             onClick={refresh}
-            className="min-h-9 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-current/35 hover:bg-current/10 text-xs font-semibold cursor-pointer transition-colors motion-reduce:transition-none"
+            className="min-h-11 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-current/35 hover:bg-current/10 text-xs font-semibold cursor-pointer transition-colors motion-reduce:transition-none"
           >
             <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
             Reintentar
@@ -453,7 +455,7 @@ export function WeatherAlertsPanel({
             <button
               type="button"
               onClick={restoreDismissed}
-              className="min-h-9 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-current/30 hover:bg-current/10 text-xs font-semibold cursor-pointer transition-colors motion-reduce:transition-none"
+              className="min-h-11 sm:min-h-8 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-current/30 hover:bg-current/10 text-xs font-semibold cursor-pointer transition-colors motion-reduce:transition-none"
             >
               <Eye className="w-3.5 h-3.5" aria-hidden="true" />
               Mostrar avisos ocultos

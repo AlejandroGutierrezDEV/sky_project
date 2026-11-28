@@ -127,7 +127,9 @@ describe('TodayHighlightsWidget — semántica HTML, estados y temas', () => {
         onRetry: () => undefined,
       })
     );
-    expect(htmlLoading).toContain('aria-labelledby="today-highlights-heading"');
+    const coincidenciaId = htmlLoading.match(/aria-labelledby="([^"]+)"/);
+    expect(coincidenciaId).not.toBeNull();
+    expect(htmlLoading).toContain(`<h2 id="${coincidenciaId![1]}"`);
     expect(htmlLoading).toContain('role="status"');
 
     const htmlError = renderToStaticMarkup(
