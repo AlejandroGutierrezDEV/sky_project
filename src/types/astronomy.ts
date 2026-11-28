@@ -289,7 +289,7 @@ export interface EfemeridesTransito {
 }
 
 /** Vistas principales de la aplicación (navegación sin router). */
-export type VistaActiva = 'observatorio' | 'guia';
+export type VistaActiva = 'observatorio' | 'carta' | 'guia';
 
 /** Resultado de la solicitud de permiso de sensores (Safari iOS 13+). */
 export type PermisoOrientacion = 'granted' | 'denied' | 'default';
