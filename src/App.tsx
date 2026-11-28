@@ -36,6 +36,7 @@ import { calcularProximosEventos } from './core/eventsCalculator';
 import { SkyMap } from './components/SkyMap';
 import { BarraFiltrosCatalogo } from './components/BarraFiltrosCatalogo';
 import { WeatherPanel } from './components/WeatherPanel';
+import { WeatherAlertsPanel } from './components/weather/WeatherAlertsPanel';
 import { EventsPanel } from './components/EventsPanel';
 import { StarfieldBackground } from './components/StarfieldBackground';
 import { MoonPhase3D } from './components/MoonPhase3D';
@@ -82,6 +83,7 @@ import {
   normalizarZonaHoraria,
 } from './utils/lunarCalculations';
 import type { LiveEphemerisSnapshot } from './types/celestialDetails';
+import type { WeatherAlertCoordinates } from './types/weatherAlerts';
 import type {
   AstroSeleccionado,
   CategoriaAstro,
@@ -507,6 +509,16 @@ export function App() {
       timezone: coordinates.timezone,
     }),
     [ubicacion.latitud, ubicacion.longitud, ubicacion.altitud, coordinates.timezone]
+  );
+
+  const coordenadasAvisosMeteo = useMemo<WeatherAlertCoordinates>(
+    () => ({
+      latitude: ubicacion.latitud,
+      longitude: ubicacion.longitud,
+      timezone: coordinates.timezone,
+      locationName: coordinates.name || ubicacion.nombre,
+    }),
+    [ubicacion.latitud, ubicacion.longitud, coordinates.timezone, coordinates.name, ubicacion.nombre]
   );
 
   const fechaSeleccionada = useMemo(() => {
@@ -1960,6 +1972,12 @@ export function App() {
                     setReproduciendo(false);
                     setFechaStr(formatearFechaParaInput(fechaHora));
                   }}
+                />
+
+                <WeatherAlertsPanel
+                  coordinates={coordenadasAvisosMeteo}
+                  tema={tema}
+                  claseTarjeta={clasesTarjeta}
                 />
 
                 <CompassWidget tema={tema} claseTarjeta={clasesTarjeta} />
