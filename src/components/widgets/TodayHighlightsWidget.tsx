@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import {
   AlertTriangle,
   Clock,
@@ -164,6 +165,7 @@ export function TodayHighlightsWidget({
   onRetry,
   onSelectTimestamp,
 }: Readonly<TodayHighlightsWidgetProps>) {
+  const headingId = useId();
   const claseSkeleton = obtenerClaseSkeleton(tema);
   const horaActualizacion = lastUpdated
     ? formatearHoraEnZona(lastUpdated, timezone)
@@ -171,7 +173,7 @@ export function TodayHighlightsWidget({
 
   return (
     <section
-      aria-labelledby="today-highlights-heading"
+      aria-labelledby={headingId}
       className={`p-4 md:p-5 rounded-2xl border space-y-3.5 ${claseTarjeta}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -181,7 +183,7 @@ export function TodayHighlightsWidget({
             aria-hidden="true"
           />
           <h2
-            id="today-highlights-heading"
+            id={headingId}
             className="font-semibold text-sm uppercase tracking-wider opacity-85"
           >
             Destacados de hoy
@@ -211,7 +213,7 @@ export function TodayHighlightsWidget({
             disabled={isLoading}
             aria-label="Actualizar destacados de hoy"
             title="Actualizar destacados de hoy"
-            className="inline-flex items-center justify-center min-w-8 min-h-8 rounded-lg border border-current/20 hover:bg-current/10 cursor-pointer disabled:opacity-50 transition-colors motion-reduce:transition-none"
+            className="inline-flex items-center justify-center min-w-11 min-h-11 sm:min-w-8 sm:min-h-8 rounded-lg border border-current/20 hover:bg-current/10 cursor-pointer disabled:opacity-50 transition-colors motion-reduce:transition-none"
           >
             <RefreshCw
               className={`w-3.5 h-3.5 ${isLoading ? 'motion-safe:animate-spin' : ''}`}
@@ -270,7 +272,7 @@ export function TodayHighlightsWidget({
             type="button"
             onClick={onRetry}
             aria-label="Reintentar carga de destacados de hoy"
-            className={`min-h-10 sm:min-h-9 inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer shrink-0 transition-colors motion-reduce:transition-none ${obtenerClaseBotonReintento(
+            className={`min-h-11 sm:min-h-9 inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer shrink-0 transition-colors motion-reduce:transition-none ${obtenerClaseBotonReintento(
               tema
             )}`}
           >
@@ -299,7 +301,7 @@ export function TodayHighlightsWidget({
             type="button"
             onClick={onRetry}
             aria-label="Recalcular destacados de hoy"
-            className={`min-h-10 sm:min-h-9 inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer shrink-0 transition-colors motion-reduce:transition-none ${obtenerClaseBotonReintento(
+            className={`min-h-11 sm:min-h-9 inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer shrink-0 transition-colors motion-reduce:transition-none ${obtenerClaseBotonReintento(
               tema
             )}`}
           >
@@ -363,7 +365,7 @@ export function TodayHighlightsWidget({
                           type="button"
                           onClick={() => onSelectTimestamp(item.timestamp as Date)}
                           aria-label={`Ver ${item.title} a las ${horaFormateada} en el mapa celeste`}
-                          className="px-2 py-0.5 rounded-md border border-current/25 hover:bg-current/10 font-sans font-medium cursor-pointer transition-colors motion-reduce:transition-none"
+                          className="min-h-11 sm:min-h-7 inline-flex items-center px-3 sm:px-2 py-1 sm:py-0.5 rounded-md border border-current/25 hover:bg-current/10 font-sans font-medium cursor-pointer transition-colors motion-reduce:transition-none"
                         >
                           Ver hora
                         </button>

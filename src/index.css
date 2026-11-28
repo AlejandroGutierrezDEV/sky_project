@@ -254,7 +254,12 @@
   }
 
   html,
-  body {
+  body,
+  #root {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
     background: #ffffff !important;
     color: #000000 !important;
     margin: 0 !important;
@@ -269,6 +274,9 @@
 
   .hoja-impresion-sesion {
     display: block !important;
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
     background: #ffffff !important;
     color: #000000 !important;
     font-family: var(--font-sans);

@@ -4,6 +4,7 @@ import {
   VALID_CELESTIAL_IDS,
   obtenerEstrellasDeConstelacion,
   obtenerFichaTecnica,
+  resolverColoresEstrellaBV,
 } from '../celestialDetails';
 import { CONSTELACIONES_IAU } from '../constelacionesIAU';
 import { CATALOGO_ESTRELLAS } from '../estrellasMag4';
@@ -228,5 +229,25 @@ describe('resolverAccionEscape', () => {
     expect(resolverAccionEscape(true, true)).toBe('close_sheet');
     expect(resolverAccionEscape(false, true)).toBe('clear_focus');
     expect(resolverAccionEscape(false, false)).toBe('none');
+  });
+});
+
+describe('resolverColoresEstrellaBV', () => {
+  it('calcula colores espectrales reales según el índice B−V en temas oscuro y claro', () => {
+    const azul = resolverColoresEstrellaBV(-0.2, 'oscuro');
+    const solar = resolverColoresEstrellaBV(0.65, 'oscuro');
+    const giganteRoja = resolverColoresEstrellaBV(1.65, 'claro');
+
+    expect(azul.colorPrimario).toBe('#93c5fd');
+    expect(solar.colorPrimario).toBe('#fef08a');
+    expect(giganteRoja.colorPrimario).toBe('#fca5a5');
+  });
+
+  it('fuerza estrictamente la paleta roja nocturna cuando tema === "rojo"', () => {
+    for (const bv of [-0.25, 0.05, 0.65, 1.2, 1.8, undefined]) {
+      const resultado = resolverColoresEstrellaBV(bv, 'rojo');
+      expect(resultado.colorPrimario).toBe('#ef4444');
+      expect(resultado.colorSecundario).toBe('#dc2626');
+    }
   });
 });

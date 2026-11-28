@@ -42,6 +42,8 @@ export interface LiveEphemerisSnapshot {
   altitudeDeg: number;
   isAboveHorizon: boolean;
   magnitude?: number;
+  /** Índice de color B−V de catálogo para estrellas */
+  indiceColorBV?: number;
 }
 
 export type SheetLoadStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error';

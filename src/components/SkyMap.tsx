@@ -2148,7 +2148,7 @@ export function SkyMap({
         {avisoBajoHorizonte && (
           <div
             role="status"
-            className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 max-w-[85%] px-3.5 py-2 rounded-xl border text-xs text-center shadow-lg ${CLASES_TOOLTIP[tema]}`}
+            className={`pointer-events-none absolute left-1/2 bottom-3 -translate-x-1/2 max-w-[85%] px-3.5 py-2 rounded-xl border text-xs text-center shadow-lg ${CLASES_TOOLTIP[tema]}`}
           >
             <span className="inline-flex items-center gap-1.5 font-semibold">
               <EyeOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />

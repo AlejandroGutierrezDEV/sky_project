@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { CalendarClock, Sparkles, Eclipse, ArrowUpRight } from 'lucide-react';
 import type { EventoCeleste, TemaVisual } from '../types/astronomy';
 import {
@@ -39,10 +40,11 @@ export function EventsPanel({
   timezone = ZONA_HORARIA_POR_DEFECTO,
   onSeleccionarFecha,
 }: Readonly<EventsPanelProps>) {
+  const headingId = useId();
   return (
-    <section className={`p-4 rounded-2xl border space-y-3 ${claseTarjeta}`}>
+    <section aria-labelledby={headingId} className={`p-4 rounded-2xl border space-y-3 ${claseTarjeta}`}>
       <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-sm uppercase tracking-wider opacity-75 flex items-center gap-2">
+        <h2 id={headingId} className="font-semibold text-sm uppercase tracking-wider opacity-75 flex items-center gap-2">
           <CalendarClock className="w-4 h-4" aria-hidden="true" /> Próximos Eventos Celestes
         </h2>
         <span className="text-[11px] opacity-60">Lluvias y Eclipses</span>
@@ -97,7 +99,7 @@ export function EventsPanel({
                   type="button"
                   onClick={() => onSeleccionarFecha(ev.fechaPico)}
                   aria-label={`Ver ${ev.titulo} en el mapa celeste`}
-                  className="inline-flex items-center gap-1 min-h-9 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 no-underline hover:opacity-100 cursor-pointer font-sans font-medium transition-colors"
+                  className="inline-flex items-center gap-1 min-h-11 sm:min-h-9 px-3 sm:px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 no-underline hover:opacity-100 cursor-pointer font-sans font-medium transition-colors"
                 >
                   Ver en mapa <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
                 </button>
