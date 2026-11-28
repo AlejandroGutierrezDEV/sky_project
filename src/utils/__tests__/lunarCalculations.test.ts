@@ -10,6 +10,8 @@ import {
   esZonaHorariaIANAValida,
   formatearHoraEnZona,
   inferirZonaHorariaPorCoordenadas,
+  obtenerClaveDiaCivil,
+  obtenerFechaReferenciaDiaCivil,
   obtenerLimitesDiaCivilUTC,
 } from '../lunarCalculations';
 
@@ -79,6 +81,28 @@ describe('lunarCalculations — validaciones y zonas horarias IANA', () => {
     expect(limMadrid.inicioDiaUTC.toISOString()).toBe('2026-06-15T22:00:00.000Z');
     expect(limTokyo.inicioDiaUTC.toISOString()).toBe('2026-06-15T15:00:00.000Z');
     expect(limNY.inicioDiaUTC.toISOString()).toBe('2026-06-15T04:00:00.000Z');
+  });
+
+  it('cambia claveDiaCivil en el instante exacto de medianoche IANA (Asia/Tokyo y Atlantic/Canary)', () => {
+    // Asia/Tokyo (UTC+9): medianoche de 2026-11-29 ocurre a las 15:00:00Z del 28
+    expect(obtenerClaveDiaCivil(new Date('2026-11-28T14:59:59Z'), 'Asia/Tokyo')).toBe('2026-11-28');
+    expect(obtenerClaveDiaCivil(new Date('2026-11-28T15:00:00Z'), 'Asia/Tokyo')).toBe('2026-11-29');
+
+    // Atlantic/Canary en horario de verano (WEST, UTC+1): medianoche de 2026-07-16 ocurre a las 23:00:00Z del 15
+    expect(obtenerClaveDiaCivil(new Date('2026-07-15T22:59:59Z'), 'Atlantic/Canary')).toBe(
+      '2026-07-15'
+    );
+    expect(obtenerClaveDiaCivil(new Date('2026-07-15T23:00:00Z'), 'Atlantic/Canary')).toBe(
+      '2026-07-16'
+    );
+
+    const inicioTokyo = obtenerFechaReferenciaDiaCivil('2026-11-29', 'Asia/Tokyo', 0);
+    expect(inicioTokyo.toISOString()).toBe('2026-11-28T15:00:00.000Z');
+    expect(obtenerClaveDiaCivil(inicioTokyo, 'Asia/Tokyo')).toBe('2026-11-29');
+
+    const mediodiaCanarias = obtenerFechaReferenciaDiaCivil('2026-07-16', 'Atlantic/Canary', 12);
+    expect(mediodiaCanarias.toISOString()).toBe('2026-07-16T11:00:00.000Z');
+    expect(obtenerClaveDiaCivil(mediodiaCanarias, 'Atlantic/Canary')).toBe('2026-07-16');
   });
 
   it('formatea horas en la zona horaria indicada y usa fallback sin TypeError ante null', () => {
