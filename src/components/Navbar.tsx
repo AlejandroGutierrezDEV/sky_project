@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react';
-import { BookOpen, ClipboardList, Compass, Crosshair, Eye, MapPin, Menu, Moon, Sun, Telescope, X } from 'lucide-react';
+import { BookOpen, ClipboardList, Compass, Crosshair, Eye, MapPin, Menu, Moon, Sparkles, Sun, Telescope, X } from 'lucide-react';
 import type { TemaVisual, Ubicacion, VistaActiva } from '../types/astronomy';
 
 interface NavbarProps {
@@ -30,6 +30,12 @@ const ELEMENTOS_NAVEGACION: ElementoNavegacion[] = [
     etiqueta: 'Observatorio',
     descripcion: 'Mapa celeste, meteorología, eventos y Sistema Solar',
     Icono: Telescope,
+  },
+  {
+    vista: 'carta',
+    etiqueta: 'Carta Astronómica',
+    descripcion: 'Planisferio 2D interactivo con estrellas y constelaciones',
+    Icono: Sparkles,
   },
   {
     vista: 'guia',

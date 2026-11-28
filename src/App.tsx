@@ -41,6 +41,7 @@ import { StarfieldBackground } from './components/StarfieldBackground';
 import { MoonPhase3D } from './components/MoonPhase3D';
 import { Navbar } from './components/Navbar';
 import { AstronomyGuide } from './components/AstronomyGuide';
+import { StarChartTab } from './components/star-chart/StarChartTab';
 import { Compass3DModal } from './components/Compass3DModal';
 import { CompassWidget } from './components/compass/CompassWidget';
 import { CelestialDetailSheet } from './components/CelestialDetailSheet';
@@ -1612,6 +1613,14 @@ export function App() {
             claseTarjeta={clasesTarjeta}
             onVolver={() => cambiarVista('observatorio')}
             onAbrirBrujula={abrirBrujula}
+          />
+        ) : vistaActiva === 'carta' ? (
+          <StarChartTab
+            tema={tema}
+            claseTarjeta={clasesTarjeta}
+            initialLatitude={ubicacion.latitud}
+            initialLongitude={ubicacion.longitud}
+            initialLocationName={ubicacion.nombre}
           />
         ) : (
           <>
