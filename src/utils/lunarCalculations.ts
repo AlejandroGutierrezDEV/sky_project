@@ -1,5 +1,5 @@
 import * as Astronomy from 'astronomy-engine';
-import type { GeoCoordinates, LunarData, MoonPhaseName } from '../types/astronomy';
+import type { ClaveDiaCivil, GeoCoordinates, LunarData, MoonPhaseName } from '../types/astronomy';
 
 export const CICLO_SINODICO_DIAS = 29.530588853;
 export const ZONA_HORARIA_POR_DEFECTO = 'Europe/Madrid';
@@ -7,6 +7,7 @@ export const TEXTO_SIN_ORTO = 'Sin orto hoy';
 export const TEXTO_SIN_OCASO = 'Sin ocaso hoy';
 
 const MS_POR_DIA = 86_400_000;
+const cacheFormateadoresDiaCivil = new Map<string, Intl.DateTimeFormat>();
 
 export interface LimitesDiaCivilUTC {
   inicioDiaUTC: Date;
@@ -14,7 +15,7 @@ export interface LimitesDiaCivilUTC {
   anio: number;
   mes: number;
   dia: number;
-  claveDiaCivil: string;
+  claveDiaCivil: ClaveDiaCivil;
 }
 
 export interface EfemeridesSolaresDia {
@@ -189,21 +190,29 @@ export function crearFechaUTCDesdeCivil(
   return new Date(aproximacion - desfase2);
 }
 
+function obtenerFormateadorDiaCivil(timeZone: string): Intl.DateTimeFormat {
+  const existente = cacheFormateadoresDiaCivil.get(timeZone);
+  if (existente) return existente;
+  const nuevo = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  cacheFormateadoresDiaCivil.set(timeZone, nuevo);
+  return nuevo;
+}
+
 /**
  * Obtiene los componentes de calendario civil `(anio, mes, dia)` de un instante en `timeZone`.
  */
 export function obtenerComponentesDiaCivil(
   fecha: Date,
   timeZone: string
-): { anio: number; mes: number; dia: number; claveDiaCivil: string } {
+): { anio: number; mes: number; dia: number; claveDiaCivil: ClaveDiaCivil } {
   const tzSegura = esZonaHorariaIANAValida(timeZone) ? timeZone : ZONA_HORARIA_POR_DEFECTO;
   const fechaValida = Number.isNaN(fecha.getTime()) ? new Date() : fecha;
-  const partes = new Intl.DateTimeFormat('en-US', {
-    timeZone: tzSegura,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(fechaValida);
+  const partes = obtenerFormateadorDiaCivil(tzSegura).formatToParts(fechaValida);
 
   let anio = fechaValida.getUTCFullYear();
   let mes = fechaValida.getUTCMonth() + 1;
@@ -217,11 +226,44 @@ export function obtenerComponentesDiaCivil(
     else if (parte.type === 'day') dia = num;
   }
 
-  const claveDiaCivil = `${String(anio).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(
+  const claveDiaCivil: ClaveDiaCivil = `${String(anio).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(
     dia
   ).padStart(2, '0')}`;
 
   return { anio, mes, dia, claveDiaCivil };
+}
+
+/**
+ * Calcula la clave de día civil (`YYYY-MM-DD`) de un instante en la zona horaria IANA indicada.
+ */
+export function obtenerClaveDiaCivil(fecha: Date, timezone: string): ClaveDiaCivil {
+  return obtenerComponentesDiaCivil(fecha, timezone).claveDiaCivil;
+}
+
+/**
+ * Construye una fecha UTC determinista anclada a una `ClaveDiaCivil` (`YYYY-MM-DD`)
+ * y a la zona horaria IANA del observatorio (por defecto a las 12:00 locales).
+ */
+export function obtenerFechaReferenciaDiaCivil(
+  claveDiaCivil: ClaveDiaCivil,
+  timezone: string,
+  horaLocal = 12
+): Date {
+  const tzSegura = esZonaHorariaIANAValida(timezone) ? timezone : ZONA_HORARIA_POR_DEFECTO;
+  const coincidencia = /^(\d{4})-(\d{2})-(\d{2})$/.exec(claveDiaCivil.trim());
+  if (coincidencia) {
+    const anio = Number(coincidencia[1]);
+    const mes = Number(coincidencia[2]);
+    const dia = Number(coincidencia[3]);
+    const horaSegura = Number.isFinite(horaLocal)
+      ? Math.max(0, Math.min(23, Math.trunc(horaLocal)))
+      : 12;
+    if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
+      return crearFechaUTCDesdeCivil(anio, mes, dia, horaSegura, 0, tzSegura);
+    }
+  }
+  const { anio, mes, dia } = obtenerComponentesDiaCivil(new Date(), tzSegura);
+  return crearFechaUTCDesdeCivil(anio, mes, dia, 12, 0, tzSegura);
 }
 
 /**

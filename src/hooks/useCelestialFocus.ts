@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CELESTIAL_TECHNICAL_SHEETS, VALID_CELESTIAL_IDS } from '../data/celestialDetails';
+import { VALID_CELESTIAL_IDS, obtenerFichaTecnica } from '../data/celestialDetails';
 import {
   isValidCelestialId,
   type CelestialTechnicalSheet,
@@ -10,8 +10,10 @@ import {
 export interface UseCelestialFocusOptions {
   /** Conjunto de IDs válidos seleccionables en el mapa, bóveda y buscador */
   validIds?: ReadonlySet<string>;
-  /** Mapa estático de fichas técnicas (offline-first) */
+  /** Mapa estático opcional de fichas técnicas (retrocompatibilidad o mocks) */
   sheets?: Readonly<Record<string, CelestialTechnicalSheet>>;
+  /** Resolvedor perezoso bajo demanda de fichas técnicas (por defecto `obtenerFichaTecnica`) */
+  obtenerFicha?: (bodyId: string) => CelestialTechnicalSheet | undefined;
   /**
    * Cargador asíncrono opcional para fichas dinámicas o recursos remotos.
    * Si se proporciona, las selecciones rápidas cancelan la petición anterior mediante AbortController.
@@ -52,7 +54,8 @@ export function useCelestialFocus(
 ): UseCelestialFocusResult {
   const {
     validIds = VALID_CELESTIAL_IDS,
-    sheets = CELESTIAL_TECHNICAL_SHEETS,
+    sheets,
+    obtenerFicha = obtenerFichaTecnica,
     loadSheetAsync,
     disableEscapeKey = false,
   } = options;
@@ -148,9 +151,11 @@ export function useCelestialFocus(
         return;
       }
 
-      const fichaLocal = Object.prototype.hasOwnProperty.call(sheets, bodyId)
-        ? sheets[bodyId]
-        : undefined;
+      const fichaLocal = sheets
+        ? Object.prototype.hasOwnProperty.call(sheets, bodyId)
+          ? sheets[bodyId]
+          : undefined
+        : obtenerFicha(bodyId);
 
       if (fichaLocal) {
         setSheetData(fichaLocal);
@@ -160,7 +165,7 @@ export function useCelestialFocus(
         setSheetStatus('empty');
       }
     },
-    [validIds, sheets, loadSheetAsync, abortarCargaEnCurso]
+    [validIds, sheets, obtenerFicha, loadSheetAsync, abortarCargaEnCurso]
   );
 
   useEffect(() => {

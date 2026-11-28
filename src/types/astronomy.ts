@@ -39,6 +39,9 @@ export function esTemaVisual(valor: unknown): valor is TemaVisual {
 
 export type EscalaBortle = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
+/** Clave de día civil en zona horaria IANA del observatorio (ej. "2026-11-28"). */
+export type ClaveDiaCivil = string;
+
 export interface GeoCoordinates {
   latitude: number; // Rango válido: [-90, 90]
   longitude: number; // Rango válido: [-180, 180]

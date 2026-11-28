@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { calcularCielo } from '../core/skyCalculator';
 import { calcularProximosEventos } from '../core/eventsCalculator';
 import type {
+  ClaveDiaCivil,
   CondicionesMeteo,
   DailyHighlightItem,
   EscalaBortle,
@@ -17,7 +18,8 @@ import {
   calcularEfemeridesSolaresDia,
   esGeoCoordinatesValido,
   formatearHoraEnZona,
-  obtenerComponentesDiaCivil,
+  obtenerClaveDiaCivil,
+  obtenerFechaReferenciaDiaCivil,
 } from '../utils/lunarCalculations';
 
 const MAX_HIGHLIGHTS = 4;
@@ -25,6 +27,8 @@ const MS_24_HORAS = 24 * 60 * 60 * 1000;
 
 export interface UseTodayHighlightsOptions {
   referenceDate?: Date;
+  /** Clave de día civil (YYYY-MM-DD) en zona IANA para evitar recálculos en Time-Lapse */
+  claveDiaCivil?: ClaveDiaCivil;
   altitudeMeters?: number;
   bortle?: EscalaBortle;
   meteo?: CondicionesMeteo | null;
@@ -415,19 +419,22 @@ export function useTodayHighlights(
       ? options.referenceDate
       : null;
 
-  const { claveDiaCivil } = obtenerComponentesDiaCivil(
-    fechaRefValida ?? new Date(),
-    coordinates.timezone
+  const claveDiaEfectiva = useMemo<ClaveDiaCivil>(
+    () =>
+      options?.claveDiaCivil ??
+      obtenerClaveDiaCivil(fechaRefValida ?? new Date(), coordinates.timezone),
+    [options?.claveDiaCivil, fechaRefValida, coordinates.timezone]
   );
 
-  // Precisión por cuarto de hora para evitar recálculos excesivos durante time-lapse
-  const bloqueTemporal =
-    fechaRefValida !== null ? Math.floor(fechaRefValida.getTime() / (15 * 60_000)) : 'hoy';
+  const fechaAncladaDia = useMemo(
+    () => obtenerFechaReferenciaDiaCivil(claveDiaEfectiva, coordinates.timezone, 0),
+    [claveDiaEfectiva, coordinates.timezone]
+  );
 
   const lunarClave = lunarData
-    ? `${lunarData.phaseName}|${Math.round(lunarData.illumination)}|${
-        lunarData.moonrise?.getTime() ?? 'null'
-      }|${lunarData.moonset?.getTime() ?? 'null'}`
+    ? `${lunarData.phaseName}|${lunarData.moonrise?.getTime() ?? 'null'}|${
+        lunarData.moonset?.getTime() ?? 'null'
+      }`
     : 'sin-luna';
 
   const altitudeMeters = options?.altitudeMeters ?? 0;
@@ -439,8 +446,7 @@ export function useTodayHighlights(
     coordinates.latitude.toFixed(4),
     coordinates.longitude.toFixed(4),
     coordinates.timezone,
-    claveDiaCivil,
-    String(bloqueTemporal),
+    claveDiaEfectiva,
     lunarClave,
     String(altitudeMeters),
     String(bortle ?? ''),
@@ -448,19 +454,45 @@ export function useTodayHighlights(
     String(refetchNonce),
   ].join('|');
 
+  const contextoConsultaRef = useRef({
+    coordinates,
+    lunarData,
+    meteo: options?.meteo,
+    fechaEjecucion: options?.claveDiaCivil
+      ? fechaAncladaDia
+      : (fechaRefValida ?? fechaAncladaDia),
+  });
+
+  useEffect(() => {
+    contextoConsultaRef.current = {
+      coordinates,
+      lunarData,
+      meteo: options?.meteo,
+      fechaEjecucion: options?.claveDiaCivil
+        ? fechaAncladaDia
+        : (fechaRefValida ?? fechaAncladaDia),
+    };
+  });
+
   useEffect(() => {
     const controller = new AbortController();
+    const contextoActual = contextoConsultaRef.current;
 
-    const fechaEjecucion = fechaRefValida ? new Date(fechaRefValida.getTime()) : new Date();
+    const fechaEjecucion = new Date(contextoActual.fechaEjecucion.getTime());
     const opcionesEjecucion: UseTodayHighlightsOptions = {
       referenceDate: fechaEjecucion,
       altitudeMeters,
       bortle,
-      meteo: options?.meteo,
+      meteo: contextoActual.meteo,
       fetchExternalHighlights,
     };
 
-    cargarDestacadosDeHoyAsync(coordinates, lunarData, opcionesEjecucion, controller.signal)
+    cargarDestacadosDeHoyAsync(
+      contextoActual.coordinates,
+      contextoActual.lunarData,
+      opcionesEjecucion,
+      controller.signal
+    )
       .then((items) => {
         if (controller.signal.aborted) return;
         setEstado({
@@ -487,9 +519,7 @@ export function useTodayHighlights(
     return () => {
       controller.abort();
     };
-    // Dependencias estables encapsuladas en claveConsulta + callbacks/referencias relevantes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [claveConsulta, fetchExternalHighlights]);
+  }, [claveConsulta, altitudeMeters, bortle, fetchExternalHighlights]);
 
   const refetch = useCallback(() => {
     setRefetchNonce((prev) => prev + 1);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CategoriaAstroObjetivo,
+  ClaveDiaCivil,
   ObjetivoPlanificado,
   ObjetivoSesion,
 } from '../types/astronomy';
@@ -8,6 +9,11 @@ import {
   calcularCulminacionAstro,
   ordenarPorCulminacionNocturna,
 } from '../utils/astronomia/culminacion';
+import {
+  normalizarZonaHoraria,
+  obtenerClaveDiaCivil,
+  obtenerFechaReferenciaDiaCivil,
+} from '../utils/lunarCalculations';
 
 export const CLAVE_PLANIFICADOR_SESION = 'skyproject_planificador_sesion_v1';
 export const MAX_LONGITUD_NOTA = 240;
@@ -174,6 +180,8 @@ export interface OpcionesPlanificadorSesion {
   latitud: number;
   longitud: number;
   fechaReferencia: Date;
+  timezone?: string;
+  claveDiaCivil?: ClaveDiaCivil;
 }
 
 export interface ResultadoPlanificadorSesion {
@@ -191,6 +199,8 @@ export function usePlanificadorSesion({
   latitud,
   longitud,
   fechaReferencia,
+  timezone,
+  claveDiaCivil,
 }: OpcionesPlanificadorSesion): ResultadoPlanificadorSesion {
   const [objetivos, setObjetivos] = useState<ObjetivoSesion[]>(leerObjetivosGuardados);
   const debeGuardarRef = useRef<boolean>(false);
@@ -201,9 +211,24 @@ export function usePlanificadorSesion({
     guardarObjetivosEnStorage(objetivos);
   }, [objetivos]);
 
+  const zonaHorariaEfectiva = useMemo(
+    () => normalizarZonaHoraria(timezone, latitud, longitud),
+    [timezone, latitud, longitud]
+  );
+
+  const claveDiaEfectiva = useMemo<ClaveDiaCivil>(
+    () => claveDiaCivil ?? obtenerClaveDiaCivil(fechaReferencia, zonaHorariaEfectiva),
+    [claveDiaCivil, fechaReferencia, zonaHorariaEfectiva]
+  );
+
+  const fechaAncladaDiaCivil = useMemo(
+    () => obtenerFechaReferenciaDiaCivil(claveDiaEfectiva, zonaHorariaEfectiva, 12),
+    [claveDiaEfectiva, zonaHorariaEfectiva]
+  );
+
   const objetivosPlanificados = useMemo(
-    () => planificarObjetivosSesion(objetivos, latitud, longitud, fechaReferencia),
-    [objetivos, latitud, longitud, fechaReferencia]
+    () => planificarObjetivosSesion(objetivos, latitud, longitud, fechaAncladaDiaCivil),
+    [objetivos, latitud, longitud, fechaAncladaDiaCivil]
   );
 
   const idsEnSesion = useMemo<ReadonlySet<string>>(

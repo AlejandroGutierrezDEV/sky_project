@@ -388,9 +388,49 @@ export function obtenerEstrellasDeConstelacion<T extends EstrellaCatalogo>(
   });
 }
 
+interface Vector3D {
+  x: number;
+  y: number;
+  z: number;
+}
+
+function ecuatorialAVectorUnitario(raHoras: number, decGrados: number): Vector3D {
+  const raRad = (raHoras * 15 * Math.PI) / 180;
+  const decRad = (decGrados * Math.PI) / 180;
+  const cosDec = Math.cos(decRad);
+  return {
+    x: cosDec * Math.cos(raRad),
+    y: cosDec * Math.sin(raRad),
+    z: Math.sin(decRad),
+  };
+}
+
+function productoEscalar(a: Vector3D, b: Vector3D): number {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+function productoVectorial(a: Vector3D, b: Vector3D): Vector3D {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  };
+}
+
+function normalizarVector(v: Vector3D): Vector3D {
+  const norma = Math.hypot(v.x, v.y, v.z);
+  if (norma < 1e-12) return { x: 1, y: 0, z: 0 };
+  return {
+    x: v.x / norma,
+    y: v.y / norma,
+    z: v.z / norma,
+  };
+}
+
 /**
  * Construye puntos normalizados [0..1] y aristas para renderizar el diagrama
- * geométricamente fiel de cualquier constelación IAU en CelestialPreview.
+ * geométricamente fiel de cualquier constelación IAU en CelestialPreview,
+ * utilizando proyección tangente estereográfica 3D para evitar distorsiones polares.
  */
 function construirDiagramaConstelacion(constelacion: ConstelacionIAU): {
   diagramPoints: ReadonlyArray<{ x: number; y: number; magnitude?: number }>;
@@ -435,29 +475,55 @@ function construirDiagramaConstelacion(constelacion: ConstelacionIAU): {
     return { diagramPoints: [], diagramEdges: [] };
   }
 
-  // Media circular de AR para evitar saltos en el meridiano 0h/24h
-  let sinSum = 0;
-  let cosSum = 0;
-  let decSum = 0;
-  for (const v of verticesRaw) {
-    const rad = (v.ra / 24) * Math.PI * 2;
-    sinSum += Math.sin(rad);
-    cosSum += Math.cos(rad);
-    decSum += v.dec;
-  }
-  const raMediaRad = Math.atan2(sinSum, cosSum);
-  const raMediaHoras = (((raMediaRad / (Math.PI * 2)) * 24) % 24 + 24) % 24;
-  const decMediaGrados = decSum / verticesRaw.length;
-  const cosDec = Math.max(0.18, Math.cos((decMediaGrados * Math.PI) / 180));
+  // 1. Convertir vértices (AR, Dec) a vectores unitarios 3D en la esfera celeste
+  const vertices3D = verticesRaw.map((v) => ({
+    vec: ecuatorialAVectorUnitario(v.ra, v.dec),
+    magnitude: v.magnitude,
+  }));
 
-  const proyectados = verticesRaw.map((v) => {
-    let deltaRa = v.ra - raMediaHoras;
-    if (deltaRa > 12) deltaRa -= 24;
-    if (deltaRa < -12) deltaRa += 24;
+  // 2. Calcular centroide normalizado c de la constelación
+  let sumaX = 0;
+  let sumaY = 0;
+  let sumaZ = 0;
+  for (const v of vertices3D) {
+    sumaX += v.vec.x;
+    sumaY += v.vec.y;
+    sumaZ += v.vec.z;
+  }
+  const normaSuma = Math.hypot(sumaX, sumaY, sumaZ);
+  const centroide: Vector3D =
+    normaSuma > 1e-9
+      ? { x: sumaX / normaSuma, y: sumaY / normaSuma, z: sumaZ / normaSuma }
+      : vertices3D[0].vec;
+
+  // 3. Base ortonormal local (ejeU, ejeV) en el plano tangente con ejeV hacia el Norte celeste
+  const norteCeleste: Vector3D = { x: 0, y: 0, z: 1 };
+  const proyNorteSobreCentro = productoEscalar(norteCeleste, centroide);
+  let norteTangente: Vector3D = {
+    x: norteCeleste.x - proyNorteSobreCentro * centroide.x,
+    y: norteCeleste.y - proyNorteSobreCentro * centroide.y,
+    z: norteCeleste.z - proyNorteSobreCentro * centroide.z,
+  };
+  if (Math.hypot(norteTangente.x, norteTangente.y, norteTangente.z) < 1e-6) {
+    const referencia: Vector3D = { x: 1, y: 0, z: 0 };
+    const proyRef = productoEscalar(referencia, centroide);
+    norteTangente = {
+      x: referencia.x - proyRef * centroide.x,
+      y: referencia.y - proyRef * centroide.y,
+      z: referencia.z - proyRef * centroide.z,
+    };
+  }
+  const ejeV = normalizarVector(norteTangente);
+  // c × v apunta al Oeste celeste (+X derecha en SVG -> Este a la izquierda como en el cielo real)
+  const ejeU = normalizarVector(productoVectorial(centroide, ejeV));
+
+  // 4. Proyección estereográfica conforme sobre el plano tangente (ejeU, ejeV)
+  const proyectados = vertices3D.map((v) => {
+    const cosAngulo = productoEscalar(v.vec, centroide);
+    const factorEstereografico = 2 / Math.max(0.15, 1 + cosAngulo);
     return {
-      // Invertimos AR para que el Este quede a la izquierda como en el cielo real
-      x: -deltaRa * 15 * cosDec,
-      y: -v.dec,
+      x: productoEscalar(v.vec, ejeU) * factorEstereografico,
+      y: -productoEscalar(v.vec, ejeV) * factorEstereografico,
       magnitude: v.magnitude,
     };
   });
@@ -637,98 +703,92 @@ const DESCRIPCIONES_CONSTELACIONES: Readonly<
   },
 };
 
-function construirFichasConstelaciones(): Record<string, CelestialTechnicalSheet> {
-  const mapa: Record<string, CelestialTechnicalSheet> = {};
+function construirFichaConstelacion(constelacion: ConstelacionIAU): CelestialTechnicalSheet {
+  const { diagramPoints, diagramEdges } = construirDiagramaConstelacion(constelacion);
+  const estrellasAsociadas = obtenerEstrellasDeConstelacion(
+    constelacion.codigo,
+    CATALOGO_ESTRELLAS
+  ).sort((a, b) => a.magnitud - b.magnitud);
+  const messierAsociados = CATALOGO_MESSIER.filter(
+    (m) => m.constelacionIAU === constelacion.codigo
+  ).sort((a, b) => a.magnitud - b.magnitud);
 
-  for (const constelacion of CONSTELACIONES_IAU) {
-    const { diagramPoints, diagramEdges } = construirDiagramaConstelacion(constelacion);
-    const estrellasAsociadas = obtenerEstrellasDeConstelacion(
-      constelacion.codigo,
-      CATALOGO_ESTRELLAS
-    ).sort((a, b) => a.magnitud - b.magnitud);
-    const messierAsociados = CATALOGO_MESSIER.filter(
-      (m) => m.constelacionIAU === constelacion.codigo
-    ).sort((a, b) => a.magnitud - b.magnitud);
+  const estrellaPrincipal = estrellasAsociadas[0];
+  const estrellaPrincipalTexto = estrellaPrincipal
+    ? `${estrellaPrincipal.nombre ?? estrellaPrincipal.id} (mag ${estrellaPrincipal.magnitud.toFixed(1)})`
+    : 'Estrellas de campo';
 
-    const estrellaPrincipal = estrellasAsociadas[0];
-    const estrellaPrincipalTexto = estrellaPrincipal
-      ? `${estrellaPrincipal.nombre ?? estrellaPrincipal.id} (mag ${estrellaPrincipal.magnitud.toFixed(1)})`
-      : 'Estrellas de campo';
+  const curada = DESCRIPCIONES_CONSTELACIONES[constelacion.codigo];
+  const resumenMessier =
+    messierAsociados.length > 0
+      ? ` Contiene ${messierAsociados.length} ${
+          messierAsociados.length === 1 ? 'objeto' : 'objetos'
+        } del catálogo Messier (${messierAsociados
+          .slice(0, 3)
+          .map((m) => m.id)
+          .join(', ')}${messierAsociados.length > 3 ? '…' : ''}).`
+      : '';
 
-    const curada = DESCRIPCIONES_CONSTELACIONES[constelacion.codigo];
-    const resumenMessier =
-      messierAsociados.length > 0
-        ? ` Contiene ${messierAsociados.length} ${
-            messierAsociados.length === 1 ? 'objeto' : 'objetos'
-          } del catálogo Messier (${messierAsociados
-            .slice(0, 3)
-            .map((m) => m.id)
-            .join(', ')}${messierAsociados.length > 3 ? '…' : ''}).`
-        : '';
+  const descripcion =
+    curada?.descripcion ??
+    `${constelacion.nombreEs} (${constelacion.nombreLatin}, código IAU ${constelacion.codigo}) es una de las 88 constelaciones oficiales de la Unión Astronómica Internacional, destacada durante la temporada de ${ETIQUETA_ESTACION[constelacion.estacion].toLowerCase()}. Su asterismo principal está encabezado por ${estrellaPrincipalTexto}.${resumenMessier}`;
 
-    const descripcion =
-      curada?.descripcion ??
-      `${constelacion.nombreEs} (${constelacion.nombreLatin}, código IAU ${constelacion.codigo}) es una de las 88 constelaciones oficiales de la Unión Astronómica Internacional, destacada durante la temporada de ${ETIQUETA_ESTACION[constelacion.estacion].toLowerCase()}. Su asterismo principal está encabezado por ${estrellaPrincipalTexto}.${resumenMessier}`;
+  const metrics: CelestialMetric[] = [
+    { label: 'Código IAU', value: constelacion.codigo },
+    { label: 'Nombre latino', value: constelacion.nombreLatin },
+    { label: 'Mejor época', value: ETIQUETA_ESTACION[constelacion.estacion] },
+    { label: 'Estrella principal', value: estrellaPrincipalTexto },
+    {
+      label: 'Estrellas mag ≤ 4',
+      value: String(estrellasAsociadas.length),
+      unit: 'en catálogo',
+    },
+    {
+      label: 'Objetos Messier',
+      value:
+        messierAsociados.length > 0
+          ? `${messierAsociados.length} (${messierAsociados
+              .slice(0, 2)
+              .map((m) => m.id)
+              .join(', ')})`
+          : '0',
+    },
+  ];
 
-    const metrics: CelestialMetric[] = [
-      { label: 'Código IAU', value: constelacion.codigo },
-      { label: 'Nombre latino', value: constelacion.nombreLatin },
-      { label: 'Mejor época', value: ETIQUETA_ESTACION[constelacion.estacion] },
-      { label: 'Estrella principal', value: estrellaPrincipalTexto },
-      {
-        label: 'Estrellas mag ≤ 4',
-        value: String(estrellasAsociadas.length),
-        unit: 'en catálogo',
-      },
-      {
-        label: 'Objetos Messier',
-        value:
-          messierAsociados.length > 0
-            ? `${messierAsociados.length} (${messierAsociados
-                .slice(0, 2)
-                .map((m) => m.id)
-                .join(', ')})`
-            : '0',
-      },
-    ];
-
-    const observationTips: string[] = [
-      `Identifica primero su estrella más brillante (${estrellaPrincipalTexto}) y traza el asterismo siguiendo las líneas del diagrama.`,
-      `Su mejor ventana de observación corresponde a ${ETIQUETA_ESTACION[constelacion.estacion].toLowerCase()}, cuando culmina más alta y lejos de la bruma del horizonte.`,
-    ];
-    if (curada?.consejoExtra) {
-      observationTips.push(curada.consejoExtra);
-    } else if (messierAsociados.length > 0) {
-      const top = messierAsociados[0];
-      observationTips.push(
-        `Aprovecha la visita para buscar ${top.id}${top.nombreComun ? ` (${top.nombreComun})` : ''}, observable con ${ETIQUETA_INSTRUMENTO[top.instrumentoMinimo].toLowerCase()}.`
-      );
-    } else {
-      observationTips.push(
-        'Adapta tus ojos a la oscuridad durante al menos 15 minutos o activa el modo Filtro Rojo para distinguir sus estrellas más débiles.'
-      );
-    }
-
-    mapa[constelacion.codigo] = {
-      id: constelacion.codigo,
-      name: constelacion.nombreEs,
-      category: 'constellation',
-      subtitle: `Constelación IAU · ${constelacion.nombreLatin} (${constelacion.codigo})`,
-      description: descripcion,
-      metrics,
-      observationTips,
-      visual: {
-        kind: 'constellation_diagram',
-        primaryColor: '#38bdf8',
-        secondaryColor: '#fde68a',
-        diagramPoints,
-        diagramEdges,
-        altText: `Diagrama estelar del asterismo oficial de la constelación ${constelacion.nombreEs} (${constelacion.codigo})`,
-      },
-    };
+  const observationTips: string[] = [
+    `Identifica primero su estrella más brillante (${estrellaPrincipalTexto}) y traza el asterismo siguiendo las líneas del diagrama.`,
+    `Su mejor ventana de observación corresponde a ${ETIQUETA_ESTACION[constelacion.estacion].toLowerCase()}, cuando culmina más alta y lejos de la bruma del horizonte.`,
+  ];
+  if (curada?.consejoExtra) {
+    observationTips.push(curada.consejoExtra);
+  } else if (messierAsociados.length > 0) {
+    const top = messierAsociados[0];
+    observationTips.push(
+      `Aprovecha la visita para buscar ${top.id}${top.nombreComun ? ` (${top.nombreComun})` : ''}, observable con ${ETIQUETA_INSTRUMENTO[top.instrumentoMinimo].toLowerCase()}.`
+    );
+  } else {
+    observationTips.push(
+      'Adapta tus ojos a la oscuridad durante al menos 15 minutos o activa el modo Filtro Rojo para distinguir sus estrellas más débiles.'
+    );
   }
 
-  return mapa;
+  return {
+    id: constelacion.codigo,
+    name: constelacion.nombreEs,
+    category: 'constellation',
+    subtitle: `Constelación IAU · ${constelacion.nombreLatin} (${constelacion.codigo})`,
+    description: descripcion,
+    metrics,
+    observationTips,
+    visual: {
+      kind: 'constellation_diagram',
+      primaryColor: '#38bdf8',
+      secondaryColor: '#fde68a',
+      diagramPoints,
+      diagramEdges,
+      altText: `Diagrama estelar del asterismo oficial de la constelación ${constelacion.nombreEs} (${constelacion.codigo})`,
+    },
+  };
 }
 
 /* ── Fichas curadas y derivadas de los 110 objetos Messier ────────── */
@@ -907,71 +967,65 @@ function obtenerVisualMessier(obj: ObjetoMessier): {
   };
 }
 
-function construirFichasMessier(): Record<string, CelestialTechnicalSheet> {
-  const mapa: Record<string, CelestialTechnicalSheet> = {};
+function construirFichaMessier(obj: ObjetoMessier): CelestialTechnicalSheet {
+  const nombreConstelacion = obtenerNombreConstelacionIAU(obj.constelacionIAU);
+  const visualBase = obtenerVisualMessier(obj);
+  const curada = DESCRIPCIONES_MESSIER[obj.id];
+  const titulo = obj.nombreComun ? `${obj.id} · ${obj.nombreComun}` : `${obj.id} (${obj.nombreNGC})`;
 
-  for (const obj of CATALOGO_MESSIER) {
-    const nombreConstelacion = obtenerNombreConstelacionIAU(obj.constelacionIAU);
-    const visualBase = obtenerVisualMessier(obj);
-    const curada = DESCRIPCIONES_MESSIER[obj.id];
-    const titulo = obj.nombreComun ? `${obj.id} · ${obj.nombreComun}` : `${obj.id} (${obj.nombreNGC})`;
+  const descripcion =
+    curada?.descripcion ??
+    `${titulo} es un objeto de cielo profundo clasificado como ${ETIQUETA_TIPO_MESSIER[obj.tipo].toLowerCase()} en la constelación de ${nombreConstelacion}, catalogado también como ${obj.nombreNGC}. Presenta una magnitud aparente de ${obj.magnitud.toFixed(1)} y una extensión angular de ${obj.tamanoArcmin} minutos de arco.`;
 
-    const descripcion =
-      curada?.descripcion ??
-      `${titulo} es un objeto de cielo profundo clasificado como ${ETIQUETA_TIPO_MESSIER[obj.tipo].toLowerCase()} en la constelación de ${nombreConstelacion}, catalogado también como ${obj.nombreNGC}. Presenta una magnitud aparente de ${obj.magnitud.toFixed(1)} y una extensión angular de ${obj.tamanoArcmin} minutos de arco.`;
+  const metrics: CelestialMetric[] = [
+    { label: 'Designación', value: `${obj.id} / ${obj.nombreNGC}` },
+    { label: 'Tipo', value: ETIQUETA_TIPO_MESSIER[obj.tipo] },
+    { label: 'Magnitud aparente', value: obj.magnitud.toFixed(1), unit: 'mag' },
+    { label: 'Tamaño angular', value: obj.tamanoArcmin, unit: 'arcmin' },
+    { label: 'Constelación', value: `${nombreConstelacion} (${obj.constelacionIAU})` },
+    { label: 'Instrumento mín.', value: ETIQUETA_INSTRUMENTO[obj.instrumentoMinimo] },
+  ];
 
-    const metrics: CelestialMetric[] = [
-      { label: 'Designación', value: `${obj.id} / ${obj.nombreNGC}` },
-      { label: 'Tipo', value: ETIQUETA_TIPO_MESSIER[obj.tipo] },
-      { label: 'Magnitud aparente', value: obj.magnitud.toFixed(1), unit: 'mag' },
-      { label: 'Tamaño angular', value: obj.tamanoArcmin, unit: 'arcmin' },
-      { label: 'Constelación', value: `${nombreConstelacion} (${obj.constelacionIAU})` },
-      { label: 'Instrumento mín.', value: ETIQUETA_INSTRUMENTO[obj.instrumentoMinimo] },
-    ];
-
-    if (curada?.distancia) {
-      metrics[0] = { label: 'Distancia estimada', value: curada.distancia };
-    }
-
-    const observationTips: string[] = [
-      `Instrumento mínimo recomendado: ${ETIQUETA_INSTRUMENTO[obj.instrumentoMinimo].toLowerCase()}, preferiblemente lejos de focos de luz urbana.`,
-      `Coordenadas J2000 de referencia: AR ${formatearRA(obj.raHoras)} · Dec ${formatearDec(obj.decGrados)} en ${nombreConstelacion}.`,
-    ];
-
-    if (curada?.consejoExtra) {
-      observationTips.push(curada.consejoExtra);
-    } else if (obj.tipo === 'Galaxia') {
-      observationTips.push(
-        'Utiliza visión periférica (mirando ligeramente a un lado del centro) y evita noches con Luna brillante para percibir el halo galáctico.'
-      );
-    } else if (obj.tipo === 'Nebulosa' || obj.tipo === 'RemanenteSupernova') {
-      observationTips.push(
-        'Un filtro interferencial UHC u OIII en telescopio ayuda a realzar el contraste de la nebulosidad frente al fondo del cielo.'
-      );
-    } else {
-      observationTips.push(
-        'Empieza con aumentos bajos para centrar el cúmulo en su campo estelar y sube progresivamente para resolver las estrellas más compactas.'
-      );
-    }
-
-    mapa[obj.id] = {
-      id: obj.id,
-      name: titulo,
-      category: visualBase.category,
-      subtitle: `${ETIQUETA_TIPO_MESSIER[obj.tipo]} · ${obj.nombreNGC} · ${nombreConstelacion}`,
-      description: descripcion,
-      metrics,
-      observationTips,
-      visual: {
-        kind: visualBase.kind,
-        primaryColor: visualBase.primaryColor,
-        secondaryColor: visualBase.secondaryColor,
-        altText: `Visualización estilizada de ${titulo}, ${ETIQUETA_TIPO_MESSIER[obj.tipo].toLowerCase()} en ${nombreConstelacion}`,
-      },
-    };
+  if (curada?.distancia) {
+    metrics.splice(1, 0, { label: 'Distancia estimada', value: curada.distancia });
   }
 
-  return mapa;
+  const observationTips: string[] = [
+    `Instrumento mínimo recomendado: ${ETIQUETA_INSTRUMENTO[obj.instrumentoMinimo].toLowerCase()}, preferiblemente lejos de focos de luz urbana.`,
+    `Coordenadas J2000 de referencia: AR ${formatearRA(obj.raHoras)} · Dec ${formatearDec(obj.decGrados)} en ${nombreConstelacion}.`,
+  ];
+
+  if (curada?.consejoExtra) {
+    observationTips.push(curada.consejoExtra);
+  } else if (obj.tipo === 'Galaxia') {
+    observationTips.push(
+      'Utiliza visión periférica (mirando ligeramente a un lado del centro) y evita noches con Luna brillante para percibir el halo galáctico.'
+    );
+  } else if (obj.tipo === 'Nebulosa' || obj.tipo === 'RemanenteSupernova') {
+    observationTips.push(
+      'Un filtro interferencial UHC u OIII en telescopio ayuda a realzar el contraste de la nebulosidad frente al fondo del cielo.'
+    );
+  } else {
+    observationTips.push(
+      'Empieza con aumentos bajos para centrar el cúmulo en su campo estelar y sube progresivamente para resolver las estrellas más compactas.'
+    );
+  }
+
+  return {
+    id: obj.id,
+    name: titulo,
+    category: visualBase.category,
+    subtitle: `${ETIQUETA_TIPO_MESSIER[obj.tipo]} · ${obj.nombreNGC} · ${nombreConstelacion}`,
+    description: descripcion,
+    metrics,
+    observationTips,
+    visual: {
+      kind: visualBase.kind,
+      primaryColor: visualBase.primaryColor,
+      secondaryColor: visualBase.secondaryColor,
+      altText: `Visualización estilizada de ${titulo}, ${ETIQUETA_TIPO_MESSIER[obj.tipo].toLowerCase()} en ${nombreConstelacion}`,
+    },
+  };
 }
 
 /* ── Fichas curadas y derivadas de estrellas con nombre propio ────── */
@@ -1107,76 +1161,223 @@ function obtenerCodigoConstelacionEstrella(idEstrella: string): string | null {
   return sufijo.length === 3 ? sufijo : null;
 }
 
-function construirFichasEstrellas(): Record<string, CelestialTechnicalSheet> {
-  const mapa: Record<string, CelestialTechnicalSheet> = {};
+function construirFichaEstrella(estrella: EstrellaCatalogo): CelestialTechnicalSheet | undefined {
+  // Las estrellas sin nombre propio quedan sin ficha enriquecida para validar el estado fallback/empty con efemérides en vivo
+  if (!estrella.nombre) return undefined;
 
-  for (const estrella of CATALOGO_ESTRELLAS) {
-    // Las estrellas sin nombre propio quedan sin ficha enriquecida para validar el estado fallback/empty con efemérides en vivo
-    if (!estrella.nombre) continue;
+  const codigoConst = obtenerCodigoConstelacionEstrella(estrella.id);
+  const nombreConst = codigoConst ? obtenerNombreConstelacionIAU(codigoConst) : 'Bóveda celeste';
+  const espectroInfo = estimarClaseEspectral(estrella.indiceColorBV);
+  const curada = ESTRELLAS_CURADAS[estrella.id];
 
-    const codigoConst = obtenerCodigoConstelacionEstrella(estrella.id);
-    const nombreConst = codigoConst ? obtenerNombreConstelacionIAU(codigoConst) : 'Bóveda celeste';
-    const espectroInfo = estimarClaseEspectral(estrella.indiceColorBV);
-    const curada = ESTRELLAS_CURADAS[estrella.id];
+  const descripcion =
+    curada?.descripcion ??
+    `${estrella.nombre} (${estrella.id}) es una estrella destacada de la constelación de ${nombreConst} con magnitud aparente ${estrella.magnitud.toFixed(2)}. Su índice de color B−V indica un tono ${espectroInfo.descripcionColor} correspondiente a una estrella de ${espectroInfo.clase.toLowerCase()}.`;
 
-    const descripcion =
-      curada?.descripcion ??
-      `${estrella.nombre} (${estrella.id}) es una estrella destacada de la constelación de ${nombreConst} con magnitud aparente ${estrella.magnitud.toFixed(2)}. Su índice de color B−V indica un tono ${espectroInfo.descripcionColor} correspondiente a una estrella de ${espectroInfo.clase.toLowerCase()}.`;
+  const metrics: CelestialMetric[] = [
+    { label: 'Designación', value: estrella.id },
+    { label: 'Magnitud aparente', value: estrella.magnitud.toFixed(2), unit: 'mag' },
+    { label: 'Constelación', value: codigoConst ? `${nombreConst} (${codigoConst})` : nombreConst },
+    {
+      label: 'Tipo espectral',
+      value: curada?.espectro ?? espectroInfo.clase,
+    },
+    {
+      label: curada?.distancia ? 'Distancia' : 'Temp. estimada',
+      value: curada?.distancia ?? espectroInfo.temperatura,
+    },
+    {
+      label: 'Coordenadas J2000',
+      value: `${formatearRA(estrella.raHoras)} / ${formatearDec(estrella.decGrados)}`,
+    },
+  ];
 
-    const metrics: CelestialMetric[] = [
-      { label: 'Designación', value: estrella.id },
-      { label: 'Magnitud aparente', value: estrella.magnitud.toFixed(2), unit: 'mag' },
-      { label: 'Constelación', value: codigoConst ? `${nombreConst} (${codigoConst})` : nombreConst },
-      {
-        label: 'Tipo espectral',
-        value: curada?.espectro ?? espectroInfo.clase,
-      },
-      {
-        label: curada?.distancia ? 'Distancia' : 'Temp. estimada',
-        value: curada?.distancia ?? espectroInfo.temperatura,
-      },
-      {
-        label: 'Coordenadas J2000',
-        value: `${formatearRA(estrella.raHoras)} / ${formatearDec(estrella.decGrados)}`,
-      },
-    ];
+  const observationTips: string[] = [
+    `Visible a simple vista incluso desde entornos con contaminación lumínica moderada (mag ${estrella.magnitud.toFixed(1)}).`,
+    `Fíjate en su matiz ${espectroInfo.descripcionColor}; desenfocar muy ligeramente el ocular de unos prismáticos o telescopio acentúa el color real de la estrella.`,
+    `Sirve como estrella guía de salto estelar para orientarte dentro de ${nombreConst}.`,
+  ];
 
-    const observationTips: string[] = [
-      `Visible a simple vista incluso desde entornos con contaminación lumínica moderada (mag ${estrella.magnitud.toFixed(1)}).`,
-      `Fíjate en su matiz ${espectroInfo.descripcionColor}; desenfocar muy ligeramente el ocular de unos prismáticos o telescopio acentúa el color real de la estrella.`,
-      `Sirve como estrella guía de salto estelar para orientarte dentro de ${nombreConst}.`,
-    ];
+  return {
+    id: estrella.id,
+    name: estrella.nombre,
+    category: 'star',
+    subtitle: `Estrella (${estrella.id}) · ${nombreConst}`,
+    description: descripcion,
+    metrics,
+    observationTips,
+    visual: {
+      kind: 'star_render',
+      primaryColor: espectroInfo.colorPrimario,
+      secondaryColor: espectroInfo.colorSecundario,
+      altText: `Representación luminosa de la estrella ${estrella.nombre} (${estrella.id}) de color ${espectroInfo.descripcionColor}`,
+    },
+  };
+}
 
-    mapa[estrella.id] = {
-      id: estrella.id,
-      name: estrella.nombre,
-      category: 'star',
-      subtitle: `Estrella (${estrella.id}) · ${nombreConst}`,
-      description: descripcion,
-      metrics,
-      observationTips,
-      visual: {
-        kind: 'star_render',
-        primaryColor: espectroInfo.colorPrimario,
-        secondaryColor: espectroInfo.colorSecundario,
-        altText: `Representación luminosa de la estrella ${estrella.nombre} (${estrella.id}) de color ${espectroInfo.descripcionColor}`,
-      },
+/* ── Caché perezosa bajo demanda e índices diferidos ──────────────── */
+
+const cacheFichasTecnicas = new Map<string, CelestialTechnicalSheet>();
+
+let indiceConstelaciones: Map<string, ConstelacionIAU> | null = null;
+let indiceMessier: Map<string, ObjetoMessier> | null = null;
+let indiceEstrellasConNombre: Map<string, EstrellaCatalogo> | null = null;
+
+function obtenerIndiceConstelaciones(): Map<string, ConstelacionIAU> {
+  if (!indiceConstelaciones) {
+    indiceConstelaciones = new Map(CONSTELACIONES_IAU.map((c) => [c.codigo, c]));
+  }
+  return indiceConstelaciones;
+}
+
+function obtenerIndiceMessier(): Map<string, ObjetoMessier> {
+  if (!indiceMessier) {
+    indiceMessier = new Map(CATALOGO_MESSIER.map((m) => [m.id, m]));
+  }
+  return indiceMessier;
+}
+
+function obtenerIndiceEstrellasConNombre(): Map<string, EstrellaCatalogo> {
+  if (!indiceEstrellasConNombre) {
+    indiceEstrellasConNombre = new Map(
+      CATALOGO_ESTRELLAS.filter((e) => Boolean(e.nombre)).map((e) => [e.id, e])
+    );
+  }
+  return indiceEstrellasConNombre;
+}
+
+function resolverEntradaCatalogo(id: string):
+  | { tipo: 'sistema_solar'; claveCanon: string; ficha: CelestialTechnicalSheet }
+  | { tipo: 'constelacion'; claveCanon: string; dato: ConstelacionIAU }
+  | { tipo: 'messier'; claveCanon: string; dato: ObjetoMessier }
+  | { tipo: 'estrella'; claveCanon: string; dato: EstrellaCatalogo }
+  | null {
+  const limpio = id.trim();
+  if (limpio.length === 0) return null;
+
+  if (limpio.startsWith('constelacion:')) {
+    const codigo = limpio.slice('constelacion:'.length).trim().toUpperCase();
+    const dato = obtenerIndiceConstelaciones().get(codigo);
+    return dato ? { tipo: 'constelacion', claveCanon: dato.codigo, dato } : null;
+  }
+
+  if (limpio.startsWith('messier:')) {
+    const codigo = limpio.slice('messier:'.length).trim().toUpperCase();
+    const dato = obtenerIndiceMessier().get(codigo);
+    return dato ? { tipo: 'messier', claveCanon: dato.id, dato } : null;
+  }
+
+  if (limpio.startsWith('estrella:')) {
+    const idEstrella = limpio.slice('estrella:'.length).trim();
+    const dato = obtenerIndiceEstrellasConNombre().get(idEstrella);
+    return dato ? { tipo: 'estrella', claveCanon: dato.id, dato } : null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(FICHAS_SISTEMA_SOLAR, limpio)) {
+    return {
+      tipo: 'sistema_solar',
+      claveCanon: limpio,
+      ficha: FICHAS_SISTEMA_SOLAR[limpio],
     };
   }
 
-  return mapa;
+  const constelacion = obtenerIndiceConstelaciones().get(limpio);
+  if (constelacion) {
+    return { tipo: 'constelacion', claveCanon: constelacion.codigo, dato: constelacion };
+  }
+
+  const messier = obtenerIndiceMessier().get(limpio);
+  if (messier) {
+    return { tipo: 'messier', claveCanon: messier.id, dato: messier };
+  }
+
+  const estrella = obtenerIndiceEstrellasConNombre().get(limpio);
+  if (estrella) {
+    return { tipo: 'estrella', claveCanon: estrella.id, dato: estrella };
+  }
+
+  return null;
+}
+
+function tieneFichaTecnica(id: string): boolean {
+  if (cacheFichasTecnicas.has(id)) return true;
+  return resolverEntradaCatalogo(id) !== null;
+}
+
+function listarIdsConFichaTecnica(): string[] {
+  return [
+    ...Object.keys(FICHAS_SISTEMA_SOLAR),
+    ...obtenerIndiceConstelaciones().keys(),
+    ...obtenerIndiceMessier().keys(),
+    ...obtenerIndiceEstrellasConNombre().keys(),
+  ];
 }
 
 /**
- * Mapa tipado de fichas técnicas completas indexado exactamente por los IDs
- * utilizados en el buscador, catálogos y renderizadores 2D/3D de SkyProject.
+ * Obtiene bajo demanda la ficha técnica de un cuerpo celeste (planeta, Luna,
+ * constelación IAU, objeto Messier o estrella con nombre propio) usando caché en memoria.
+ * Acepta tanto IDs canónicos (`UMI`, `M31`, `Alp UMi`) como prefijados (`constelacion:UMI`).
  */
-export const CELESTIAL_TECHNICAL_SHEETS: Readonly<Record<string, CelestialTechnicalSheet>> = {
-  ...FICHAS_SISTEMA_SOLAR,
-  ...construirFichasConstelaciones(),
-  ...construirFichasMessier(),
-  ...construirFichasEstrellas(),
-};
+export function obtenerFichaTecnica(id: string): CelestialTechnicalSheet | undefined {
+  if (typeof id !== 'string' || id.trim().length === 0) return undefined;
+
+  const enCacheDirecta = cacheFichasTecnicas.get(id);
+  if (enCacheDirecta) return enCacheDirecta;
+
+  const entrada = resolverEntradaCatalogo(id);
+  if (!entrada) return undefined;
+
+  const enCacheCanon = cacheFichasTecnicas.get(entrada.claveCanon);
+  if (enCacheCanon) return enCacheCanon;
+
+  let ficha: CelestialTechnicalSheet | undefined;
+  if (entrada.tipo === 'sistema_solar') {
+    ficha = entrada.ficha;
+  } else if (entrada.tipo === 'constelacion') {
+    ficha = construirFichaConstelacion(entrada.dato);
+  } else if (entrada.tipo === 'messier') {
+    ficha = construirFichaMessier(entrada.dato);
+  } else {
+    ficha = construirFichaEstrella(entrada.dato);
+  }
+
+  if (ficha) {
+    cacheFichasTecnicas.set(entrada.claveCanon, ficha);
+  }
+
+  return ficha;
+}
+
+/**
+ * Acceso retrocompatible respaldado por evaluación perezosa (`Proxy` + `cacheFichasTecnicas`).
+ * Garantiza cero cálculos trigonométricos al importar el módulo.
+ */
+export const CELESTIAL_TECHNICAL_SHEETS: Readonly<Record<string, CelestialTechnicalSheet>> =
+  new Proxy<Record<string, CelestialTechnicalSheet>>(
+    {},
+    {
+      get(_target, prop) {
+        if (typeof prop !== 'string') return undefined;
+        return obtenerFichaTecnica(prop);
+      },
+      has(_target, prop) {
+        if (typeof prop !== 'string') return false;
+        return tieneFichaTecnica(prop);
+      },
+      getOwnPropertyDescriptor(_target, prop) {
+        if (typeof prop !== 'string' || !tieneFichaTecnica(prop)) return undefined;
+        return {
+          configurable: true,
+          enumerable: true,
+          value: obtenerFichaTecnica(prop),
+          writable: false,
+        };
+      },
+      ownKeys() {
+        return listarIdsConFichaTecnica();
+      },
+    }
+  );
 
 /**
  * Conjunto completo de IDs válidos y seleccionables en el observatorio

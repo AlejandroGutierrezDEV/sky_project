@@ -81,12 +81,15 @@ import {
   formatearHoraEnZona,
   inferirZonaHorariaPorCoordenadas,
   normalizarZonaHoraria,
+  obtenerClaveDiaCivil,
+  obtenerFechaReferenciaDiaCivil,
 } from './utils/lunarCalculations';
 import type { LiveEphemerisSnapshot } from './types/celestialDetails';
 import type { WeatherAlertCoordinates } from './types/weatherAlerts';
 import type {
   AstroSeleccionado,
   CategoriaAstro,
+  ClaveDiaCivil,
   CondicionesMeteo,
   CuerpoCeleste,
   DatosLunares,
@@ -526,6 +529,21 @@ export function App() {
     return Number.isNaN(fecha.getTime()) ? new Date() : fecha;
   }, [fechaStr]);
 
+  const claveDiaCivil = useMemo<ClaveDiaCivil>(
+    () => obtenerClaveDiaCivil(fechaSeleccionada, coordinates.timezone),
+    [fechaSeleccionada, coordinates.timezone]
+  );
+
+  const fechaInicioDiaCivil = useMemo(
+    () => obtenerFechaReferenciaDiaCivil(claveDiaCivil, coordinates.timezone, 0),
+    [claveDiaCivil, coordinates.timezone]
+  );
+
+  const fechaMediodiaCivil = useMemo(
+    () => obtenerFechaReferenciaDiaCivil(claveDiaCivil, coordinates.timezone, 12),
+    [claveDiaCivil, coordinates.timezone]
+  );
+
   const claveHoraUTC = fechaSeleccionada.toISOString().slice(0, 13);
   const claveConsultaMeteo = `${claveHoraUTC}|${coordenadasEstables.latitud.toFixed(2)}|${coordenadasEstables.longitud.toFixed(2)}|${coordinates.timezone}`;
   const [estadoMeteo, setEstadoMeteo] = useState<{
@@ -649,7 +667,8 @@ export function App() {
     lastUpdated: destacadosActualizadosEn,
     refetch: recargarDestacados,
   } = useTodayHighlights(coordinates, lunarData, {
-    referenceDate: fechaSeleccionada,
+    referenceDate: fechaInicioDiaCivil,
+    claveDiaCivil,
     altitudeMeters: ubicacion.altitud,
     bortle: bortleActual,
     meteo: estadoMeteo.datos,
@@ -800,7 +819,9 @@ export function App() {
   } = usePlanificadorSesion({
     latitud: coordenadasEstables.latitud,
     longitud: coordenadasEstables.longitud,
-    fechaReferencia: fechaSeleccionada,
+    fechaReferencia: fechaMediodiaCivil,
+    timezone: coordinates.timezone,
+    claveDiaCivil,
   });
 
   const metadatosSesion = useMemo<MetadatosExportacionSesion>(
@@ -971,14 +992,21 @@ export function App() {
     [astroSeleccionado, fechaSeleccionada, coordenadasEstables]
   );
 
+  const idCuerpoSeleccionado =
+    astroSeleccionado?.categoria === 'cuerpo' ? astroSeleccionado.id : null;
+
   const transitoSeleccionado: EfemeridesTransito | null = useMemo(() => {
-    if (!astroSeleccionado || astroSeleccionado.categoria !== 'cuerpo') return null;
-    return calcularTransitoCuerpo(astroSeleccionado.id, fechaSeleccionada, coordenadasEstables);
-  }, [astroSeleccionado, fechaSeleccionada, coordenadasEstables]);
+    if (!idCuerpoSeleccionado) return null;
+    return calcularTransitoCuerpo(
+      idCuerpoSeleccionado,
+      fechaMediodiaCivil,
+      coordenadasEstables
+    );
+  }, [idCuerpoSeleccionado, fechaMediodiaCivil, coordenadasEstables]);
 
   const eventos = useMemo(
-    () => calcularProximosEventos(fechaSeleccionada, coordenadasEstables),
-    [fechaSeleccionada, coordenadasEstables]
+    () => calcularProximosEventos(fechaInicioDiaCivil, coordenadasEstables),
+    [fechaInicioDiaCivil, coordenadasEstables]
   );
 
   const objetivoBrujula = useMemo<ObjetivoBrujula | null>(() => {

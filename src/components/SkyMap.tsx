@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from 'react';
 import {
   Bookmark,
   BookmarkCheck,
@@ -1108,6 +1116,17 @@ export function SkyMap({
 
   const camaraRef = useRef<Camara3D>(CAMARA_INICIAL);
   const animacionCamaraRef = useRef<number>(0);
+  const rafArrastreRef = useRef<number>(0);
+  const deltaArrastrePendienteRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+  const estadoComposicionRef = useRef<{
+    astroSeleccionado: AstroSeleccionado | null;
+    tema: TemaVisual;
+    modoMapa: ModoMapa;
+  }>({
+    astroSeleccionado,
+    tema,
+    modoMapa,
+  });
   const datosAstrosRef = useRef({
     cuerpos,
     estrellas: listaEstrellasFoco,
@@ -1125,6 +1144,8 @@ export function SkyMap({
     ultimoY: number;
     movido: boolean;
   } | null>(null);
+
+  const hayAstroSeleccionado = astroSeleccionado !== null;
 
   useEffect(() => {
     camaraRef.current = camara;
@@ -1185,12 +1206,35 @@ export function SkyMap({
     return null;
   }, [focusedBodyId, cuerpos, listaConstelacionesFoco, listaMessierFoco, listaEstrellasFoco]);
 
-  const cancelarAnimacionCamara = () => {
+  const cancelarAnimacionCamara = useCallback(() => {
     if (animacionCamaraRef.current !== 0) {
       window.cancelAnimationFrame(animacionCamaraRef.current);
       animacionCamaraRef.current = 0;
     }
-  };
+  }, []);
+
+  const cancelarRafArrastre = useCallback(() => {
+    if (rafArrastreRef.current !== 0) {
+      window.cancelAnimationFrame(rafArrastreRef.current);
+      rafArrastreRef.current = 0;
+    }
+    deltaArrastrePendienteRef.current.dx = 0;
+    deltaArrastrePendienteRef.current.dy = 0;
+  }, []);
+
+  useEffect(() => {
+    if (modoMapa !== '3D') {
+      cancelarRafArrastre();
+      arrastreRef.current = null;
+    }
+  }, [modoMapa, cancelarRafArrastre]);
+
+  useEffect(() => {
+    return () => {
+      cancelarRafArrastre();
+      cancelarAnimacionCamara();
+    };
+  }, [cancelarRafArrastre, cancelarAnimacionCamara]);
 
   useEffect(() => {
     if (modoMapa !== '3D' || !astroSeleccionado) return;
@@ -1273,48 +1317,51 @@ export function SkyMap({
     };
   }, [astroSeleccionado, modoMapa, contadorFoco]);
 
-  const claveEscenaBase = useMemo(
-    () => ({
-      cuerpos,
-      estrellas,
-      messier,
-      constelaciones,
-      listaEstrellasFoco,
-      listaMessierFoco,
-      listaConstelacionesFoco,
-      tema,
-      modoMapa,
-      camara,
-      mostrarConstelaciones,
-      mostrarEstrellas,
-      mostrarMessier,
-      trayectoria,
-      magnitudLimiteVisible,
-      astroSeleccionado,
-      focusedBodyId,
-    }),
-    [
-      cuerpos,
-      estrellas,
-      messier,
-      constelaciones,
-      listaEstrellasFoco,
-      listaMessierFoco,
-      listaConstelacionesFoco,
-      tema,
-      modoMapa,
-      camara,
-      mostrarConstelaciones,
-      mostrarEstrellas,
-      mostrarMessier,
-      trayectoria,
-      magnitudLimiteVisible,
-      astroSeleccionado,
-      focusedBodyId,
-    ]
-  );
+  const componerCanvasVisible = useCallback((fasePulso: number) => {
+    const canvas = canvasRef.current;
+    const base = escenaBaseRef.current;
+    if (!canvas || !base) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-  // Effect 1: Renderizado de la escena celeste base en el canvas secundario
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const size = TAMANO_CANVAS;
+    const tamanoBuffer = Math.round(size * dpr);
+    if (canvas.width !== tamanoBuffer || canvas.height !== tamanoBuffer) {
+      canvas.width = tamanoBuffer;
+      canvas.height = tamanoBuffer;
+    }
+
+    const {
+      astroSeleccionado: astroActual,
+      tema: temaActual,
+      modoMapa: modoActual,
+    } = estadoComposicionRef.current;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, size, size);
+    ctx.drawImage(base.canvas, 0, 0, size, size);
+
+    if (astroActual) {
+      ctx.save();
+      if (modoActual === '2D') {
+        ctx.beginPath();
+        ctx.arc(size / 2, size / 2, size / 2 - 36, 0, Math.PI * 2);
+        ctx.clip();
+      }
+      dibujarReticulaSeleccion(
+        ctx,
+        astroActual,
+        puntosInteractivosRef.current,
+        temaActual,
+        obtenerPaletaCeleste(temaActual),
+        fasePulso
+      );
+      ctx.restore();
+    }
+  }, []);
+
+  // Effect 1: Renderizado de la escena celeste base en el canvas secundario y composición inmediata
   useEffect(() => {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const size = TAMANO_CANVAS;
@@ -1530,6 +1577,20 @@ export function SkyMap({
     ctxBase.restore();
     puntosInteractivosRef.current = interactivos;
     constelacionesInteractivasRef.current = constelacionesInteractivas;
+    estadoComposicionRef.current = {
+      astroSeleccionado,
+      tema,
+      modoMapa,
+    };
+
+    const prefiereMovimientoReducido =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const faseInicial =
+      astroSeleccionado && !prefiereMovimientoReducido
+        ? (Math.sin(performance.now() / 320) + 1) / 2
+        : 0.5;
+    componerCanvasVisible(faseInicial);
   }, [
     cuerpos,
     estrellas,
@@ -1548,68 +1609,23 @@ export function SkyMap({
     magnitudLimiteVisible,
     astroSeleccionado,
     focusedBodyId,
+    componerCanvasVisible,
   ]);
 
-  // Effect 2: Composición desde el canvas cacheado y animación de la retícula de selección
+  // Effect 2: Bucle independiente de animación de la retícula pulsante (sin reiniciar al mover cámara)
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const size = TAMANO_CANVAS;
-    const tamanoBuffer = Math.round(size * dpr);
-    if (canvas.width !== tamanoBuffer || canvas.height !== tamanoBuffer) {
-      canvas.width = tamanoBuffer;
-      canvas.height = tamanoBuffer;
-    }
-
-    const { tema: temaActual, modoMapa: modoActual } = claveEscenaBase;
-
-    const dibujarFrame = (fasePulso: number) => {
-      const base = escenaBaseRef.current;
-      if (!base) return;
-
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, size, size);
-      ctx.drawImage(base.canvas, 0, 0, size, size);
-
-      if (astroSeleccionado) {
-        ctx.save();
-        if (modoActual === '2D') {
-          ctx.beginPath();
-          ctx.arc(size / 2, size / 2, size / 2 - 36, 0, Math.PI * 2);
-          ctx.clip();
-        }
-        dibujarReticulaSeleccion(
-          ctx,
-          astroSeleccionado,
-          puntosInteractivosRef.current,
-          temaActual,
-          obtenerPaletaCeleste(temaActual),
-          fasePulso
-        );
-        ctx.restore();
-      }
-    };
-
     const prefiereMovimientoReducido =
       typeof window !== 'undefined' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    if (!astroSeleccionado || prefiereMovimientoReducido) {
-      dibujarFrame(0.5);
+    if (!hayAstroSeleccionado || prefiereMovimientoReducido) {
       return;
     }
-
-    // Dibujar inmediatamente para evitar frames en blanco al cambiar escena o tamaño
-    dibujarFrame((Math.sin(performance.now() / 320) + 1) / 2);
 
     let animacionId = 0;
     const animar = (tiempo: number) => {
       const fase = (Math.sin(tiempo / 320) + 1) / 2;
-      dibujarFrame(fase);
+      componerCanvasVisible(fase);
       animacionId = window.requestAnimationFrame(animar);
     };
     animacionId = window.requestAnimationFrame(animar);
@@ -1617,7 +1633,7 @@ export function SkyMap({
     return () => {
       window.cancelAnimationFrame(animacionId);
     };
-  }, [astroSeleccionado, claveEscenaBase]);
+  }, [hayAstroSeleccionado, componerCanvasVisible]);
 
   const buscarAstroEnPuntero = (e: PointerEvent<HTMLCanvasElement>): ObjetoHover | null => {
     const canvas = canvasRef.current;
@@ -1707,6 +1723,7 @@ export function SkyMap({
   const manejarPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
     if (modoMapa === '3D') {
       cancelarAnimacionCamara();
+      cancelarRafArrastre();
       e.currentTarget.setPointerCapture(e.pointerId);
       arrastreRef.current = {
         activo: true,
@@ -1733,10 +1750,27 @@ export function SkyMap({
       arrastre.ultimoX = e.clientX;
       arrastre.ultimoY = e.clientY;
 
-      setCamara((prev) => ({
-        rotAz: (prev.rotAz - dx * 0.45 + 360) % 360,
-        tilt: Math.max(12, Math.min(85, prev.tilt + dy * 0.35)),
-      }));
+      deltaArrastrePendienteRef.current.dx += dx;
+      deltaArrastrePendienteRef.current.dy += dy;
+
+      if (rafArrastreRef.current === 0) {
+        rafArrastreRef.current = window.requestAnimationFrame(() => {
+          rafArrastreRef.current = 0;
+          const { dx: dxAcum, dy: dyAcum } = deltaArrastrePendienteRef.current;
+          deltaArrastrePendienteRef.current.dx = 0;
+          deltaArrastrePendienteRef.current.dy = 0;
+          if (dxAcum === 0 && dyAcum === 0) return;
+
+          setCamara((prev) => {
+            const siguiente: Camara3D = {
+              rotAz: normalizarAcimut(prev.rotAz - dxAcum * 0.45),
+              tilt: Math.max(12, Math.min(85, prev.tilt + dyAcum * 0.35)),
+            };
+            camaraRef.current = siguiente;
+            return siguiente;
+          });
+        });
+      }
       return;
     }
 
@@ -1748,6 +1782,20 @@ export function SkyMap({
     const fueArrastre = Boolean(arrastre && arrastre.pointerId === e.pointerId && arrastre.movido);
 
     if (arrastre && arrastre.pointerId === e.pointerId) {
+      if (rafArrastreRef.current !== 0) {
+        const { dx: dxPendiente, dy: dyPendiente } = deltaArrastrePendienteRef.current;
+        cancelarRafArrastre();
+        if (dxPendiente !== 0 || dyPendiente !== 0) {
+          setCamara((prev) => {
+            const siguiente: Camara3D = {
+              rotAz: normalizarAcimut(prev.rotAz - dxPendiente * 0.45),
+              tilt: Math.max(12, Math.min(85, prev.tilt + dyPendiente * 0.35)),
+            };
+            camaraRef.current = siguiente;
+            return siguiente;
+          });
+        }
+      }
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
@@ -1784,6 +1832,7 @@ export function SkyMap({
   const manejarPointerCancel = (e: PointerEvent<HTMLCanvasElement>) => {
     const arrastre = arrastreRef.current;
     if (arrastre && arrastre.pointerId === e.pointerId) {
+      cancelarRafArrastre();
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
@@ -1797,22 +1846,27 @@ export function SkyMap({
     if (e.key === 'ArrowLeft') {
       e.preventDefault();
       cancelarAnimacionCamara();
+      cancelarRafArrastre();
       setCamara((prev) => ({ ...prev, rotAz: normalizarAcimut(prev.rotAz - 10) }));
     } else if (e.key === 'ArrowRight') {
       e.preventDefault();
       cancelarAnimacionCamara();
+      cancelarRafArrastre();
       setCamara((prev) => ({ ...prev, rotAz: normalizarAcimut(prev.rotAz + 10) }));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       cancelarAnimacionCamara();
+      cancelarRafArrastre();
       setCamara((prev) => ({ ...prev, tilt: Math.min(85, prev.tilt + 5) }));
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       cancelarAnimacionCamara();
+      cancelarRafArrastre();
       setCamara((prev) => ({ ...prev, tilt: Math.max(12, prev.tilt - 5) }));
     } else if (e.key === 'r' || e.key === 'R' || e.key === 'Home') {
       e.preventDefault();
       cancelarAnimacionCamara();
+      cancelarRafArrastre();
       setCamara(CAMARA_INICIAL);
     }
   };
@@ -1884,6 +1938,7 @@ export function SkyMap({
                 type="button"
                 onClick={() => {
                   cancelarAnimacionCamara();
+                  cancelarRafArrastre();
                   setCamara(CAMARA_INICIAL);
                 }}
                 className="min-h-10 sm:min-h-8 flex items-center gap-1 px-2.5 py-1 rounded-lg border border-current/25 hover:bg-current/10 cursor-pointer transition-colors"
