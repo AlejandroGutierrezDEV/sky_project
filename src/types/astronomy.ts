@@ -156,7 +156,7 @@ export type EstacionAstronomica =
 export interface EstrellaCatalogo {
   id: string; // Código Bayer/Flamsteed o HIP
   nombre?: string;
-  magnitud: number; // <= 4.0
+  magnitud: number; // Magnitud aparente visual real
   raHoras: number;
   decGrados: number;
   indiceColorBV?: number;
@@ -426,4 +426,5 @@ export interface MetadatosExportacionSesion {
   bortle: number;
   faseLunar: string;
   fecha: Date;
+  timezone: string;
 }

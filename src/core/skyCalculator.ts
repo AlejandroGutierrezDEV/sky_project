@@ -274,7 +274,12 @@ export function calcularConstelaciones(
     const centroAcimutGrados = (centroAzRad * 180) / Math.PI;
     const centroAcimut = Number((((centroAcimutGrados % 360) + 360) % 360).toFixed(1));
 
-    const visible = segmentos.some((s) => s.desde.altitud >= 0 && s.hasta.altitud >= 0);
+    const visible = segmentos.some(
+      (s) =>
+        s.desde.altitud > 0 ||
+        s.hasta.altitud > 0 ||
+        (s.desde.altitud >= 0 && s.hasta.altitud >= 0)
+    );
 
     return {
       codigo: constelacion.codigo,
@@ -289,13 +294,13 @@ export function calcularConstelaciones(
   });
 }
 
-function formatearHoraEtiqueta(fecha: Date, timezone?: string): string {
-  if (timezone) {
-    return formatearHoraEnZona(fecha, timezone);
-  }
-  const horas = String(fecha.getHours()).padStart(2, '0');
-  const minutos = String(fecha.getMinutes()).padStart(2, '0');
-  return `${horas}:${minutos}`;
+function formatearHoraEtiqueta(fecha: Date, ubicacion: Ubicacion): string {
+  const zonaHoraria = normalizarZonaHoraria(
+    ubicacion.timezone,
+    ubicacion.latitud,
+    ubicacion.longitud
+  );
+  return formatearHoraEnZona(fecha, zonaHoraria);
 }
 
 export function calcularTrayectoriaAstro(
@@ -330,7 +335,7 @@ export function calcularTrayectoriaAstro(
       puntos.push({
         altitud: Number(horizontal.altitude.toFixed(1)),
         acimut: Number(horizontal.azimuth.toFixed(1)),
-        horaEtiqueta: formatearHoraEtiqueta(fechaPaso, ubicacion.timezone),
+        horaEtiqueta: formatearHoraEtiqueta(fechaPaso, ubicacion),
       });
     }
     return puntos;
@@ -361,7 +366,7 @@ export function calcularTrayectoriaAstro(
     puntos.push({
       altitud: Number(horizontal.altitude.toFixed(1)),
       acimut: Number(horizontal.azimuth.toFixed(1)),
-      horaEtiqueta: formatearHoraEtiqueta(fechaPaso, ubicacion.timezone),
+      horaEtiqueta: formatearHoraEtiqueta(fechaPaso, ubicacion),
     });
   }
 
@@ -446,8 +451,11 @@ export function calcularTransitoCuerpo(
       inicioDiaUTC,
       1
     );
-    culminacion = eventoCulminacion.time.date;
-    alturaMaxima = Number(eventoCulminacion.hor.altitude.toFixed(1));
+    const ms = eventoCulminacion.time.date.getTime();
+    if (ms >= inicioMs && ms < finMs) {
+      culminacion = eventoCulminacion.time.date;
+      alturaMaxima = Number(eventoCulminacion.hor.altitude.toFixed(1));
+    }
   } catch {
     // Mantiene culminación en null si no es resoluble
   }

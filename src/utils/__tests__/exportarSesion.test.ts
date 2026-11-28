@@ -16,6 +16,7 @@ const METADATOS: MetadatosExportacionSesion = {
   bortle: 2,
   faseLunar: 'Luna Nueva',
   fecha: new Date('2026-10-15T12:00:00Z'),
+  timezone: 'Atlantic/Canary',
 };
 
 const OBJETIVOS_EJEMPLO: ObjetivoPlanificado[] = [
@@ -79,6 +80,33 @@ describe('Exportación de sesión nocturna (exportarSesion.ts)', () => {
     expect(md).toContain('No visible desde esta latitud');
     // Verifica que el pipe y el salto de línea en notas quedan escapados para no romper la tabla
     expect(md).toContain('Núcleo brillante \\| Filtro UHC Muy nítida');
+  });
+
+  it('exporta fechas y horas de culminación en la zona horaria IANA del observatorio (Tokio vs Canarias)', () => {
+    const fechaTardeUTC = new Date('2026-10-15T20:00:00Z');
+    const metadatosTokio: MetadatosExportacionSesion = {
+      ...METADATOS,
+      ubicacionNombre: 'Tokio',
+      fecha: fechaTardeUTC,
+      timezone: 'Asia/Tokyo',
+    };
+
+    const mdTokio = generarMarkdownSesion(OBJETIVOS_EJEMPLO, metadatosTokio, 'Asia/Tokyo');
+    // 2026-10-15T20:00:00Z ya es 16 de octubre en Asia/Tokyo (UTC+9)
+    expect(mdTokio).toContain('16 de octubre de 2026');
+    // 2026-10-16T00:42:00Z son las 09:42 en Asia/Tokyo
+    expect(mdTokio).toContain('09:42 (Alt. máx 78°)');
+    expect(mdTokio).toContain('Asia/Tokyo');
+
+    const mdCanarias = generarMarkdownSesion(
+      OBJETIVOS_EJEMPLO,
+      { ...METADATOS, fecha: fechaTardeUTC, timezone: 'Atlantic/Canary' },
+      'Atlantic/Canary'
+    );
+    // 2026-10-15T20:00:00Z sigue siendo 15 de octubre en Atlantic/Canary (UTC+1)
+    expect(mdCanarias).toContain('15 de octubre de 2026');
+    // 2026-10-16T00:42:00Z son las 01:42 en Atlantic/Canary (WEST = UTC+1)
+    expect(mdCanarias).toContain('01:42 (Alt. máx 78°)');
   });
 
   it('revoca siempre la URL temporal del Blob al descargar el archivo .md', () => {

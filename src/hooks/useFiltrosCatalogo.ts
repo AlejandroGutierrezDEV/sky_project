@@ -98,7 +98,10 @@ export function filtrarCatalogos({
   const estrellasFiltradas = estrellas
     .filter((est) => {
       if (filtros.soloPorEncimaHorizonte && est.altitud < 0) return false;
-      return est.magnitud <= magnitudLimiteEfectiva;
+      if (filtros.instrumento !== 'Todos' && est.magnitud > magnitudLimiteEfectiva) {
+        return false;
+      }
+      return true;
     })
     .sort((a, b) => a.magnitud - b.magnitud || b.altitud - a.altitud);
 
@@ -123,8 +126,12 @@ export function filtrarCatalogos({
       if (!filtros.soloPorEncimaHorizonte) {
         return constelacion;
       }
+      // Conservar segmentos sobre el horizonte y los que lo cruzan (alt > 0 a alt <= 0) para recorte exacto en alt = 0
       const segmentosVisibles = constelacion.segmentos.filter(
-        (seg) => seg.desde.altitud >= 0 && seg.hasta.altitud >= 0
+        (seg) =>
+          seg.desde.altitud > 0 ||
+          seg.hasta.altitud > 0 ||
+          (seg.desde.altitud >= 0 && seg.hasta.altitud >= 0)
       );
       return {
         ...constelacion,

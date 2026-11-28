@@ -1,8 +1,10 @@
+import type { EstrellaCatalogo } from '../types/astronomy';
 import type {
   HorizontalCoordinates,
   ProjectedPoint,
   ProjectedStar,
   SpectralClass,
+  StarCatalogEntry,
   StarChartObserver,
 } from '../types/starChart';
 
@@ -11,6 +13,9 @@ const RAD_TO_DEG = 180 / Math.PI;
 const MS_PER_DAY = 86_400_000;
 const UNIX_EPOCH_JD = 2_440_587.5;
 const J2000_JD = 2_451_545.0;
+
+/** Altitud mínima segura para evitar la singularidad en el nadir (-90°) en proyección estereográfica. */
+export const ALTITUD_MINIMA_ESTEREOGRAFICA = -85;
 
 const SPECTRAL_COLORS: Readonly<Record<SpectralClass, string>> = {
   O: '#9bb8ff',
@@ -112,6 +117,83 @@ export function equatorialToHorizontal(
   return { altitudeDeg, azimuthDeg };
 }
 
+export interface PuntoHorizontal {
+  altitud: number;
+  acimut: number;
+}
+
+/**
+ * Recorta un segmento en coordenadas horizontales al plano del horizonte (`altitud = 0°`)
+ * mediante interpolación lineal usando el camino angular más corto en azimut.
+ * Devuelve `null` si todo el segmento queda bajo el horizonte o tiene longitud nula sobre él.
+ */
+export function recortarSegmentoAlHorizonte(
+  desde: PuntoHorizontal,
+  hasta: PuntoHorizontal
+): { desde: PuntoHorizontal; hasta: PuntoHorizontal } | null {
+  const a1 = desde.altitud;
+  const a2 = hasta.altitud;
+
+  if (!Number.isFinite(a1) || !Number.isFinite(a2)) return null;
+  if (!Number.isFinite(desde.acimut) || !Number.isFinite(hasta.acimut)) return null;
+
+  if (a1 < 0 && a2 < 0) return null;
+  if ((a1 <= 0 && a2 < 0) || (a2 <= 0 && a1 < 0)) return null;
+  if (a1 >= 0 && a2 >= 0) {
+    return { desde, hasta };
+  }
+
+  const deltaAlt = a2 - a1;
+  if (deltaAlt === 0) return null;
+
+  const t = (0 - a1) / deltaAlt;
+  const deltaAz = ((hasta.acimut - desde.acimut + 540) % 360) - 180;
+  const acimutCruce = normalizeDegrees(desde.acimut + t * deltaAz);
+  const puntoHorizonte: PuntoHorizontal = { altitud: 0, acimut: acimutCruce };
+
+  if (a1 > 0) {
+    return { desde, hasta: puntoHorizonte };
+  }
+  return { desde: puntoHorizonte, hasta };
+}
+
+/**
+ * Convierte el índice de color B-V a la clase espectral principal (O, B, A, F, G, K, M).
+ */
+export function indiceColorBVAClaseEspectral(indiceColorBV?: number): SpectralClass {
+  if (indiceColorBV === undefined || !Number.isFinite(indiceColorBV)) return 'A';
+  if (indiceColorBV < -0.22) return 'O';
+  if (indiceColorBV < 0.0) return 'B';
+  if (indiceColorBV < 0.3) return 'A';
+  if (indiceColorBV < 0.58) return 'F';
+  if (indiceColorBV < 0.82) return 'G';
+  if (indiceColorBV < 1.4) return 'K';
+  return 'M';
+}
+
+/**
+ * Adapta el catálogo estelar único (`CATALOGO_ESTRELLAS`) al formato de entrada de la Carta Astronómica.
+ */
+export function adaptarEstrellasParaCarta(
+  estrellas: readonly EstrellaCatalogo[]
+): StarCatalogEntry[] {
+  return estrellas.map((estrella) => {
+    const partes = estrella.id.trim().split(/\s+/);
+    const sufijo = partes[partes.length - 1] ?? '';
+    const codigoIAU = /^[A-Za-z]{3}$/.test(sufijo) ? sufijo.toUpperCase() : '—';
+
+    return {
+      id: estrella.id,
+      name: estrella.nombre ?? estrella.id,
+      constellation: codigoIAU,
+      raHours: estrella.raHoras,
+      decDeg: estrella.decGrados,
+      magnitude: estrella.magnitud,
+      spectralClass: indiceColorBVAClaseEspectral(estrella.indiceColorBV),
+    };
+  });
+}
+
 /**
  * Proyección estereográfica cenital sobre un disco de radio `radius`.
  * Convención celeste mirando hacia el cenit:
@@ -127,10 +209,15 @@ export function projectStereographic(
   centerY: number,
   radius: number
 ): ProjectedPoint {
-  // Evita singularidad en el nadir (alt = -90°) al proyectar extremos bajo el horizonte
-  const safeAlt = clamp(altDeg, -85, 90);
+  if (!Number.isFinite(altDeg) || !Number.isFinite(azDeg) || !Number.isFinite(radius) || radius <= 0) {
+    return { x: centerX, y: centerY };
+  }
+  // Evita singularidad y estiramientos extremos cerca del nadir (alt <= -85°)
+  const safeAlt = clamp(altDeg, ALTITUD_MINIMA_ESTEREOGRAFICA, 90);
   const zenithDistanceRad = ((90 - safeAlt) / 2) * DEG_TO_RAD;
-  const projectedRadius = radius * Math.tan(zenithDistanceRad);
+  const cosZenith = Math.cos(zenithDistanceRad);
+  const projectedRadius =
+    Math.abs(cosZenith) < 1e-6 ? radius : radius * (Math.sin(zenithDistanceRad) / cosZenith);
   const azRad = azDeg * DEG_TO_RAD;
 
   return {

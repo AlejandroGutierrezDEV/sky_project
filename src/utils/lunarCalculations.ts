@@ -303,6 +303,161 @@ export function obtenerLimitesDiaCivilUTC(
 }
 
 /**
+ * Calcula el instante UTC exacto correspondiente a una hora y minuto locales (`hora:minuto`)
+ * del día civil actual de `fechaReferencia` dentro de la zona horaria IANA `timezone`.
+ */
+export function calcularInstanteHoraLocalObservatorio(
+  fechaReferencia: Date,
+  hora: number,
+  minuto: number,
+  timezone: string
+): Date {
+  const tzSegura = esZonaHorariaIANAValida(timezone) ? timezone : ZONA_HORARIA_POR_DEFECTO;
+  const { anio, mes, dia } = obtenerComponentesDiaCivil(fechaReferencia, tzSegura);
+  const horaSegura = Number.isFinite(hora) ? Math.max(0, Math.min(23, Math.trunc(hora))) : 0;
+  const minutoSeguro = Number.isFinite(minuto) ? Math.max(0, Math.min(59, Math.trunc(minuto))) : 0;
+  return crearFechaUTCDesdeCivil(anio, mes, dia, horaSegura, minutoSeguro, tzSegura);
+}
+
+/**
+ * Formatea un instante UTC como cadena `YYYY-MM-DDTHH:MM` en la zona horaria IANA del observatorio
+ * para controles `<input type="datetime-local">` sin depender del huso del navegador.
+ */
+export function formatearFechaInputEnZona(fecha: Date, timezone: string): string {
+  const tzSegura = esZonaHorariaIANAValida(timezone) ? timezone : ZONA_HORARIA_POR_DEFECTO;
+  const valida = Number.isNaN(fecha.getTime()) ? new Date() : fecha;
+  const partes = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzSegura,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(valida);
+
+  let anio = String(valida.getUTCFullYear()).padStart(4, '0');
+  let mes = String(valida.getUTCMonth() + 1).padStart(2, '0');
+  let dia = String(valida.getUTCDate()).padStart(2, '0');
+  let hora = '00';
+  let minuto = '00';
+
+  for (const parte of partes) {
+    if (parte.type === 'year') anio = parte.value.padStart(4, '0');
+    else if (parte.type === 'month') mes = parte.value.padStart(2, '0');
+    else if (parte.type === 'day') dia = parte.value.padStart(2, '0');
+    else if (parte.type === 'hour') hora = parte.value === '24' ? '00' : parte.value.padStart(2, '0');
+    else if (parte.type === 'minute') minuto = parte.value.padStart(2, '0');
+  }
+
+  return `${anio}-${mes}-${dia}T${hora}:${minuto}`;
+}
+
+/**
+ * Parsea un valor `YYYY-MM-DDTHH:MM` de un `<input type="datetime-local">`
+ * interpretándolo estrictamente en la zona horaria IANA `timezone`.
+ */
+export function parsearFechaInputEnZona(valorInput: string, timezone: string): Date | null {
+  const coincidencia = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(
+    valorInput.trim()
+  );
+  if (!coincidencia) return null;
+
+  const anio = Number(coincidencia[1]);
+  const mes = Number(coincidencia[2]);
+  const dia = Number(coincidencia[3]);
+  const hora = Number(coincidencia[4]);
+  const minuto = Number(coincidencia[5]);
+
+  if (
+    !Number.isFinite(anio) ||
+    mes < 1 ||
+    mes > 12 ||
+    dia < 1 ||
+    dia > 31 ||
+    hora < 0 ||
+    hora > 23 ||
+    minuto < 0 ||
+    minuto > 59
+  ) {
+    return null;
+  }
+
+  const fecha = crearFechaUTCDesdeCivil(anio, mes, dia, hora, minuto, timezone);
+  return Number.isNaN(fecha.getTime()) ? null : fecha;
+}
+
+/**
+ * Calcula el ángulo de fase esférico θ (en grados, [0, 180]) a partir del porcentaje
+ * de iluminación lunar [0, 100] mediante θ = arccos(1 - 2 · iluminacion).
+ */
+export function calcularAnguloFaseEsferico(iluminacionPorcentaje: number): number {
+  const porcentajeValido = Number.isFinite(iluminacionPorcentaje) ? iluminacionPorcentaje : 0;
+  const fraccion = Math.max(0, Math.min(1, porcentajeValido / 100));
+  const coseno = Math.max(-1, Math.min(1, 1 - 2 * fraccion));
+  return (Math.acos(coseno) * 180) / Math.PI;
+}
+
+/**
+ * Devuelve la rotación visual (0° en Hemisferio Norte/ecuador, 180° en Hemisferio Sur)
+ * para representar la orientación correcta del disco lunar según la latitud del observador.
+ */
+export function calcularRotacionHemisferioLunar(latitud?: number): 0 | 180 {
+  if (typeof latitud === 'number' && Number.isFinite(latitud) && latitud < 0) {
+    return 180;
+  }
+  return 0;
+}
+
+/**
+ * Resuelve el ángulo de fase efectivo en grados [0, 360) combinando `anguloFase`
+ * (si está disponible) o la fórmula esférica θ = arccos(1 - 2 · iluminación)
+ * respetando si la fase textual corresponde a un periodo menguante.
+ */
+export function resolverAnguloFaseLunar(
+  iluminacionPorcentaje: number,
+  faseLunar: string,
+  anguloFase?: number
+): number {
+  if (typeof anguloFase === 'number' && Number.isFinite(anguloFase)) {
+    return ((anguloFase % 360) + 360) % 360;
+  }
+  const thetaGrados = calcularAnguloFaseEsferico(iluminacionPorcentaje);
+  const esMenguante = faseLunar.toLowerCase().includes('menguante');
+  return esMenguante ? (360 - thetaGrados) % 360 : thetaGrados;
+}
+
+/**
+ * Construye el trazado SVG de la región iluminada del disco lunar (en orientación boreal base)
+ * usando la proyección elíptica del terminador esférico rx = |cos(θ)| · r.
+ */
+export function construirRutaIluminadaLunar(
+  anguloGrados: number,
+  cx: number,
+  cy: number,
+  r: number
+): string | null {
+  const normalizado = ((anguloGrados % 360) + 360) % 360;
+  if (normalizado < 2 || normalizado > 358) return null;
+  if (Math.abs(normalizado - 180) < 2) {
+    return `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx} ${cy + r} A ${r} ${r} 0 1 1 ${cx} ${cy - r} Z`;
+  }
+
+  const rad = (normalizado * Math.PI) / 180;
+  const rx = Number(Math.max(0.5, Math.abs(Math.cos(rad)) * r).toFixed(2));
+
+  if (normalizado < 180) {
+    // Fase creciente (Hemisferio Norte: limbo derecho iluminado)
+    const sweepTerminador = normalizado < 90 ? 0 : 1;
+    return `M ${cx} ${cy - r} A ${r} ${r} 0 0 1 ${cx} ${cy + r} A ${rx} ${r} 0 0 ${sweepTerminador} ${cx} ${cy - r} Z`;
+  }
+
+  // Fase menguante (Hemisferio Norte: limbo izquierdo iluminado)
+  const sweepTerminador = normalizado < 270 ? 0 : 1;
+  return `M ${cx} ${cy - r} A ${r} ${r} 0 0 0 ${cx} ${cy + r} A ${rx} ${r} 0 0 ${sweepTerminador} ${cx} ${cy - r} Z`;
+}
+
+/**
  * Clasifica el ángulo de fase lunar [0, 360) en una de las 8 fases lunares en español.
  */
 export function obtenerNombreFaseLunarDesdeAngulo(anguloGrados: number): MoonPhaseName {

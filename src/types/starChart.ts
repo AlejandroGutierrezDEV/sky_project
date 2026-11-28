@@ -16,6 +16,24 @@ export interface ConstellationDefinition {
   segments: ReadonlyArray<readonly [string, string]>; // Pares de IDs de estrellas
 }
 
+export interface SegmentoConstelacionProyectado {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  altitudDesde: number;
+  altitudHasta: number;
+}
+
+export interface ConstelacionCartaProyectada {
+  codigo: string;
+  nombreEs: string;
+  segmentos: ReadonlyArray<SegmentoConstelacionProyectado>;
+  etiquetaX: number;
+  etiquetaY: number;
+  mostrarEtiqueta: boolean;
+}
+
 export interface HorizontalCoordinates {
   altitudeDeg: number; // [-90, 90]
   azimuthDeg: number; // [0, 360) desde el Norte hacia el Este

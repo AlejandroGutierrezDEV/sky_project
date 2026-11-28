@@ -149,8 +149,10 @@ export function planificarObjetivosSesion(
   objetivos: readonly ObjetivoSesion[],
   latitud: number,
   longitud: number,
-  fechaReferencia: Date
+  fechaReferencia: Date,
+  timezone?: string
 ): ObjetivoPlanificado[] {
+  const zonaHoraria = normalizarZonaHoraria(timezone, latitud, longitud);
   return objetivos
     .map((objetivo) => {
       const culminacion = calcularCulminacionAstro(
@@ -158,7 +160,8 @@ export function planificarObjetivosSesion(
         objetivo.decGrados,
         latitud,
         longitud,
-        fechaReferencia
+        fechaReferencia,
+        zonaHoraria
       );
 
       return {
@@ -227,8 +230,15 @@ export function usePlanificadorSesion({
   );
 
   const objetivosPlanificados = useMemo(
-    () => planificarObjetivosSesion(objetivos, latitud, longitud, fechaAncladaDiaCivil),
-    [objetivos, latitud, longitud, fechaAncladaDiaCivil]
+    () =>
+      planificarObjetivosSesion(
+        objetivos,
+        latitud,
+        longitud,
+        fechaAncladaDiaCivil,
+        zonaHorariaEfectiva
+      ),
+    [objetivos, latitud, longitud, fechaAncladaDiaCivil, zonaHorariaEfectiva]
   );
 
   const idsEnSesion = useMemo<ReadonlySet<string>>(

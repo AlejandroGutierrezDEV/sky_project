@@ -3,6 +3,7 @@ import type {
   EstadoVisibilidadObjetivo,
   ObjetivoPlanificado,
 } from '../../types/astronomy';
+import { formatearHoraEnZona, normalizarZonaHoraria } from '../lunarCalculations';
 
 const RAZON_SIDEREO_A_SOLAR = 23.934469591898 / 24;
 const DIA_SIDEREO_MS = 23.934469591898 * 3_600_000;
@@ -29,10 +30,11 @@ function diferenciaHorasCorta(objetivoHoras: number, referenciaHoras: number): n
   return ((((objetivoHoras - referenciaHoras + 12) % 24) + 24) % 24) - 12;
 }
 
-function formatearHoraCorta(fecha: Date): string {
-  const horas = String(fecha.getHours()).padStart(2, '0');
-  const minutos = String(fecha.getMinutes()).padStart(2, '0');
-  return `${horas}:${minutos}`;
+/**
+ * Formatea un instante en formato 24h ("HH:MM") usando explícitamente la zona horaria IANA.
+ */
+export function formatearHoraCorta(fecha: Date, timezone: string): string {
+  return formatearHoraEnZona(fecha, timezone);
 }
 
 /**
@@ -188,7 +190,8 @@ export function calcularCulminacionAstro(
   decGrados: number,
   latitud: number,
   longitud: number,
-  fechaReferencia: Date
+  fechaReferencia: Date,
+  timezone: string
 ): ResultadoCulminacionAstro {
   const entradasValidas =
     Number.isFinite(raHoras) &&
@@ -263,6 +266,7 @@ export function calcularCulminacionAstro(
     }
   }
 
+  const zonaHoraria = normalizarZonaHoraria(timezone, latitud, longitud);
   const altRedondeada = Math.round(altitudMaximaGrados);
 
   if (culmMs >= inicioMs && culmMs <= finMs) {
@@ -270,7 +274,7 @@ export function calcularCulminacionAstro(
       horaCulminacion,
       altitudMaximaGrados,
       estadoVisibilidad: 'optimo_noche',
-      etiquetaHoraria: `${formatearHoraCorta(horaCulminacion)} (Alt. máx ${altRedondeada}°)`,
+      etiquetaHoraria: `${formatearHoraCorta(horaCulminacion, zonaHoraria)} (Alt. máx ${altRedondeada}°)`,
     };
   }
 
@@ -284,8 +288,8 @@ export function calcularCulminacionAstro(
     altAnochecer !== altAmanecer ? altAnochecer > altAmanecer : culmMs < inicioMs;
 
   const etiquetaHoraria = mejorAlAnochecer
-    ? `Tras el anochecer (poniéndose · Culm. ${formatearHoraCorta(horaCulminacion)})`
-    : `Antes del amanecer (saliendo · Culm. ${formatearHoraCorta(horaCulminacion)})`;
+    ? `Tras el anochecer (poniéndose · Culm. ${formatearHoraCorta(horaCulminacion, zonaHoraria)})`
+    : `Antes del amanecer (saliendo · Culm. ${formatearHoraCorta(horaCulminacion, zonaHoraria)})`;
 
   return {
     horaCulminacion,

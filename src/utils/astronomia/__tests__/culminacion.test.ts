@@ -3,14 +3,18 @@ import {
   calcularCulminacionAstro,
   calcularTiempoSidereoLocal,
   calcularVentanaNocturna,
+  formatearHoraCorta,
   ordenarPorCulminacionNocturna,
 } from '../culminacion';
+import { formatearHoraEnZona } from '../../lunarCalculations';
 import type { ObjetivoPlanificado } from '../../../types/astronomy';
 
 const LAT_VALENCIA = 39.47;
 const LON_VALENCIA = -0.38;
+const TZ_MADRID = 'Europe/Madrid';
 const LAT_SIDNEY = -33.87;
 const LON_SIDNEY = 151.21;
+const TZ_SIDNEY = 'Australia/Sydney';
 
 function crearObjetivoBase(
   overrides: Partial<ObjetivoPlanificado>
@@ -42,7 +46,8 @@ describe('Cálculo de culminación meridiana (culminacion.ts)', () => {
       41.27,
       LAT_VALENCIA,
       LON_VALENCIA,
-      fecha
+      fecha,
+      TZ_MADRID
     );
 
     expect(resultado.estadoVisibilidad).toBe('optimo_noche');
@@ -73,7 +78,8 @@ describe('Cálculo de culminación meridiana (culminacion.ts)', () => {
       -63.1,
       LAT_VALENCIA,
       LON_VALENCIA,
-      fecha
+      fecha,
+      TZ_MADRID
     );
     expect(acruxDesdeValencia.estadoVisibilidad).toBe('nunca_sale');
     expect(acruxDesdeValencia.horaCulminacion).toBeNull();
@@ -85,7 +91,8 @@ describe('Cálculo de culminación meridiana (culminacion.ts)', () => {
       89.26,
       LAT_SIDNEY,
       LON_SIDNEY,
-      fecha
+      fecha,
+      TZ_SIDNEY
     );
     expect(polarisDesdeSidney.estadoVisibilidad).toBe('nunca_sale');
     expect(polarisDesdeSidney.horaCulminacion).toBeNull();
@@ -104,7 +111,8 @@ describe('Cálculo de culminación meridiana (culminacion.ts)', () => {
       20,
       LAT_VALENCIA,
       LON_VALENCIA,
-      fecha
+      fecha,
+      TZ_MADRID
     );
     expect(resPoniendose.estadoVisibilidad).toBe('visible_parcial');
     expect(resPoniendose.horaCulminacion).toBeInstanceOf(Date);
@@ -119,12 +127,35 @@ describe('Cálculo de culminación meridiana (culminacion.ts)', () => {
       20,
       LAT_VALENCIA,
       LON_VALENCIA,
-      fecha
+      fecha,
+      TZ_MADRID
     );
     expect(resSaliendo.estadoVisibilidad).toBe('visible_parcial');
     expect(resSaliendo.horaCulminacion).toBeInstanceOf(Date);
     expect(resSaliendo.etiquetaHoraria.toLowerCase()).toContain('amanecer');
     expect(resSaliendo.etiquetaHoraria.toLowerCase()).toContain('saliendo');
+  });
+
+  it('formatea las horas de culminación explícitamente en la zona horaria IANA del observatorio', () => {
+    const instanteUTC = new Date('2026-10-15T15:30:00Z');
+    expect(formatearHoraCorta(instanteUTC, 'Asia/Tokyo')).toBe('00:30');
+    expect(formatearHoraCorta(instanteUTC, 'Atlantic/Canary')).toBe('16:30');
+    expect(formatearHoraCorta(instanteUTC, 'Europe/Madrid')).toBe('17:30');
+
+    // M31 desde Tokio (35.68°N, 139.69°E) en octubre: etiqueta horaria en JST (Asia/Tokyo)
+    const fechaTokio = new Date('2026-10-15T12:00:00Z');
+    const culmTokio = calcularCulminacionAstro(
+      0.712,
+      41.27,
+      35.6762,
+      139.6503,
+      fechaTokio,
+      'Asia/Tokyo'
+    );
+    expect(culmTokio.estadoVisibilidad).toBe('optimo_noche');
+    expect(culmTokio.horaCulminacion).toBeInstanceOf(Date);
+    const horaEsperadaTokio = formatearHoraEnZona(culmTokio.horaCulminacion, 'Asia/Tokyo');
+    expect(culmTokio.etiquetaHoraria).toContain(horaEsperadaTokio);
   });
 
   it('gestiona entradas inválidas sin lanzar excepciones', () => {
@@ -133,7 +164,8 @@ describe('Cálculo de culminación meridiana (culminacion.ts)', () => {
       20,
       LAT_VALENCIA,
       LON_VALENCIA,
-      new Date('invalid')
+      new Date('invalid'),
+      TZ_MADRID
     );
     expect(invalidoFecha.estadoVisibilidad).toBe('nunca_sale');
     expect(invalidoFecha.horaCulminacion).toBeNull();
@@ -143,7 +175,8 @@ describe('Cálculo de culminación meridiana (culminacion.ts)', () => {
       20,
       120,
       LON_VALENCIA,
-      new Date('2026-03-21T22:00:00Z')
+      new Date('2026-03-21T22:00:00Z'),
+      TZ_MADRID
     );
     expect(invalidoLat.estadoVisibilidad).toBe('nunca_sale');
     expect(invalidoLat.horaCulminacion).toBeNull();

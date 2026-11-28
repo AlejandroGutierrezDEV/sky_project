@@ -77,12 +77,15 @@ import {
 import {
   TEXTO_SIN_OCASO,
   TEXTO_SIN_ORTO,
+  calcularInstanteHoraLocalObservatorio,
   esZonaHorariaIANAValida,
+  formatearFechaInputEnZona,
   formatearHoraEnZona,
   inferirZonaHorariaPorCoordenadas,
   normalizarZonaHoraria,
   obtenerClaveDiaCivil,
   obtenerFechaReferenciaDiaCivil,
+  parsearFechaInputEnZona,
 } from './utils/lunarCalculations';
 import type { LiveEphemerisSnapshot } from './types/celestialDetails';
 import type { WeatherAlertCoordinates } from './types/weatherAlerts';
@@ -331,13 +334,6 @@ function obtenerEstadoVisibilidadCuerpo(cuerpo: CuerpoCeleste): {
   return { etiqueta: 'Bajo el horizonte', opacidad: 'opacity-65' };
 }
 
-function formatearFechaParaInput(fecha: Date): string {
-  const valida = Number.isNaN(fecha.getTime()) ? new Date() : fecha;
-  const copia = new Date(valida);
-  copia.setMinutes(copia.getMinutes() - copia.getTimezoneOffset());
-  return copia.toISOString().slice(0, 16);
-}
-
 function obtenerClaseBotonControlActivo(tema: TemaVisual, activo: boolean): string {
   if (!activo) return 'opacity-75 hover:opacity-100';
   if (tema === 'rojo') return 'bg-red-950 text-red-500 border border-red-600';
@@ -453,7 +449,7 @@ export function App() {
   const [favoritos, setFavoritos] = useState<UbicacionFavorita[]>(leerFavoritosGuardados);
   const [avisoFavorito, setAvisoFavorito] = useState<string | null>(null);
 
-  const [fechaStr, setFechaStr] = useState<string>(() => formatearFechaParaInput(new Date()));
+  const [fechaSeleccionada, setFechaSeleccionada] = useState<Date>(() => new Date());
   const [reproduciendo, setReproduciendo] = useState(false);
   const [velocidadMinPorSeg, setVelocidadMinPorSeg] = useState<15 | 60>(15);
   const [contadorFoco, setContadorFoco] = useState(0);
@@ -524,10 +520,10 @@ export function App() {
     [ubicacion.latitud, ubicacion.longitud, coordinates.timezone, coordinates.name, ubicacion.nombre]
   );
 
-  const fechaSeleccionada = useMemo(() => {
-    const fecha = new Date(fechaStr);
-    return Number.isNaN(fecha.getTime()) ? new Date() : fecha;
-  }, [fechaStr]);
+  const fechaStr = useMemo(
+    () => formatearFechaInputEnZona(fechaSeleccionada, coordinates.timezone),
+    [fechaSeleccionada, coordinates.timezone]
+  );
 
   const claveDiaCivil = useMemo<ClaveDiaCivil>(
     () => obtenerClaveDiaCivil(fechaSeleccionada, coordinates.timezone),
@@ -606,11 +602,9 @@ export function App() {
   useEffect(() => {
     if (!reproduciendo) return;
     const intervalo = window.setInterval(() => {
-      setFechaStr((prev) => {
-        const actual = new Date(prev);
-        const base = Number.isNaN(actual.getTime()) ? new Date() : actual;
-        const siguiente = new Date(base.getTime() + velocidadMinPorSeg * 60_000);
-        return formatearFechaParaInput(siguiente);
+      setFechaSeleccionada((prev) => {
+        const baseMs = Number.isNaN(prev.getTime()) ? Date.now() : prev.getTime();
+        return new Date(baseMs + velocidadMinPorSeg * 60_000);
       });
     }, 1000);
 
@@ -830,8 +824,9 @@ export function App() {
       bortle: bortleActual,
       faseLunar: datosLunares.faseNombre,
       fecha: fechaSeleccionada,
+      timezone: coordinates.timezone,
     }),
-    [ubicacion.nombre, bortleActual, datosLunares.faseNombre, fechaSeleccionada]
+    [ubicacion.nombre, bortleActual, datosLunares.faseNombre, fechaSeleccionada, coordinates.timezone]
   );
 
   const objetivoDetalleSeleccionado = useMemo<EntradaObjetivoSesion | null>(() => {
@@ -1275,10 +1270,10 @@ export function App() {
 
   const manejarCambioFecha = (nuevoValor: string) => {
     if (!nuevoValor) return;
-    const fecha = new Date(nuevoValor);
-    if (Number.isNaN(fecha.getTime())) return;
+    const fecha = parsearFechaInputEnZona(nuevoValor, coordinates.timezone);
+    if (!fecha) return;
     setReproduciendo(false);
-    setFechaStr(nuevoValor);
+    setFechaSeleccionada(fecha);
   };
 
   const detectarGPS = () => {
@@ -1302,13 +1297,24 @@ export function App() {
 
   const ajustarTiempo = (modo: 'ahora' | 'noche' | 'mas1h') => {
     setReproduciendo(false);
-    const base = modo === 'mas1h' ? new Date(fechaSeleccionada) : new Date();
-    if (modo === 'noche') {
-      base.setHours(23, 30, 0, 0);
-    } else if (modo === 'mas1h') {
-      base.setHours(base.getHours() + 1);
+    if (modo === 'ahora') {
+      setFechaSeleccionada(new Date());
+      return;
     }
-    setFechaStr(formatearFechaParaInput(base));
+    if (modo === 'noche') {
+      const instanteNoche = calcularInstanteHoraLocalObservatorio(
+        new Date(),
+        23,
+        30,
+        coordinates.timezone
+      );
+      setFechaSeleccionada(instanteNoche);
+      return;
+    }
+    setFechaSeleccionada((prev) => {
+      const baseMs = Number.isNaN(prev.getTime()) ? Date.now() : prev.getTime();
+      return new Date(baseMs + 3_600_000);
+    });
   };
 
   const cambiarVista = (vista: VistaActiva) => {
@@ -1661,6 +1667,7 @@ export function App() {
             initialLatitude={ubicacion.latitud}
             initialLongitude={ubicacion.longitud}
             initialLocationName={ubicacion.nombre}
+            initialTimezone={coordinates.timezone}
           />
         ) : (
           <>
@@ -1800,7 +1807,7 @@ export function App() {
               onSelectTimestamp={(fechaObjetivo) => {
                 if (Number.isNaN(fechaObjetivo.getTime())) return;
                 setReproduciendo(false);
-                setFechaStr(formatearFechaParaInput(fechaObjetivo));
+                setFechaSeleccionada(new Date(fechaObjetivo.getTime()));
               }}
             />
 
@@ -1945,6 +1952,7 @@ export function App() {
                     mostrarConstelaciones={preferencias.capas.constelaciones}
                     mostrarEstrellas={preferencias.capas.estrellas}
                     mostrarMessier={preferencias.capas.messier}
+                    soloPorEncimaHorizonte={filtrosCatalogo.soloPorEncimaHorizonte}
                     astroSeleccionado={astroSeleccionado}
                     focusedBodyId={isFocusActive ? selectedBodyId : null}
                     focusedBodyName={sheetData?.name ?? contextoSeleccionado.fallbackName}
@@ -1980,7 +1988,7 @@ export function App() {
                   timezone={coordinates.timezone}
                   onSeleccionarFecha={(fechaEvento) => {
                     setReproduciendo(false);
-                    setFechaStr(formatearFechaParaInput(fechaEvento));
+                    setFechaSeleccionada(new Date(fechaEvento.getTime()));
                   }}
                 />
               </div>
@@ -1998,7 +2006,7 @@ export function App() {
                   onSeleccionarHora={(fechaHora) => {
                     if (Number.isNaN(fechaHora.getTime())) return;
                     setReproduciendo(false);
-                    setFechaStr(formatearFechaParaInput(fechaHora));
+                    setFechaSeleccionada(new Date(fechaHora.getTime()));
                   }}
                 />
 
@@ -2061,6 +2069,7 @@ export function App() {
                                 iluminacion={obj.iluminacion ?? 0}
                                 faseLunar={obj.faseLunar ?? ''}
                                 anguloFase={obj.anguloFase}
+                                latitud={ubicacion.latitud}
                                 tema={tema}
                               />
                             )}

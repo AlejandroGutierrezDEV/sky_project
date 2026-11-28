@@ -1,38 +1,24 @@
 import { useId } from 'react';
 import type { TemaVisual } from '../types/astronomy';
+import {
+  calcularRotacionHemisferioLunar,
+  construirRutaIluminadaLunar,
+  resolverAnguloFaseLunar,
+} from '../utils/lunarCalculations';
 
 interface MoonPhase3DProps {
   iluminacion: number;
   faseLunar: string;
   anguloFase?: number;
+  latitud?: number;
   tema: TemaVisual;
-}
-
-function construirRutaIluminada(angulo: number, cx: number, cy: number, r: number): string | null {
-  const normalizado = ((angulo % 360) + 360) % 360;
-  if (normalizado < 2 || normalizado > 358) return null;
-  if (Math.abs(normalizado - 180) < 2) {
-    return `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx} ${cy + r} A ${r} ${r} 0 1 1 ${cx} ${cy - r} Z`;
-  }
-
-  const rad = (normalizado * Math.PI) / 180;
-  const rx = Math.max(0.5, Math.abs(Math.cos(rad)) * r);
-
-  if (normalizado < 180) {
-    // Fase creciente: lado derecho iluminado
-    const sweepTerminador = normalizado < 90 ? 0 : 1;
-    return `M ${cx} ${cy - r} A ${r} ${r} 0 0 1 ${cx} ${cy + r} A ${rx} ${r} 0 0 ${sweepTerminador} ${cx} ${cy - r} Z`;
-  }
-
-  // Fase menguante: lado izquierdo iluminado
-  const sweepTerminador = normalizado < 270 ? 0 : 1;
-  return `M ${cx} ${cy - r} A ${r} ${r} 0 0 0 ${cx} ${cy + r} A ${rx} ${r} 0 0 ${sweepTerminador} ${cx} ${cy - r} Z`;
 }
 
 export function MoonPhase3D({
   iluminacion,
   faseLunar,
   anguloFase,
+  latitud,
   tema,
 }: Readonly<MoonPhase3DProps>) {
   const uid = useId();
@@ -41,8 +27,9 @@ export function MoonPhase3D({
   const gradSombraId = `luna-sombra-${uid}`;
   const gradLimboId = `luna-limbo-${uid}`;
 
-  const angulo = anguloFase ?? (iluminacion / 100) * 180;
-  const rutaLuz = construirRutaIluminada(angulo, 50, 50, 40);
+  const angulo = resolverAnguloFaseLunar(iluminacion, faseLunar, anguloFase);
+  const rotacionHemisferio = calcularRotacionHemisferioLunar(latitud);
+  const rutaLuz = construirRutaIluminadaLunar(angulo, 50, 50, 40);
 
   const esRojo = tema === 'rojo';
   const esClaro = tema === 'claro';
@@ -62,6 +49,8 @@ export function MoonPhase3D({
         viewBox="0 0 100 100"
         className="w-full h-full rounded-full"
         role="img"
+        data-hemisferio={rotacionHemisferio === 180 ? 'sur' : 'norte'}
+        data-rotacion={rotacionHemisferio}
         aria-label={`Esfera lunar en fase ${faseLunar} con ${iluminacion}% de iluminación`}
       >
         <defs>
@@ -99,18 +88,20 @@ export function MoonPhase3D({
         {/* Cara oscura base */}
         <circle cx="50" cy="50" r="40" fill={`url(#${gradSombraId})`} />
 
-        {/* Zona iluminada según fase real */}
+        {/* Zona iluminada y relieves orientados según hemisferio (rotación 180° en latitud < 0) */}
         <g clipPath={`url(#${clipId})`}>
-          {rutaLuz && <path d={rutaLuz} fill={`url(#${gradLuzId})`} />}
+          <g transform={rotacionHemisferio === 180 ? 'rotate(180 50 50)' : undefined}>
+            {rutaLuz && <path d={rutaLuz} fill={`url(#${gradLuzId})`} />}
 
-          {/* Mares y cráteres lunares sutiles */}
-          <g opacity={esRojo ? 0.25 : 0.22} fill={esRojo ? '#450a0a' : '#475569'}>
-            <ellipse cx="40" cy="36" rx="11" ry="8" transform="rotate(-15 40 36)" />
-            <ellipse cx="58" cy="42" rx="9" ry="12" transform="rotate(12 58 42)" />
-            <ellipse cx="46" cy="58" rx="13" ry="7" transform="rotate(8 46 58)" />
-            <circle cx="64" cy="60" r="5" />
-            <circle cx="34" cy="54" r="4" />
-            <circle cx="53" cy="27" r="3.5" />
+            {/* Mares y cráteres lunares sutiles */}
+            <g opacity={esRojo ? 0.25 : 0.22} fill={esRojo ? '#450a0a' : '#475569'}>
+              <ellipse cx="40" cy="36" rx="11" ry="8" transform="rotate(-15 40 36)" />
+              <ellipse cx="58" cy="42" rx="9" ry="12" transform="rotate(12 58 42)" />
+              <ellipse cx="46" cy="58" rx="13" ry="7" transform="rotate(8 46 58)" />
+              <circle cx="64" cy="60" r="5" />
+              <circle cx="34" cy="54" r="4" />
+              <circle cx="53" cy="27" r="3.5" />
+            </g>
           </g>
 
           {/* Sombreado esférico en el limbo para efecto 3D */}

@@ -3,6 +3,11 @@ import type {
   MetadatosExportacionSesion,
   ObjetivoPlanificado,
 } from '../types/astronomy';
+import {
+  formatearHoraEnZona,
+  normalizarZonaHoraria,
+  obtenerClaveDiaCivil,
+} from './lunarCalculations';
 
 const ETIQUETA_CATEGORIA: Readonly<Record<CategoriaAstroObjetivo, string>> = {
   messier: 'Messier',
@@ -49,23 +54,49 @@ function escaparCeldaMarkdown(texto: string): string {
   return texto.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim();
 }
 
-function formatearFechaArchivo(fecha: Date): string {
+function formatearFechaArchivo(fecha: Date, timezone: string): string {
   const valida = Number.isNaN(fecha.getTime()) ? new Date() : fecha;
-  const anio = valida.getFullYear();
-  const mes = String(valida.getMonth() + 1).padStart(2, '0');
-  const dia = String(valida.getDate()).padStart(2, '0');
-  return `${anio}-${mes}-${dia}`;
+  const tzSegura = normalizarZonaHoraria(timezone);
+  return obtenerClaveDiaCivil(valida, tzSegura);
 }
 
-function formatearFechaLegible(fecha: Date): string {
+function formatearFechaLegible(fecha: Date, timezone: string): string {
   const valida = Number.isNaN(fecha.getTime()) ? new Date() : fecha;
+  const tzSegura = normalizarZonaHoraria(timezone);
   try {
     return new Intl.DateTimeFormat('es-ES', {
       dateStyle: 'full',
+      timeZone: tzSegura,
     }).format(valida);
   } catch {
-    return formatearFechaArchivo(valida);
+    return formatearFechaArchivo(valida, tzSegura);
   }
+}
+
+/**
+ * Formatea la etiqueta horaria de culminación de un objetivo planificado
+ * en la zona horaria IANA del observatorio.
+ */
+export function formatearEtiquetaCulminacionEnZona(
+  objetivo: ObjetivoPlanificado,
+  timezone: string
+): string {
+  if (objetivo.estadoVisibilidad === 'nunca_sale' || !objetivo.horaCulminacion) {
+    return objetivo.etiquetaHoraria;
+  }
+
+  const tzSegura = normalizarZonaHoraria(timezone);
+  const horaLocal = formatearHoraEnZona(objetivo.horaCulminacion, tzSegura);
+  const altRedondeada = Math.round(objetivo.altitudMaximaGrados);
+
+  if (objetivo.estadoVisibilidad === 'optimo_noche') {
+    return `${horaLocal} (Alt. máx ${altRedondeada}°)`;
+  }
+
+  const esAnochecer = objetivo.etiquetaHoraria.toLowerCase().includes('anochecer');
+  return esAnochecer
+    ? `Tras el anochecer (poniéndose · Culm. ${horaLocal})`
+    : `Antes del amanecer (saliendo · Culm. ${horaLocal})`;
 }
 
 /**
@@ -73,9 +104,11 @@ function formatearFechaLegible(fecha: Date): string {
  */
 export function generarMarkdownSesion(
   objetivos: readonly ObjetivoPlanificado[],
-  metadatos: MetadatosExportacionSesion
+  metadatos: MetadatosExportacionSesion,
+  timezone: string = metadatos.timezone
 ): string {
-  const fechaLegible = formatearFechaLegible(metadatos.fecha);
+  const tzSegura = normalizarZonaHoraria(timezone ?? metadatos.timezone);
+  const fechaLegible = formatearFechaLegible(metadatos.fecha, tzSegura);
   const ubicacionLimpia = metadatos.ubicacionNombre.trim() || 'Observatorio sin nombre';
   const faseLimpia = metadatos.faseLunar.trim() || 'Sin datos';
   const bortleSeguro = Number.isFinite(metadatos.bortle) ? Math.round(metadatos.bortle) : 4;
@@ -86,6 +119,7 @@ export function generarMarkdownSesion(
     '',
     `- **Fecha:** ${fechaLegible}`,
     `- **Ubicación:** ${ubicacionLimpia}`,
+    `- **Zona horaria:** ${tzSegura}`,
     `- **Escala Bortle:** Bortle ${bortleSeguro}`,
     `- **Fase lunar:** ${faseLimpia}`,
     `- **Progreso:** ${observados} / ${objetivos.length} observados`,
@@ -114,10 +148,11 @@ export function generarMarkdownSesion(
     const constelacion = obj.constelacion || '—';
     const mag = Number.isFinite(obj.magnitud) ? obj.magnitud.toFixed(1) : '—';
     const coords = `AR ${formatearRA(obj.raHoras)} / Dec ${formatearDec(obj.decGrados)}`;
+    const etiquetaHoraria = formatearEtiquetaCulminacionEnZona(obj, tzSegura);
     const notas = obj.notas && obj.notas.trim().length > 0 ? obj.notas : '—';
 
     lineas.push(
-      `| ${casilla} | ${escaparCeldaMarkdown(tituloAstro)} | ${categoria} | ${escaparCeldaMarkdown(constelacion)} | ${mag} | ${coords} | ${escaparCeldaMarkdown(obj.etiquetaHoraria)} | ${escaparCeldaMarkdown(notas)} |`
+      `| ${casilla} | ${escaparCeldaMarkdown(tituloAstro)} | ${categoria} | ${escaparCeldaMarkdown(constelacion)} | ${mag} | ${coords} | ${escaparCeldaMarkdown(etiquetaHoraria)} | ${escaparCeldaMarkdown(notas)} |`
     );
   }
 
@@ -131,16 +166,18 @@ export function generarMarkdownSesion(
  */
 export function descargarSesionMarkdown(
   objetivos: ObjetivoPlanificado[],
-  metadatos: MetadatosExportacionSesion
+  metadatos: MetadatosExportacionSesion,
+  timezone: string = metadatos.timezone
 ): void {
-  const contenido = generarMarkdownSesion(objetivos, metadatos);
+  const tzSegura = normalizarZonaHoraria(timezone ?? metadatos.timezone);
+  const contenido = generarMarkdownSesion(objetivos, metadatos, tzSegura);
   const blob = new Blob([contenido], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
 
   try {
     const enlace = document.createElement('a');
     enlace.href = url;
-    enlace.download = `sesion-observacion-${formatearFechaArchivo(metadatos.fecha)}.md`;
+    enlace.download = `sesion-observacion-${formatearFechaArchivo(metadatos.fecha, tzSegura)}.md`;
     enlace.rel = 'noopener';
     document.body.appendChild(enlace);
     enlace.click();

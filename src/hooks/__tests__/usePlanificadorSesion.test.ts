@@ -112,7 +112,8 @@ describe('Validación y persistencia de usePlanificadorSesion', () => {
       [OBJETIVO_ACRUX, OBJETIVO_M31],
       39.47,
       -0.38,
-      new Date('2026-10-15T20:00:00Z')
+      new Date('2026-10-15T20:00:00Z'),
+      'Europe/Madrid'
     );
 
     expect(planificados).toHaveLength(2);

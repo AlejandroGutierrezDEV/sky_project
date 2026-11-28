@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useMemo,
   useRef,
   useState,
   type MouseEvent,
@@ -8,12 +7,14 @@ import {
 } from 'react';
 import type { TemaVisual } from '../../types/astronomy';
 import type {
-  ConstellationDefinition,
+  ConstelacionCartaProyectada,
   ProjectedStar,
   StarChartLayers,
 } from '../../types/starChart';
 import { DEFAULT_CANVAS_PADDING } from '../../hooks/useStarChart';
+import { formatearHoraEnZona } from '../../utils/lunarCalculations';
 import {
+  ALTITUD_MINIMA_ESTEREOGRAFICA,
   clamp,
   findNearestStar,
   getSpectralColor,
@@ -21,11 +22,12 @@ import {
 
 export interface StarChartCanvasProps {
   projectedStars: ReadonlyArray<ProjectedStar>;
-  constellations: ReadonlyArray<ConstellationDefinition>;
+  constellations: ReadonlyArray<ConstelacionCartaProyectada>;
   layers: StarChartLayers;
   selectedStar: ProjectedStar | null;
   hoveredStar: ProjectedStar | null;
   date: Date;
+  timezone: string;
   locationName: string;
   visibleCount: number;
   tema: TemaVisual;
@@ -114,12 +116,8 @@ const CANVAS_THEMES: Readonly<Record<TemaVisual, CanvasThemeColors>> = {
 const DEG_TO_RAD = Math.PI / 180;
 const STAR_HIT_RADIUS_PX = 18;
 
-function formatTimeForAria(date: Date): string {
-  if (Number.isNaN(date.getTime())) return 'hora desconocida';
-  return date.toLocaleTimeString('es-ES', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+function formatTimeForAria(date: Date, timezone: string): string {
+  return formatearHoraEnZona(date, timezone, 'hora desconocida');
 }
 
 function getRedFilterStarColor(magnitude: number): string {
@@ -135,6 +133,7 @@ export function StarChartCanvas({
   selectedStar,
   hoveredStar,
   date,
+  timezone,
   locationName,
   visibleCount,
   tema,
@@ -181,14 +180,6 @@ export function StarChartCanvas({
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [onSizeChange]);
-
-  const starById = useMemo(() => {
-    const map = new Map<string, ProjectedStar>();
-    for (const item of projectedStars) {
-      map.set(item.star.id, item);
-    }
-    return map;
-  }, [projectedStars]);
 
   const palette = CANVAS_THEMES[tema];
 
@@ -285,7 +276,7 @@ export function StarChartCanvas({
       ctx.stroke();
     }
 
-    // 4. Líneas de constelaciones (clipeadas al horizonte)
+    // 4. Líneas de constelaciones (recortadas al horizonte y protegidas contra singularidad del nadir)
     if (layers.showConstellations) {
       ctx.strokeStyle = palette.constellationLine;
       ctx.lineWidth = 1.15;
@@ -293,16 +284,23 @@ export function StarChartCanvas({
       ctx.beginPath();
 
       for (const constellation of constellations) {
-        for (const [fromId, toId] of constellation.segments) {
-          const fromStar = starById.get(fromId);
-          const toStar = starById.get(toId);
-          if (!fromStar || !toStar) continue;
-          // Omitimos segmentos completamente bajo el horizonte
-          if (fromStar.horizontal.altitudeDeg < 0 && toStar.horizontal.altitudeDeg < 0) {
+        for (const segmento of constellation.segmentos) {
+          if (
+            segmento.altitudDesde <= ALTITUD_MINIMA_ESTEREOGRAFICA ||
+            segmento.altitudHasta <= ALTITUD_MINIMA_ESTEREOGRAFICA
+          ) {
             continue;
           }
-          ctx.moveTo(fromStar.x, fromStar.y);
-          ctx.lineTo(toStar.x, toStar.y);
+          if (
+            !Number.isFinite(segmento.x1) ||
+            !Number.isFinite(segmento.y1) ||
+            !Number.isFinite(segmento.x2) ||
+            !Number.isFinite(segmento.y2)
+          ) {
+            continue;
+          }
+          ctx.moveTo(segmento.x1, segmento.y1);
+          ctx.lineTo(segmento.x2, segmento.y2);
         }
       }
       ctx.stroke();
@@ -316,30 +314,15 @@ export function StarChartCanvas({
       ctx.fillStyle = palette.constellationLabel;
 
       for (const constellation of constellations) {
-        const uniqueIds = new Set<string>();
-        for (const [a, b] of constellation.segments) {
-          uniqueIds.add(a);
-          uniqueIds.add(b);
+        if (!constellation.mostrarEtiqueta) continue;
+        if (!Number.isFinite(constellation.etiquetaX) || !Number.isFinite(constellation.etiquetaY)) {
+          continue;
         }
-
-        let sumX = 0;
-        let sumY = 0;
-        let aboveCount = 0;
-
-        for (const id of uniqueIds) {
-          const item = starById.get(id);
-          if (item && item.horizontal.altitudeDeg >= 0) {
-            sumX += item.x;
-            sumY += item.y;
-            aboveCount += 1;
-          }
-        }
-
-        if (aboveCount >= 2) {
-          const cx = sumX / aboveCount;
-          const cy = sumY / aboveCount;
-          ctx.fillText(constellation.name.toUpperCase(), cx, cy);
-        }
+        ctx.fillText(
+          constellation.nombreEs.toUpperCase(),
+          constellation.etiquetaX,
+          constellation.etiquetaY
+        );
       }
     }
 
@@ -384,7 +367,9 @@ export function StarChartCanvas({
         isSelected ||
         isHovered ||
         (layers.showStarLabels &&
-          (item.star.magnitude <= 2.15 || item.star.id === 'polaris'));
+          (item.star.magnitude <= 2.15 ||
+            item.star.id === 'Alp UMi' ||
+            item.star.name === 'Polaris'));
 
       if (shouldShowLabel) {
         const labelX = item.x + item.radius + 5;
@@ -513,7 +498,6 @@ export function StarChartCanvas({
     palette,
     layers,
     constellations,
-    starById,
     projectedStars,
     selectedStar,
     hoveredStar,
@@ -571,7 +555,8 @@ export function StarChartCanvas({
   };
 
   const ariaLabel = `Carta astronómica para ${locationName} a las ${formatTimeForAria(
-    date
+    date,
+    timezone
   )}. ${visibleCount} estrellas visibles sobre el horizonte con magnitud hasta ${layers.maxMagnitude.toFixed(
     1
   )}. Orientación celeste con Norte arriba, Este a la izquierda y Oeste a la derecha.`;

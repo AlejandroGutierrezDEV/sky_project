@@ -12,17 +12,20 @@ import {
   X,
 } from 'lucide-react';
 import type { TemaVisual } from '../../types/astronomy';
-import {
-  CONSTELLATIONS,
-  DEFAULT_STAR_CHART_LOCATION,
-  getConstellationName,
-} from '../../data/starCatalog';
+import { obtenerNombreConstelacionIAU } from '../../data/constelacionesIAU';
 import {
   DEFAULT_CANVAS_PADDING,
+  DEFAULT_STAR_CHART_LOCATION,
   MAX_MAGNITUDE_LIMIT,
   MIN_MAGNITUDE_LIMIT,
   useStarChart,
 } from '../../hooks/useStarChart';
+import {
+  formatearFechaCortaEnZona,
+  formatearFechaInputEnZona,
+  formatearHoraEnZona,
+  parsearFechaInputEnZona,
+} from '../../utils/lunarCalculations';
 import {
   azimuthToCardinal,
   getLocalSiderealTimeDeg,
@@ -37,6 +40,7 @@ export interface StarChartTabProps {
   initialLatitude?: number;
   initialLongitude?: number;
   initialLocationName?: string;
+  initialTimezone?: string;
 }
 
 interface PresetObservatorio {
@@ -44,6 +48,7 @@ interface PresetObservatorio {
   name: string;
   latitude: number;
   longitude: number;
+  timezone: string;
 }
 
 const PRESETS_UBICACION: ReadonlyArray<PresetObservatorio> = [
@@ -52,17 +57,30 @@ const PRESETS_UBICACION: ReadonlyArray<PresetObservatorio> = [
     name: DEFAULT_STAR_CHART_LOCATION.name,
     latitude: DEFAULT_STAR_CHART_LOCATION.latitude,
     longitude: DEFAULT_STAR_CHART_LOCATION.longitude,
+    timezone: DEFAULT_STAR_CHART_LOCATION.timezone,
   },
-  { id: 'canarias', name: 'Teide (Canarias)', latitude: 28.2724, longitude: -16.6425 },
-  { id: 'buenos-aires', name: 'Buenos Aires', latitude: -34.6037, longitude: -58.3816 },
-  { id: 'sidney', name: 'Sídney', latitude: -33.8688, longitude: 151.2093 },
+  {
+    id: 'canarias',
+    name: 'Teide (Canarias)',
+    latitude: 28.2724,
+    longitude: -16.6425,
+    timezone: 'Atlantic/Canary',
+  },
+  {
+    id: 'buenos-aires',
+    name: 'Buenos Aires',
+    latitude: -34.6037,
+    longitude: -58.3816,
+    timezone: 'America/Argentina/Buenos_Aires',
+  },
+  {
+    id: 'sidney',
+    name: 'Sídney',
+    latitude: -33.8688,
+    longitude: 151.2093,
+    timezone: 'Australia/Sydney',
+  },
 ];
-
-function formatDateTimeLocalInput(date: Date): string {
-  if (Number.isNaN(date.getTime())) return '';
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-}
 
 function formatSiderealTime(lstDeg: number): string {
   const totalSeconds = Math.round((lstDeg / 15) * 3600) % 86_400;
@@ -112,6 +130,7 @@ export function StarChartTab({
   initialLatitude = DEFAULT_STAR_CHART_LOCATION.latitude,
   initialLongitude = DEFAULT_STAR_CHART_LOCATION.longitude,
   initialLocationName = DEFAULT_STAR_CHART_LOCATION.name,
+  initialTimezone,
 }: StarChartTabProps) {
   const [canvasSize, setCanvasSize] = useState<number>(560);
   const [editingLocation, setEditingLocation] = useState<boolean>(false);
@@ -122,9 +141,11 @@ export function StarChartTab({
   const {
     observer,
     locationName,
+    timezone,
     date,
     layers,
     projectedStars,
+    projectedConstellations,
     visibleStars,
     visibleCount,
     aboveHorizonCount,
@@ -146,6 +167,7 @@ export function StarChartTab({
     initialLatitude,
     initialLongitude,
     initialLocationName,
+    initialTimezone,
     viewportSize: canvasSize,
     padding: DEFAULT_CANVAS_PADDING,
   });
@@ -160,8 +182,8 @@ export function StarChartTab({
       setCustomDate(new Date(Number.NaN));
       return;
     }
-    const parsed = new Date(raw);
-    setCustomDate(parsed);
+    const parsed = parsearFechaInputEnZona(raw, timezone);
+    setCustomDate(parsed ?? new Date(Number.NaN));
   };
 
   const handleApplyLocation = (event: FormEvent<HTMLFormElement>) => {
@@ -183,6 +205,7 @@ export function StarChartTab({
       name: preset.name,
       latitude: preset.latitude,
       longitude: preset.longitude,
+      timezone: preset.timezone,
     });
   };
 
@@ -260,13 +283,10 @@ export function StarChartTab({
             </span>
             <span className="font-mono opacity-75">
               {error === null
-                ? date.toLocaleString('es-ES', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })
+                ? `${formatearFechaCortaEnZona(date, timezone)} · ${formatearHoraEnZona(
+                    date,
+                    timezone
+                  )}`
                 : 'Fecha no válida'}
             </span>
           </div>
@@ -301,11 +321,12 @@ export function StarChartTab({
             <>
               <StarChartCanvas
                 projectedStars={projectedStars}
-                constellations={CONSTELLATIONS}
+                constellations={projectedConstellations}
                 layers={layers}
                 selectedStar={selectedStar}
                 hoveredStar={hoveredStar}
                 date={date}
+                timezone={timezone}
                 locationName={locationName}
                 visibleCount={visibleCount}
                 tema={tema}
@@ -402,8 +423,8 @@ export function StarChartTab({
               <span className="opacity-75">Fecha y hora local</span>
               <input
                 type="datetime-local"
-                aria-label="Fecha y hora de la carta astronómica"
-                value={formatDateTimeLocalInput(date)}
+                aria-label={`Fecha y hora de la carta astronómica (${timezone})`}
+                value={Number.isNaN(date.getTime()) ? '' : formatearFechaInputEnZona(date, timezone)}
                 onChange={handleDateChange}
                 className={`w-full min-h-10 px-3 py-1.5 rounded-xl border border-current/25 bg-transparent font-mono text-xs ${inputSchemeClass}`}
               />
@@ -554,7 +575,7 @@ export function StarChartTab({
                       {selectedStar.star.name}
                     </h3>
                     <p className="text-xs opacity-75 mt-0.5">
-                      {getConstellationName(selectedStar.star.constellation)} (
+                      {obtenerNombreConstelacionIAU(selectedStar.star.constellation)} (
                       {selectedStar.star.constellation})
                     </p>
                   </div>

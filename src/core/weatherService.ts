@@ -1,6 +1,6 @@
 import type { CondicionesMeteo, FranjaHorariaMeteo, Ubicacion } from '../types/astronomy';
 import { calcularEstadoSolar, esEntradaAstronomicaValida } from './skyCalculator';
-import { formatearHoraEnZona } from '../utils/lunarCalculations';
+import { formatearHoraEnZona, normalizarZonaHoraria } from '../utils/lunarCalculations';
 
 interface OpenMeteoHourly {
   time: string[];
@@ -120,13 +120,13 @@ function formatearClaveHoraUTC(fecha: Date): string {
   return `${anio}-${mes}-${dia}T${hora}:00`;
 }
 
-function formatearHoraLocalFranja(fecha: Date, timezone?: string): string {
-  if (timezone) {
-    return formatearHoraEnZona(fecha, timezone);
-  }
-  const horas = String(fecha.getHours()).padStart(2, '0');
-  const minutos = String(fecha.getMinutes()).padStart(2, '0');
-  return `${horas}:${minutos}`;
+function formatearHoraLocalFranja(fecha: Date, ubicacion: Ubicacion): string {
+  const zonaHoraria = normalizarZonaHoraria(
+    ubicacion.timezone,
+    ubicacion.latitud,
+    ubicacion.longitud
+  );
+  return formatearHoraEnZona(fecha, zonaHoraria);
 }
 
 function extraerDesdeHourly(
@@ -157,7 +157,7 @@ function extraerDesdeHourly(
 
     proximasHoras.push({
       fechaISO,
-      horaLocal: formatearHoraLocalFranja(fechaFranja, ubicacion.timezone),
+      horaLocal: formatearHoraLocalFranja(fechaFranja, ubicacion),
       nubesTotal: nubesFranja,
       vientoKmh: vientoFranja,
       veredicto: evaluarVeredicto(nubesFranja, vientoFranja),

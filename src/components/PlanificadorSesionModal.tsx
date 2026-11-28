@@ -21,9 +21,11 @@ import type {
 import {
   descargarSesionMarkdown,
   formatearDec,
+  formatearEtiquetaCulminacionEnZona,
   formatearRA,
   imprimirHojaObservacionPDF,
 } from '../utils/exportarSesion';
+import { normalizarZonaHoraria, obtenerClaveDiaCivil } from '../utils/lunarCalculations';
 import { MAX_LONGITUD_NOTA } from '../hooks/usePlanificadorSesion';
 
 interface PlanificadorSesionModalProps {
@@ -125,14 +127,16 @@ function obtenerTextoEstadoVisibilidad(estado: EstadoVisibilidadObjetivo): strin
   return 'No sale';
 }
 
-function formatearFechaEncabezado(fecha: Date): string {
+function formatearFechaEncabezado(fecha: Date, timezone: string): string {
   const valida = Number.isNaN(fecha.getTime()) ? new Date() : fecha;
+  const tzSegura = normalizarZonaHoraria(timezone);
   try {
     return new Intl.DateTimeFormat('es-ES', {
       dateStyle: 'long',
+      timeZone: tzSegura,
     }).format(valida);
   } catch {
-    return valida.toISOString().slice(0, 10);
+    return obtenerClaveDiaCivil(valida, tzSegura);
   }
 }
 
@@ -238,7 +242,7 @@ export function PlanificadorSesionModal({
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] font-mono opacity-80">
                 <span>{metadatos.ubicacionNombre}</span>
                 <span aria-hidden="true">·</span>
-                <span>{formatearFechaEncabezado(metadatos.fecha)}</span>
+                <span>{formatearFechaEncabezado(metadatos.fecha, metadatos.timezone)}</span>
                 <span aria-hidden="true">·</span>
                 <span>Bortle {metadatos.bortle}</span>
                 <span aria-hidden="true">·</span>
@@ -285,7 +289,7 @@ export function PlanificadorSesionModal({
               <button
                 type="button"
                 disabled={total === 0}
-                onClick={() => descargarSesionMarkdown(objetivos, metadatos)}
+                onClick={() => descargarSesionMarkdown(objetivos, metadatos, metadatos.timezone)}
                 className={`inline-flex items-center gap-1.5 px-3 min-h-10 sm:min-h-9 rounded-xl border text-xs font-semibold cursor-pointer transition-colors motion-reduce:transition-none disabled:opacity-40 disabled:cursor-not-allowed ${obtenerClaseBotonPrimario(
                   tema
                 )}`}
@@ -504,7 +508,7 @@ export function HojaImpresionSesion({ objetivos, metadatos }: HojaImpresionSesio
       <dl className="hoja-impresion-metadatos">
         <div>
           <dt>Fecha</dt>
-          <dd>{formatearFechaEncabezado(metadatos.fecha)}</dd>
+          <dd>{formatearFechaEncabezado(metadatos.fecha, metadatos.timezone)}</dd>
         </div>
         <div>
           <dt>Ubicación</dt>
@@ -558,7 +562,7 @@ export function HojaImpresionSesion({ objetivos, metadatos }: HojaImpresionSesio
                   <td className="col-mono">
                     {formatearRA(obj.raHoras)} / {formatearDec(obj.decGrados)}
                   </td>
-                  <td>{obj.etiquetaHoraria}</td>
+                  <td>{formatearEtiquetaCulminacionEnZona(obj, metadatos.timezone)}</td>
                   <td>{obj.notas && obj.notas.trim().length > 0 ? obj.notas : ''}</td>
                 </tr>
               );
