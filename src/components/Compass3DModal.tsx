@@ -15,7 +15,13 @@ import {
   calcularDeclinacionMagnetica,
   formatearDeclinacionMagnetica,
 } from '../utils/astronomia/declinacionMagnetica';
-import { useCompassFilter } from '../hooks/useCompassFilter';
+import {
+  MARGEN_ALINEACION_BRUJULA,
+  buscarObjetivoAlineado,
+  construirObjetivosDiscoBrujula,
+  esObjetivoSeleccionadoSobreHorizonte,
+  useCompassFilter,
+} from '../hooks/useCompassFilter';
 import { CompassFilter } from './CompassFilter';
 
 interface Compass3DModalProps {
@@ -71,7 +77,7 @@ const CENTRO = 200;
 const RADIO_ESFERA = 196;
 const RADIO_MARCADORES = 187;
 const RADIO_MARCAS = 175;
-const MARGEN_ALINEACION = 8;
+const MARGEN_ALINEACION = MARGEN_ALINEACION_BRUJULA;
 const INCLINACION_VISUAL_MAX = 65;
 const UMBRAL_PROYECCION_HORIZONTAL = 0.15;
 const ALTITUD_MANUAL_MIN = -60;
@@ -702,66 +708,32 @@ export function Compass3DModal({
   const planetaEnfocado =
     selectedFilter === 'all' ? null : (activePlanets[0] ?? null);
 
-  const objetivosEnDisco = useMemo<ObjetivoBrujula[]>(() => {
-    const listaPlanetas: ObjetivoBrujula[] = activePlanets.map((planeta) => ({
-      id: planeta.id,
-      nombre: planeta.name,
-      acimut: planeta.azimuthDeg,
-      altitud: planeta.altitudeDeg,
-      color: planeta.accentColor ?? '#e2e8f0',
-      bajoHorizonte: !planeta.isAboveHorizon,
-    }));
+  const objetivosEnDisco = useMemo<ObjetivoBrujula[]>(
+    () =>
+      construirObjetivosDiscoBrujula({
+        activePlanets,
+        cuerpos,
+        objetivoSeleccionado,
+        selectedFilter,
+      }),
+    [activePlanets, cuerpos, objetivoSeleccionado, selectedFilter]
+  );
 
-    // Cuando hay un planeta enfocado, el disco se centra exclusivamente en ese planeta
-    if (selectedFilter !== 'all') {
-      return listaPlanetas;
-    }
+  const alineado = useMemo<ObjetivoBrujula | null>(
+    () =>
+      buscarObjetivoAlineado(
+        objetivosEnDisco,
+        visual.rumbo,
+        selectedFilter,
+        objetivoSeleccionado,
+        MARGEN_ALINEACION
+      ),
+    [objetivosEnDisco, objetivoSeleccionado, selectedFilter, visual.rumbo]
+  );
 
-    const lista: ObjetivoBrujula[] = [...listaPlanetas];
-
-    // En modo 'all' añadimos también la Luna sobre el horizonte
-    for (const cuerpo of cuerpos) {
-      if (cuerpo.tipo === 'luna' && cuerpo.altitud > 0 && Number.isFinite(cuerpo.acimut)) {
-        lista.unshift({
-          id: cuerpo.id,
-          nombre: cuerpo.nombre,
-          acimut: cuerpo.acimut,
-          altitud: cuerpo.altitud,
-          color: cuerpo.color,
-          bajoHorizonte: false,
-        });
-      }
-    }
-
-    // Y el astro seleccionado en el mapa (estrella/Messier/etc.) si está sobre el horizonte
-    if (
-      objetivoSeleccionado &&
-      objetivoSeleccionado.altitud > 0 &&
-      Number.isFinite(objetivoSeleccionado.acimut) &&
-      !lista.some(
-        (item) => item.id.toLowerCase() === objetivoSeleccionado.id.toLowerCase()
-      )
-    ) {
-      lista.unshift({ ...objetivoSeleccionado, bajoHorizonte: false });
-    }
-
-    return lista;
-  }, [activePlanets, cuerpos, objetivoSeleccionado, selectedFilter]);
-
-  const alineado = useMemo<ObjetivoBrujula | null>(() => {
-    let candidato: ObjetivoBrujula | null = null;
-    let mejorDiferencia = Number.POSITIVE_INFINITY;
-    for (const objetivo of objetivosEnDisco) {
-      // En vista 'all' evitamos saltar alertas de alineación por planetas bajo el horizonte
-      if (selectedFilter === 'all' && objetivo.bajoHorizonte) continue;
-      const dif = Math.abs(diferenciaAngular(objetivo.acimut, visual.rumbo));
-      if (dif <= MARGEN_ALINEACION && dif < mejorDiferencia) {
-        mejorDiferencia = dif;
-        candidato = objetivo;
-      }
-    }
-    return candidato;
-  }, [objetivosEnDisco, selectedFilter, visual.rumbo]);
+  const objetivoPrioritarioActivo = esObjetivoSeleccionadoSobreHorizonte(objetivoSeleccionado)
+    ? objetivoSeleccionado
+    : null;
 
   const alineadoBajoHorizonte = Boolean(alineado?.bajoHorizonte);
   const difElevacion =
@@ -1115,6 +1087,20 @@ export function Compass3DModal({
                   {textoGuiaElevacion}
                 </span>
               )}
+            </p>
+          ) : objetivoPrioritarioActivo ? (
+            <p className="text-xs opacity-80 text-center font-mono">
+              Objetivo: {objetivoPrioritarioActivo.nombre} · Az{' '}
+              {Math.round(normalizarAngulo(objetivoPrioritarioActivo.acimut))}° (
+              {direccionCardinal(objetivoPrioritarioActivo.acimut)}) · Alt{' '}
+              {Math.round(objetivoPrioritarioActivo.altitud)}°
+              {planetaEnfocado &&
+                planetaEnfocado.id.toLowerCase() !== objetivoPrioritarioActivo.id.toLowerCase() && (
+                  <>
+                    {' · '}
+                    {planetaEnfocado.name}: Az {Math.round(planetaEnfocado.azimuthDeg)}°
+                  </>
+                )}
             </p>
           ) : planetaEnfocado ? (
             <p className="text-xs opacity-80 text-center font-mono">

@@ -1,3 +1,12 @@
+import {
+  ErrorServicioMeteo,
+  MAX_HORAS_PRONOSTICO,
+  esErrorAbort,
+  obtenerPronosticoHorarioOpenMeteo,
+  parsearFechaIsoUtc,
+  type CodigoErrorMeteo,
+  type OpcionesConsultaMeteo,
+} from '../core/weatherService';
 import type {
   AlertCategory,
   AlertSeverity,
@@ -5,11 +14,9 @@ import type {
   WeatherAlertCoordinates,
 } from '../types/weatherAlerts';
 
-export type WeatherAlertErrorCode =
-  | 'NETWORK'
-  | 'TIMEOUT'
-  | 'HTTP'
-  | 'INVALID_RESPONSE';
+export { esErrorAbort, parsearFechaIsoUtc };
+
+export type WeatherAlertErrorCode = CodigoErrorMeteo;
 
 export class WeatherAlertServiceError extends Error {
   readonly code: WeatherAlertErrorCode;
@@ -51,8 +58,6 @@ export const FALLBACK_ALERT_COORDINATES: Readonly<ResolvedWeatherAlertCoordinate
   usedFallback: true,
 };
 
-const OPEN_METEO_ENDPOINT = 'https://api.open-meteo.com/v1/forecast';
-const REQUEST_TIMEOUT_MS = 9_000;
 const FORECAST_HOURS = 48;
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const ALERT_SOURCE = 'Open-Meteo';
@@ -120,37 +125,19 @@ export function normalizarCoordenadasAvisos(
   };
 }
 
-export function parsearFechaIsoUtc(raw: string): Date | null {
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/.test(trimmed)) {
-    return null;
-  }
-
-  const tieneZona = /(?:Z|[+-]\d{2}:\d{2})$/.test(trimmed);
-  const tieneSegundos = /T\d{2}:\d{2}:\d{2}/.test(trimmed);
-  let normalizada = trimmed;
-  if (!tieneSegundos) {
-    normalizada = tieneZona
-      ? trimmed.replace(/(T\d{2}:\d{2})(Z|[+-]\d{2}:\d{2})$/, '$1:00$2')
-      : `${trimmed}:00Z`;
-  } else if (!tieneZona) {
-    normalizada = `${trimmed}Z`;
-  }
-
-  const fecha = new Date(normalizada);
-  return Number.isNaN(fecha.getTime()) ? null : fecha;
-}
-
 function esArrayFechasIsoValido(valor: unknown): valor is string[] {
   return (
     Array.isArray(valor) &&
     valor.length > 0 &&
+    valor.length <= MAX_HORAS_PRONOSTICO &&
     valor.every((item) => typeof item === 'string' && parsearFechaIsoUtc(item) !== null)
   );
 }
 
-function esArrayNumericoNullable(valor: unknown, longitudEsperada: number): valor is (number | null)[] {
+function esArrayNumericoNullable(
+  valor: unknown,
+  longitudEsperada: number
+): valor is (number | null)[] {
   return (
     Array.isArray(valor) &&
     valor.length === longitudEsperada &&
@@ -173,12 +160,6 @@ export function esRespuestaOpenMeteoValida(valor: unknown): valor is OpenMeteoAl
     esArrayNumericoNullable(hourly.temperature_2m, longitud) &&
     esArrayNumericoNullable(hourly.visibility, longitud)
   );
-}
-
-export function esErrorAbort(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === 'AbortError') return true;
-  if (error instanceof Error && error.name === 'AbortError') return true;
-  return false;
 }
 
 interface CandidatoHorario {
@@ -221,7 +202,10 @@ function evaluarHora(
   const finHora = new Date(fecha.getTime() + ONE_HOUR_MS);
 
   // 1. Tormenta eléctrica / granizo
-  if (codigoWmo !== null && (STORM_CODES_EXTREME.has(codigoWmo) || STORM_CODES_SEVERE.has(codigoWmo))) {
+  if (
+    codigoWmo !== null &&
+    (STORM_CODES_EXTREME.has(codigoWmo) || STORM_CODES_SEVERE.has(codigoWmo))
+  ) {
     const esGranizo = STORM_CODES_EXTREME.has(codigoWmo);
     const severity: AlertSeverity = esGranizo ? 'extreme' : 'severe';
     const probTexto =
@@ -374,12 +358,36 @@ function evaluarHora(
   return resultados;
 }
 
-export function transformarHourlyEnAvisos(hourly: OpenMeteoAlertHourly): WeatherAlert[] {
-  const totalHoras = Math.min(hourly.time.length, FORECAST_HOURS);
+function resolverIndiceInicioVentana(
+  horasIso: readonly string[],
+  fechaReferencia?: Date
+): number | null {
+  if (!fechaReferencia || Number.isNaN(fechaReferencia.getTime())) {
+    return 0;
+  }
+
+  const referenciaMs = fechaReferencia.getTime();
+  for (let i = 0; i < horasIso.length; i++) {
+    const fecha = parsearFechaIsoUtc(horasIso[i]);
+    if (fecha && fecha.getTime() + ONE_HOUR_MS > referenciaMs) {
+      return i;
+    }
+  }
+  return null;
+}
+
+export function transformarHourlyEnAvisos(
+  hourly: OpenMeteoAlertHourly,
+  fechaReferencia?: Date
+): WeatherAlert[] {
+  const indiceInicio = resolverIndiceInicioVentana(hourly.time, fechaReferencia);
+  if (indiceInicio === null) return [];
+
+  const limiteFin = Math.min(hourly.time.length, indiceInicio + FORECAST_HOURS);
   const bloquesActivos = new Map<string, BloqueAcumulado>();
   const bloquesCerrados: BloqueAcumulado[] = [];
 
-  for (let i = 0; i < totalHoras; i++) {
+  for (let i = indiceInicio; i < limiteFin; i++) {
     const fecha = parsearFechaIsoUtc(hourly.time[i]);
     if (!fecha) continue;
 
@@ -476,11 +484,18 @@ export interface FetchWeatherAlertsResult {
   alerts: WeatherAlert[];
   resolvedCoordinates: ResolvedWeatherAlertCoordinates;
   fetchedAt: Date;
+  desdeCache?: boolean;
+  avisoOffline?: string | null;
 }
 
+/**
+ * Obtiene avisos meteorológicos a 48h reutilizando el cliente unificado y
+ * la caché LRU compartida de `src/core/weatherService.ts`.
+ */
 export async function obtenerAvisosMeteorologicos(
   coordinates?: WeatherAlertCoordinates,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opciones: Pick<OpcionesConsultaMeteo, 'forzarRed'> = {}
 ): Promise<FetchWeatherAlertsResult> {
   if (signal?.aborted) {
     throw new DOMException('Petición cancelada por el usuario', 'AbortError');
@@ -488,85 +503,38 @@ export async function obtenerAvisosMeteorologicos(
 
   const resolvedCoordinates = normalizarCoordenadasAvisos(coordinates);
 
-  const params = new URLSearchParams({
-    latitude: resolvedCoordinates.latitude.toFixed(4),
-    longitude: resolvedCoordinates.longitude.toFixed(4),
-    hourly:
-      'weather_code,wind_gusts_10m,precipitation_probability,precipitation,temperature_2m,visibility',
-    forecast_hours: String(FORECAST_HOURS),
-    wind_speed_unit: 'kmh',
-    timezone: 'UTC',
-  });
-
-  const controller = new AbortController();
-  let timedOut = false;
-
-  const onExternalAbort = () => {
-    controller.abort();
-  };
-
-  signal?.addEventListener('abort', onExternalAbort, { once: true });
-
-  const timeoutId = globalThis.setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, REQUEST_TIMEOUT_MS);
-
   try {
-    const response = await fetch(`${OPEN_METEO_ENDPOINT}?${params.toString()}`, {
-      signal: controller.signal,
-      headers: { Accept: 'application/json' },
-    });
+    const resultado = await obtenerPronosticoHorarioOpenMeteo(
+      {
+        latitud: resolvedCoordinates.latitude,
+        longitud: resolvedCoordinates.longitude,
+      },
+      {
+        signal,
+        forzarRed: opciones.forzarRed,
+      }
+    );
 
-    if (!response.ok) {
-      throw new WeatherAlertServiceError(
-        'HTTP',
-        `El servicio meteorológico respondió con error HTTP ${response.status}.`
-      );
-    }
-
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new WeatherAlertServiceError(
-        'INVALID_RESPONSE',
-        'No se pudo interpretar la respuesta JSON del servicio meteorológico.'
-      );
-    }
-
-    if (!esRespuestaOpenMeteoValida(payload)) {
-      throw new WeatherAlertServiceError(
-        'INVALID_RESPONSE',
-        'La respuesta meteorológica recibida está incompleta o tiene un formato no válido.'
-      );
-    }
-
-    const alerts = transformarHourlyEnAvisos(payload.hourly);
+    const alerts = transformarHourlyEnAvisos(resultado.hourly, new Date());
     return {
       alerts,
       resolvedCoordinates,
-      fetchedAt: new Date(),
+      fetchedAt: new Date(resultado.timestamp),
+      desdeCache: resultado.esCache,
+      avisoOffline: resultado.sinConexion
+        ? 'Sin conexión: mostrando avisos guardados en caché.'
+        : null,
     };
   } catch (error: unknown) {
-    if (error instanceof WeatherAlertServiceError) {
-      throw error;
-    }
-    if (timedOut) {
-      throw new WeatherAlertServiceError(
-        'TIMEOUT',
-        'La consulta de avisos meteorológicos superó el tiempo de espera.'
-      );
-    }
     if (signal?.aborted || esErrorAbort(error)) {
       throw new DOMException('Petición cancelada', 'AbortError');
+    }
+    if (error instanceof ErrorServicioMeteo) {
+      throw new WeatherAlertServiceError(error.codigo, error.message);
     }
     throw new WeatherAlertServiceError(
       'NETWORK',
       'No se pudo conectar con el servicio de avisos meteorológicos.'
     );
-  } finally {
-    globalThis.clearTimeout(timeoutId);
-    signal?.removeEventListener('abort', onExternalAbort);
   }
 }

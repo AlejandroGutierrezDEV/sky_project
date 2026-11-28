@@ -312,6 +312,7 @@ export function WeatherAlertsPanel({
     error,
     lastUpdated,
     resolvedCoordinates,
+    avisoOffline,
     refresh,
     dismissAlert,
     restoreDismissed,
@@ -398,6 +399,12 @@ export function WeatherAlertsPanel({
       <p className="sr-only" aria-live="polite">
         {resumenEstado}
       </p>
+
+      {!isLoading && avisoOffline && (
+        <p role="status" aria-live="polite" className="text-[11px] font-mono opacity-75">
+          {avisoOffline}
+        </p>
+      )}
 
       {isLoading ? (
         <div className="space-y-2.5" aria-label="Cargando avisos meteorológicos">

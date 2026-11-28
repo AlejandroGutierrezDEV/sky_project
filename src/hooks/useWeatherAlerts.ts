@@ -86,10 +86,14 @@ interface FetchSnapshot {
   alerts: WeatherAlert[];
   error: string | null;
   lastUpdated: Date | null;
+  desdeCache: boolean;
+  avisoOffline: string | null;
 }
 
 export interface UseWeatherAlertsReturn extends WeatherAlertsState {
   resolvedCoordinates: ResolvedWeatherAlertCoordinates;
+  desdeCache: boolean;
+  avisoOffline: string | null;
   refresh: () => void;
   dismissAlert: (id: string) => void;
   restoreDismissed: () => void;
@@ -125,6 +129,8 @@ export function useWeatherAlerts(
     alerts: [],
     error: null,
     lastUpdated: null,
+    desdeCache: false,
+    avisoOffline: null,
   });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [dismissedRecords, setDismissedRecords] = useState<DismissedAlertRecord[]>(() =>
@@ -135,7 +141,7 @@ export function useWeatherAlerts(
   const requestSeqRef = useRef(0);
 
   const ejecutarConsulta = useCallback(
-    (clave: string, coords: ResolvedWeatherAlertCoordinates) => {
+    (clave: string, coords: ResolvedWeatherAlertCoordinates, forzarRed: boolean = false) => {
       activeControllerRef.current?.abort();
       const controller = new AbortController();
       activeControllerRef.current = controller;
@@ -148,7 +154,8 @@ export function useWeatherAlerts(
           timezone: coords.timezone,
           locationName: coords.locationName,
         },
-        controller.signal
+        controller.signal,
+        { forzarRed }
       )
         .then((resultado) => {
           if (controller.signal.aborted || seqActual !== requestSeqRef.current) return;
@@ -165,6 +172,8 @@ export function useWeatherAlerts(
             alerts: resultado.alerts,
             error: null,
             lastUpdated: resultado.fetchedAt,
+            desdeCache: Boolean(resultado.desdeCache),
+            avisoOffline: resultado.avisoOffline ?? null,
           });
           setIsRefreshing(false);
         })
@@ -181,6 +190,8 @@ export function useWeatherAlerts(
             alerts: prev.loadedKey === clave ? prev.alerts : [],
             error: mensaje,
             lastUpdated: prev.loadedKey === clave ? prev.lastUpdated : null,
+            desdeCache: prev.loadedKey === clave ? prev.desdeCache : false,
+            avisoOffline: prev.loadedKey === clave ? prev.avisoOffline : null,
           }));
           setIsRefreshing(false);
         });
@@ -189,7 +200,7 @@ export function useWeatherAlerts(
   );
 
   useEffect(() => {
-    ejecutarConsulta(requestKey, resolvedCoordinates);
+    ejecutarConsulta(requestKey, resolvedCoordinates, false);
     return () => {
       activeControllerRef.current?.abort();
     };
@@ -197,7 +208,7 @@ export function useWeatherAlerts(
 
   const refresh = useCallback(() => {
     setIsRefreshing(true);
-    ejecutarConsulta(requestKey, resolvedCoordinates);
+    ejecutarConsulta(requestKey, resolvedCoordinates, true);
   }, [ejecutarConsulta, requestKey, resolvedCoordinates]);
 
   const dismissAlert = useCallback(
@@ -251,6 +262,8 @@ export function useWeatherAlerts(
     isLoading,
     error: snapshot.loadedKey === requestKey ? snapshot.error : null,
     lastUpdated: snapshot.loadedKey === requestKey ? snapshot.lastUpdated : null,
+    desdeCache: snapshot.loadedKey === requestKey ? snapshot.desdeCache : false,
+    avisoOffline: snapshot.loadedKey === requestKey ? snapshot.avisoOffline : null,
     resolvedCoordinates,
     refresh,
     dismissAlert,
