@@ -91,10 +91,12 @@ export interface UseStarChartResult {
   hoveredStar: ProjectedStar | null;
   isReady: boolean;
   error: string | null;
+  usaUbicacionLocal: boolean;
   shiftHours: (deltaHours: number) => void;
   resetToNow: () => void;
   setCustomDate: (nextDate: Date) => void;
   setLocation: (nextLocation: StarChartLocation) => void;
+  restaurarUbicacionGlobal: () => void;
   resetAll: () => void;
   setLayers: (nextLayers: StarChartLayers) => void;
   toggleLayer: (
@@ -138,16 +140,60 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
     padding = DEFAULT_CANVAS_PADDING,
   } = options;
 
-  const [location, setLocationState] = useState<StarChartLocation>(() => ({
-    name: initialLocationName.trim() || DEFAULT_STAR_CHART_LOCATION.name,
-    latitude: initialLatitude,
-    longitude: initialLongitude,
-    timezone: normalizarZonaHoraria(initialTimezone, initialLatitude, initialLongitude),
-  }));
+  const nombreExterno = initialLocationName.trim() || DEFAULT_STAR_CHART_LOCATION.name;
+  const zonaExterna = normalizarZonaHoraria(initialTimezone, initialLatitude, initialLongitude);
+  const claveUbicacionExterna = `${initialLatitude}|${initialLongitude}|${nombreExterno}|${zonaExterna}`;
 
-  const [date, setDateState] = useState<Date>(() =>
-    initialDate !== undefined ? new Date(initialDate.getTime()) : new Date()
+  const ubicacionExterna = useMemo<StarChartLocation>(
+    () => ({
+      name: nombreExterno,
+      latitude: initialLatitude,
+      longitude: initialLongitude,
+      timezone: zonaExterna,
+    }),
+    [nombreExterno, initialLatitude, initialLongitude, zonaExterna]
   );
+
+  const [ubicacionLocal, setUbicacionLocal] = useState<{
+    claveOrigen: string;
+    valor: StarChartLocation;
+  } | null>(null);
+
+  const usaUbicacionLocal =
+    ubicacionLocal !== null && ubicacionLocal.claveOrigen === claveUbicacionExterna;
+
+  const location = usaUbicacionLocal ? ubicacionLocal.valor : ubicacionExterna;
+
+  const [fechaInicialPorDefecto] = useState<Date>(() => new Date());
+  const timestampExterno =
+    initialDate instanceof Date
+      ? Number.isNaN(initialDate.getTime())
+        ? Number.NaN
+        : initialDate.getTime()
+      : null;
+
+  const claveFechaExterna =
+    timestampExterno === null
+      ? 'sin-fecha-externa'
+      : Number.isNaN(timestampExterno)
+        ? 'fecha-invalida'
+        : String(timestampExterno);
+
+  const [fechaLocal, setFechaLocal] = useState<{
+    claveOrigen: string;
+    valor: Date;
+  } | null>(null);
+
+  const fechaExternaMemo = useMemo<Date>(
+    () =>
+      timestampExterno === null ? fechaInicialPorDefecto : new Date(timestampExterno),
+    [timestampExterno, fechaInicialPorDefecto]
+  );
+
+  const date =
+    fechaLocal !== null && fechaLocal.claveOrigen === claveFechaExterna
+      ? fechaLocal.valor
+      : fechaExternaMemo;
 
   const [layers, setLayersState] = useState<StarChartLayers>(DEFAULT_STAR_CHART_LAYERS);
   const [selectedStarId, setSelectedStarId] = useState<string | null>(null);
@@ -341,47 +387,96 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
     return found && found.visible ? found : null;
   }, [projectedStars, hoveredStarId]);
 
-  const shiftHours = useCallback((deltaHours: number) => {
-    if (!Number.isFinite(deltaHours)) return;
-    setDateState((prev) => {
-      const baseMs = Number.isNaN(prev.getTime()) ? Date.now() : prev.getTime();
-      return new Date(baseMs + deltaHours * 3_600_000);
-    });
-  }, []);
+  const shiftHours = useCallback(
+    (deltaHours: number) => {
+      if (!Number.isFinite(deltaHours)) return;
+      setFechaLocal((prev) => {
+        const base =
+          prev !== null && prev.claveOrigen === claveFechaExterna
+            ? prev.valor
+            : fechaExternaMemo;
+        const baseMs = Number.isNaN(base.getTime()) ? Date.now() : base.getTime();
+        return {
+          claveOrigen: claveFechaExterna,
+          valor: new Date(baseMs + deltaHours * 3_600_000),
+        };
+      });
+    },
+    [claveFechaExterna, fechaExternaMemo]
+  );
 
   const resetToNow = useCallback(() => {
-    setDateState(new Date());
-  }, []);
-
-  const setCustomDate = useCallback((nextDate: Date) => {
-    setDateState(new Date(nextDate.getTime()));
-  }, []);
-
-  const setLocation = useCallback((nextLocation: StarChartLocation) => {
-    setLocationState({
-      name: nextLocation.name.trim() || 'Ubicación personalizada',
-      latitude: nextLocation.latitude,
-      longitude: nextLocation.longitude,
-      timezone: normalizarZonaHoraria(
-        nextLocation.timezone,
-        nextLocation.latitude,
-        nextLocation.longitude
-      ),
+    setFechaLocal({
+      claveOrigen: claveFechaExterna,
+      valor: new Date(),
     });
+  }, [claveFechaExterna]);
+
+  const setCustomDate = useCallback(
+    (nextDate: Date) => {
+      setFechaLocal({
+        claveOrigen: claveFechaExterna,
+        valor: new Date(nextDate.getTime()),
+      });
+    },
+    [claveFechaExterna]
+  );
+
+  const setLocation = useCallback(
+    (nextLocation: StarChartLocation) => {
+      setUbicacionLocal({
+        claveOrigen: claveUbicacionExterna,
+        valor: {
+          name: nextLocation.name.trim() || 'Ubicación personalizada',
+          latitude: nextLocation.latitude,
+          longitude: nextLocation.longitude,
+          timezone: normalizarZonaHoraria(
+            nextLocation.timezone,
+            nextLocation.latitude,
+            nextLocation.longitude
+          ),
+        },
+      });
+    },
+    [claveUbicacionExterna]
+  );
+
+  const restaurarUbicacionGlobal = useCallback(() => {
+    setUbicacionLocal(null);
   }, []);
 
   const resetAll = useCallback(() => {
-    setLocationState({
-      name: DEFAULT_STAR_CHART_LOCATION.name,
-      latitude: DEFAULT_STAR_CHART_LOCATION.latitude,
-      longitude: DEFAULT_STAR_CHART_LOCATION.longitude,
-      timezone: DEFAULT_STAR_CHART_LOCATION.timezone,
-    });
-    setDateState(new Date());
+    const fechaGlobalValida = Number.isNaN(fechaExternaMemo.getTime())
+      ? new Date()
+      : fechaExternaMemo;
+    if (
+      validateObserverInputs(
+        ubicacionExterna.latitude,
+        ubicacionExterna.longitude,
+        fechaGlobalValida
+      ) === null
+    ) {
+      setUbicacionLocal(null);
+    } else {
+      setUbicacionLocal({
+        claveOrigen: claveUbicacionExterna,
+        valor: {
+          name: DEFAULT_STAR_CHART_LOCATION.name,
+          latitude: DEFAULT_STAR_CHART_LOCATION.latitude,
+          longitude: DEFAULT_STAR_CHART_LOCATION.longitude,
+          timezone: DEFAULT_STAR_CHART_LOCATION.timezone,
+        },
+      });
+    }
+    setFechaLocal(
+      Number.isNaN(fechaExternaMemo.getTime())
+        ? { claveOrigen: claveFechaExterna, valor: new Date() }
+        : null
+    );
     setLayersState(DEFAULT_STAR_CHART_LAYERS);
     setSelectedStarId(null);
     setHoveredStarId(null);
-  }, []);
+  }, [claveFechaExterna, claveUbicacionExterna, fechaExternaMemo, ubicacionExterna]);
 
   const setLayers = useCallback((nextLayers: StarChartLayers) => {
     setLayersState({
@@ -441,10 +536,12 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
     hoveredStar,
     isReady,
     error,
+    usaUbicacionLocal,
     shiftHours,
     resetToNow,
     setCustomDate,
     setLocation,
+    restaurarUbicacionGlobal,
     resetAll,
     setLayers,
     toggleLayer,

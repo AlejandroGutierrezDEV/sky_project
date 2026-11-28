@@ -11,7 +11,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react';
-import type { TemaVisual } from '../../types/astronomy';
+import type { TemaVisual, Ubicacion } from '../../types/astronomy';
 import { obtenerNombreConstelacionIAU } from '../../data/constelacionesIAU';
 import {
   DEFAULT_CANVAS_PADDING,
@@ -37,6 +37,8 @@ import { StarChartCanvas } from './StarChartCanvas';
 export interface StarChartTabProps {
   tema?: TemaVisual;
   claseTarjeta?: string;
+  ubicacion?: Ubicacion;
+  fechaSeleccionada?: Date;
   initialLatitude?: number;
   initialLongitude?: number;
   initialLocationName?: string;
@@ -127,16 +129,26 @@ function getErrorClass(tema: TemaVisual): string {
 export function StarChartTab({
   tema = 'oscuro',
   claseTarjeta,
+  ubicacion,
+  fechaSeleccionada,
   initialLatitude = DEFAULT_STAR_CHART_LOCATION.latitude,
   initialLongitude = DEFAULT_STAR_CHART_LOCATION.longitude,
   initialLocationName = DEFAULT_STAR_CHART_LOCATION.name,
   initialTimezone,
 }: StarChartTabProps) {
+  const latitudGlobal = ubicacion?.latitud ?? initialLatitude;
+  const longitudGlobal = ubicacion?.longitud ?? initialLongitude;
+  const nombreGlobal = ubicacion?.nombre ?? initialLocationName;
+  const zonaGlobal = ubicacion?.timezone ?? initialTimezone;
+
   const [canvasSize, setCanvasSize] = useState<number>(560);
   const [editingLocation, setEditingLocation] = useState<boolean>(false);
-  const [latInput, setLatInput] = useState<string>(() => String(initialLatitude));
-  const [lonInput, setLonInput] = useState<string>(() => String(initialLongitude));
-  const [nameInput, setNameInput] = useState<string>(initialLocationName);
+  const [borradorUbicacion, setBorradorUbicacion] = useState<{
+    claveOrigen: string;
+    nombre: string;
+    latitud: string;
+    longitud: string;
+  } | null>(null);
 
   const {
     observer,
@@ -153,10 +165,12 @@ export function StarChartTab({
     hoveredStar,
     isReady,
     error,
+    usaUbicacionLocal,
     shiftHours,
     resetToNow,
     setCustomDate,
     setLocation,
+    restaurarUbicacionGlobal,
     resetAll,
     toggleLayer,
     setMaxMagnitude,
@@ -164,13 +178,33 @@ export function StarChartTab({
     selectStarById,
     setHoveredStar,
   } = useStarChart({
-    initialLatitude,
-    initialLongitude,
-    initialLocationName,
-    initialTimezone,
+    initialLatitude: latitudGlobal,
+    initialLongitude: longitudGlobal,
+    initialLocationName: nombreGlobal,
+    initialTimezone: zonaGlobal,
+    initialDate: fechaSeleccionada,
     viewportSize: canvasSize,
     padding: DEFAULT_CANVAS_PADDING,
   });
+
+  const claveOrigenFormulario = `${observer.latitude}|${observer.longitude}|${locationName}|${timezone}`;
+  const borradorActivo =
+    borradorUbicacion !== null && borradorUbicacion.claveOrigen === claveOrigenFormulario
+      ? borradorUbicacion
+      : null;
+
+  const nameInput = borradorActivo?.nombre ?? locationName;
+  const latInput = borradorActivo?.latitud ?? String(observer.latitude);
+  const lonInput = borradorActivo?.longitud ?? String(observer.longitude);
+
+  const actualizarCampoBorrador = (campo: 'nombre' | 'latitud' | 'longitud', valor: string) => {
+    setBorradorUbicacion({
+      claveOrigen: claveOrigenFormulario,
+      nombre: campo === 'nombre' ? valor : nameInput,
+      latitud: campo === 'latitud' ? valor : latInput,
+      longitud: campo === 'longitud' ? valor : lonInput,
+    });
+  };
 
   const handleSizeChange = useCallback((nextSize: number) => {
     setCanvasSize(nextSize);
@@ -190,6 +224,7 @@ export function StarChartTab({
     event.preventDefault();
     const parsedLat = latInput.trim() === '' ? Number.NaN : Number(latInput);
     const parsedLon = lonInput.trim() === '' ? Number.NaN : Number(lonInput);
+    setBorradorUbicacion(null);
     setLocation({
       name: nameInput.trim() || 'Ubicación personalizada',
       latitude: parsedLat,
@@ -198,9 +233,7 @@ export function StarChartTab({
   };
 
   const handleSelectPreset = (preset: PresetObservatorio) => {
-    setNameInput(preset.name);
-    setLatInput(String(preset.latitude));
-    setLonInput(String(preset.longitude));
+    setBorradorUbicacion(null);
     setLocation({
       name: preset.name,
       latitude: preset.latitude,
@@ -209,11 +242,14 @@ export function StarChartTab({
     });
   };
 
+  const handleUsarObservatorioGlobal = () => {
+    setBorradorUbicacion(null);
+    restaurarUbicacionGlobal();
+  };
+
   const handleResetAll = () => {
+    setBorradorUbicacion(null);
     resetAll();
-    setNameInput(DEFAULT_STAR_CHART_LOCATION.name);
-    setLatInput(String(DEFAULT_STAR_CHART_LOCATION.latitude));
-    setLonInput(String(DEFAULT_STAR_CHART_LOCATION.longitude));
   };
 
   const siderealLabel = useMemo(() => {
@@ -633,21 +669,32 @@ export function StarChartTab({
             )}
           </div>
 
-          {/* Ubicación aislada de la carta (presets Norte/Sur + coordenadas manuales) */}
+          {/* Ubicación sincronizada con el observatorio global (presets Norte/Sur + coordenadas manuales) */}
           <div className={`p-4 rounded-2xl border ${cardClass} space-y-3`}>
             <div className="flex items-center justify-between gap-2">
               <h2 className="font-semibold text-xs uppercase tracking-wider opacity-75 flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5" aria-hidden="true" />
                 Ubicación del observador
               </h2>
-              <button
-                type="button"
-                aria-expanded={editingLocation}
-                onClick={() => setEditingLocation((prev) => !prev)}
-                className="text-xs underline underline-offset-2 opacity-80 hover:opacity-100 cursor-pointer"
-              >
-                {editingLocation ? 'Ocultar' : 'Cambiar'}
-              </button>
+              <div className="flex items-center gap-2">
+                {usaUbicacionLocal && (
+                  <button
+                    type="button"
+                    onClick={handleUsarObservatorioGlobal}
+                    className="text-xs underline underline-offset-2 opacity-80 hover:opacity-100 cursor-pointer"
+                  >
+                    Observatorio global
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-expanded={editingLocation}
+                  onClick={() => setEditingLocation((prev) => !prev)}
+                  className="text-xs underline underline-offset-2 opacity-80 hover:opacity-100 cursor-pointer"
+                >
+                  {editingLocation ? 'Ocultar' : 'Cambiar'}
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-wrap gap-1.5">
@@ -680,7 +727,7 @@ export function StarChartTab({
                     type="text"
                     maxLength={48}
                     value={nameInput}
-                    onChange={(e) => setNameInput(e.target.value)}
+                    onChange={(e) => actualizarCampoBorrador('nombre', e.target.value)}
                     className={`w-full min-h-9 px-2.5 py-1 rounded-lg border border-current/25 bg-transparent text-xs ${inputSchemeClass}`}
                   />
                 </label>
@@ -693,7 +740,7 @@ export function StarChartTab({
                       min={-90}
                       max={90}
                       value={latInput}
-                      onChange={(e) => setLatInput(e.target.value)}
+                      onChange={(e) => actualizarCampoBorrador('latitud', e.target.value)}
                       className={`w-full min-h-9 px-2.5 py-1 rounded-lg border border-current/25 bg-transparent font-mono text-xs ${inputSchemeClass}`}
                     />
                   </label>
@@ -705,7 +752,7 @@ export function StarChartTab({
                       min={-180}
                       max={180}
                       value={lonInput}
-                      onChange={(e) => setLonInput(e.target.value)}
+                      onChange={(e) => actualizarCampoBorrador('longitud', e.target.value)}
                       className={`w-full min-h-9 px-2.5 py-1 rounded-lg border border-current/25 bg-transparent font-mono text-xs ${inputSchemeClass}`}
                     />
                   </label>

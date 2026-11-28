@@ -2,7 +2,23 @@ import type { CondicionesMeteo, FranjaHorariaMeteo, Ubicacion } from '../types/a
 import { calcularEstadoSolar, esEntradaAstronomicaValida } from './skyCalculator';
 import { formatearHoraEnZona, normalizarZonaHoraria } from '../utils/lunarCalculations';
 
-interface OpenMeteoHourly {
+export type CodigoErrorMeteo =
+  | 'NETWORK'
+  | 'TIMEOUT'
+  | 'HTTP'
+  | 'INVALID_RESPONSE';
+
+export class ErrorServicioMeteo extends Error {
+  readonly codigo: CodigoErrorMeteo;
+
+  constructor(codigo: CodigoErrorMeteo, mensaje: string) {
+    super(mensaje);
+    this.name = 'ErrorServicioMeteo';
+    this.codigo = codigo;
+  }
+}
+
+export interface OpenMeteoHourly {
   time: string[];
   cloud_cover: (number | null)[];
   cloud_cover_low: (number | null)[];
@@ -11,6 +27,23 @@ interface OpenMeteoHourly {
   relative_humidity_2m: (number | null)[];
   wind_speed_10m: (number | null)[];
   temperature_2m: (number | null)[];
+  weather_code: (number | null)[];
+  wind_gusts_10m: (number | null)[];
+  precipitation_probability: (number | null)[];
+  precipitation: (number | null)[];
+  visibility: (number | null)[];
+}
+
+export interface ResultadoPronosticoHorario {
+  hourly: OpenMeteoHourly;
+  esCache: boolean;
+  sinConexion: boolean;
+  timestamp: number;
+}
+
+export interface OpcionesConsultaMeteo {
+  signal?: AbortSignal;
+  forzarRed?: boolean;
 }
 
 interface EntradaCacheMeteo {
@@ -21,38 +54,108 @@ interface EntradaCacheMeteo {
 
 type DiccionarioCacheMeteo = Record<string, EntradaCacheMeteo>;
 
-const CACHE_KEY = 'skyproject_meteo_cache_v3';
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora
-const MAX_CACHE_UBICACIONES = 5;
-
-function esArrayDeStrings(valor: unknown): valor is string[] {
-  return Array.isArray(valor) && valor.every((item) => typeof item === 'string');
+interface PeticionEnCurso {
+  controller: AbortController;
+  suscriptores: number;
+  promesa: Promise<ResultadoPronosticoHorario>;
 }
 
-function esArrayNumerico(valor: unknown): valor is (number | null)[] {
+export const CLAVE_CACHE_METEO = 'skyproject_meteo_cache_v3';
+export const MAX_HORAS_PRONOSTICO = 400;
+export const TIMEOUT_PETICION_METEO_MS = 9_000;
+
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora
+const MAX_CACHE_UBICACIONES = 5;
+const OPEN_METEO_ENDPOINT = 'https://api.open-meteo.com/v1/forecast';
+const VARIABLES_HORARIAS_COMBINADAS = [
+  'cloud_cover',
+  'cloud_cover_low',
+  'cloud_cover_mid',
+  'cloud_cover_high',
+  'relative_humidity_2m',
+  'wind_speed_10m',
+  'temperature_2m',
+  'weather_code',
+  'wind_gusts_10m',
+  'precipitation_probability',
+  'precipitation',
+  'visibility',
+].join(',');
+
+const peticionesEnCurso = new Map<string, PeticionEnCurso>();
+
+export function esErrorAbort(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') return true;
+  if (error instanceof Error && error.name === 'AbortError') return true;
+  return false;
+}
+
+export function parsearFechaIsoUtc(raw: string): Date | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/.test(trimmed)) {
+    return null;
+  }
+
+  const tieneZona = /(?:Z|[+-]\d{2}:\d{2})$/.test(trimmed);
+  const tieneSegundos = /T\d{2}:\d{2}:\d{2}/.test(trimmed);
+  let normalizada = trimmed;
+  if (!tieneSegundos) {
+    normalizada = tieneZona
+      ? trimmed.replace(/(T\d{2}:\d{2})(Z|[+-]\d{2}:\d{2})$/, '$1:00$2')
+      : `${trimmed}:00Z`;
+  } else if (!tieneZona) {
+    normalizada = `${trimmed}Z`;
+  }
+
+  const fecha = new Date(normalizada);
+  return Number.isNaN(fecha.getTime()) ? null : fecha;
+}
+
+function esArrayFechasIsoValido(valor: unknown): valor is string[] {
   return (
     Array.isArray(valor) &&
+    valor.length > 0 &&
+    valor.length <= MAX_HORAS_PRONOSTICO &&
+    valor.every((item) => typeof item === 'string' && parsearFechaIsoUtc(item) !== null)
+  );
+}
+
+function esArrayNumericoConLongitud(
+  valor: unknown,
+  longitudEsperada: number
+): valor is (number | null)[] {
+  return (
+    Array.isArray(valor) &&
+    valor.length === longitudEsperada &&
     valor.every((item) => (typeof item === 'number' && Number.isFinite(item)) || item === null)
   );
 }
 
-function esOpenMeteoHourlyValido(valor: unknown): valor is OpenMeteoHourly {
-  if (typeof valor !== 'object' || valor === null) return false;
+export function esOpenMeteoHourlyValido(valor: unknown): valor is OpenMeteoHourly {
+  if (typeof valor !== 'object' || valor === null || Array.isArray(valor)) return false;
   const obj = valor as Record<string, unknown>;
+  if (!esArrayFechasIsoValido(obj.time)) return false;
+
+  const longitud = obj.time.length;
   return (
-    esArrayDeStrings(obj.time) &&
-    esArrayNumerico(obj.cloud_cover) &&
-    esArrayNumerico(obj.cloud_cover_low) &&
-    esArrayNumerico(obj.cloud_cover_mid) &&
-    esArrayNumerico(obj.cloud_cover_high) &&
-    esArrayNumerico(obj.relative_humidity_2m) &&
-    esArrayNumerico(obj.wind_speed_10m) &&
-    esArrayNumerico(obj.temperature_2m)
+    esArrayNumericoConLongitud(obj.cloud_cover, longitud) &&
+    esArrayNumericoConLongitud(obj.cloud_cover_low, longitud) &&
+    esArrayNumericoConLongitud(obj.cloud_cover_mid, longitud) &&
+    esArrayNumericoConLongitud(obj.cloud_cover_high, longitud) &&
+    esArrayNumericoConLongitud(obj.relative_humidity_2m, longitud) &&
+    esArrayNumericoConLongitud(obj.wind_speed_10m, longitud) &&
+    esArrayNumericoConLongitud(obj.temperature_2m, longitud) &&
+    esArrayNumericoConLongitud(obj.weather_code, longitud) &&
+    esArrayNumericoConLongitud(obj.wind_gusts_10m, longitud) &&
+    esArrayNumericoConLongitud(obj.precipitation_probability, longitud) &&
+    esArrayNumericoConLongitud(obj.precipitation, longitud) &&
+    esArrayNumericoConLongitud(obj.visibility, longitud)
   );
 }
 
 function esEntradaCacheMeteoValida(valor: unknown): valor is EntradaCacheMeteo {
-  if (typeof valor !== 'object' || valor === null) return false;
+  if (typeof valor !== 'object' || valor === null || Array.isArray(valor)) return false;
   const obj = valor as Record<string, unknown>;
   return (
     typeof obj.timestamp === 'number' &&
@@ -65,7 +168,7 @@ function esEntradaCacheMeteoValida(valor: unknown): valor is EntradaCacheMeteo {
 
 function leerDiccionarioCache(): DiccionarioCacheMeteo {
   try {
-    const cacheRaw = localStorage.getItem(CACHE_KEY);
+    const cacheRaw = globalThis.localStorage.getItem(CLAVE_CACHE_METEO);
     if (!cacheRaw) return {};
     const parsed: unknown = JSON.parse(cacheRaw);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
@@ -84,18 +187,21 @@ function leerDiccionarioCache(): DiccionarioCacheMeteo {
 
 function guardarDiccionarioCache(diccionario: DiccionarioCacheMeteo): void {
   try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(diccionario));
+    globalThis.localStorage.setItem(CLAVE_CACHE_METEO, JSON.stringify(diccionario));
   } catch {
     // Ignora errores de cuota o almacenamiento bloqueado
   }
 }
 
-function guardarEntradaCache(claveUbicacion: string, hourly: OpenMeteoHourly): void {
+function guardarEntradaCache(
+  claveUbicacion: string,
+  hourly: OpenMeteoHourly,
+  timestamp: number
+): void {
   const diccionario = leerDiccionarioCache();
-  const ahora = Date.now();
   diccionario[claveUbicacion] = {
-    timestamp: ahora,
-    ultimoAcceso: ahora,
+    timestamp,
+    ultimoAcceso: timestamp,
     hourly,
   };
 
@@ -104,6 +210,237 @@ function guardarEntradaCache(claveUbicacion: string, hourly: OpenMeteoHourly): v
     .slice(0, MAX_CACHE_UBICACIONES);
 
   guardarDiccionarioCache(Object.fromEntries(entradasRecortadas));
+}
+
+function construirClaveUbicacion(latitud: number, longitud: number): string {
+  return `${latitud.toFixed(2)},${longitud.toFixed(2)}`;
+}
+
+function sonCoordenadasMeteoValidas(latitud: number, longitud: number): boolean {
+  return (
+    Number.isFinite(latitud) &&
+    latitud >= -90 &&
+    latitud <= 90 &&
+    Number.isFinite(longitud) &&
+    longitud >= -180 &&
+    longitud <= 180
+  );
+}
+
+function esperarPeticionConAbort(
+  entrada: PeticionEnCurso,
+  signal?: AbortSignal
+): Promise<ResultadoPronosticoHorario> {
+  if (!signal) {
+    entrada.suscriptores += 1;
+    return entrada.promesa.finally(() => {
+      entrada.suscriptores = Math.max(0, entrada.suscriptores - 1);
+    });
+  }
+
+  if (signal.aborted) {
+    return Promise.reject(new DOMException('Petición cancelada por el usuario', 'AbortError'));
+  }
+
+  entrada.suscriptores += 1;
+  return new Promise<ResultadoPronosticoHorario>((resolve, reject) => {
+    let finalizado = false;
+
+    const limpiar = () => {
+      if (finalizado) return;
+      finalizado = true;
+      signal.removeEventListener('abort', alAbortar);
+      entrada.suscriptores = Math.max(0, entrada.suscriptores - 1);
+    };
+
+    const alAbortar = () => {
+      limpiar();
+      if (entrada.suscriptores === 0) {
+        entrada.controller.abort();
+      }
+      reject(new DOMException('Petición cancelada por el usuario', 'AbortError'));
+    };
+
+    signal.addEventListener('abort', alAbortar, { once: true });
+
+    entrada.promesa.then(
+      (resultado) => {
+        if (finalizado) return;
+        limpiar();
+        resolve(resultado);
+      },
+      (error: unknown) => {
+        if (finalizado) return;
+        limpiar();
+        reject(error);
+      }
+    );
+  });
+}
+
+function iniciarDescargaOpenMeteo(
+  ubicacion: Pick<Ubicacion, 'latitud' | 'longitud'>,
+  claveUbicacion: string
+): PeticionEnCurso {
+  const controller = new AbortController();
+  let tiempoAgotado = false;
+
+  const url = new URL(OPEN_METEO_ENDPOINT);
+  url.searchParams.set('latitude', String(ubicacion.latitud));
+  url.searchParams.set('longitude', String(ubicacion.longitud));
+  url.searchParams.set('hourly', VARIABLES_HORARIAS_COMBINADAS);
+  url.searchParams.set('wind_speed_unit', 'kmh');
+  url.searchParams.set('timezone', 'UTC');
+  url.searchParams.set('forecast_days', '14');
+
+  const entrada: PeticionEnCurso = {
+    controller,
+    suscriptores: 0,
+    promesa: Promise.resolve({} as ResultadoPronosticoHorario),
+  };
+
+  const timeoutId = globalThis.setTimeout(() => {
+    tiempoAgotado = true;
+    controller.abort();
+  }, TIMEOUT_PETICION_METEO_MS);
+
+  entrada.promesa = (async (): Promise<ResultadoPronosticoHorario> => {
+    try {
+      const res = await fetch(url.toString(), {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
+
+      if (!res.ok) {
+        throw new ErrorServicioMeteo(
+          'HTTP',
+          `El servicio meteorológico respondió con error HTTP ${res.status}.`
+        );
+      }
+
+      let json: unknown;
+      try {
+        json = await res.json();
+      } catch {
+        throw new ErrorServicioMeteo(
+          'INVALID_RESPONSE',
+          'No se pudo interpretar la respuesta JSON del servicio meteorológico.'
+        );
+      }
+
+      const hourly =
+        typeof json === 'object' && json !== null && !Array.isArray(json)
+          ? (json as Record<string, unknown>).hourly
+          : null;
+
+      if (!esOpenMeteoHourlyValido(hourly)) {
+        throw new ErrorServicioMeteo(
+          'INVALID_RESPONSE',
+          'La respuesta meteorológica recibida está incompleta o tiene un formato no válido.'
+        );
+      }
+
+      const ahora = Date.now();
+      guardarEntradaCache(claveUbicacion, hourly, ahora);
+
+      return {
+        hourly,
+        esCache: false,
+        sinConexion: false,
+        timestamp: ahora,
+      };
+    } catch (error: unknown) {
+      if (error instanceof ErrorServicioMeteo) {
+        throw error;
+      }
+      if (tiempoAgotado) {
+        throw new ErrorServicioMeteo(
+          'TIMEOUT',
+          'La consulta meteorológica superó el tiempo de espera.'
+        );
+      }
+      if (esErrorAbort(error)) {
+        throw new DOMException('Petición cancelada', 'AbortError');
+      }
+      throw new ErrorServicioMeteo(
+        'NETWORK',
+        'No se pudo conectar con el servicio meteorológico.'
+      );
+    } finally {
+      globalThis.clearTimeout(timeoutId);
+      if (peticionesEnCurso.get(claveUbicacion) === entrada) {
+        peticionesEnCurso.delete(claveUbicacion);
+      }
+    }
+  })();
+
+  peticionesEnCurso.set(claveUbicacion, entrada);
+  return entrada;
+}
+
+/**
+ * Cliente unificado de Open-Meteo (SSOT): realiza una única petición combinada,
+ * deduplica llamadas simultáneas para las mismas coordenadas y mantiene caché LRU offline.
+ */
+export async function obtenerPronosticoHorarioOpenMeteo(
+  ubicacion: Pick<Ubicacion, 'latitud' | 'longitud'>,
+  opciones: OpcionesConsultaMeteo = {}
+): Promise<ResultadoPronosticoHorario> {
+  const { signal, forzarRed = false } = opciones;
+
+  if (signal?.aborted) {
+    throw new DOMException('Petición cancelada por el usuario', 'AbortError');
+  }
+
+  if (!sonCoordenadasMeteoValidas(ubicacion.latitud, ubicacion.longitud)) {
+    throw new ErrorServicioMeteo('INVALID_RESPONSE', 'Coordenadas meteorológicas no válidas.');
+  }
+
+  const claveUbicacion = construirClaveUbicacion(ubicacion.latitud, ubicacion.longitud);
+  const diccionario = leerDiccionarioCache();
+  const entradaCache = diccionario[claveUbicacion] ?? null;
+
+  const cacheValida =
+    !forzarRed &&
+    entradaCache !== null &&
+    Date.now() - entradaCache.timestamp < CACHE_TTL_MS;
+
+  if (cacheValida) {
+    diccionario[claveUbicacion] = {
+      ...entradaCache,
+      ultimoAcceso: Date.now(),
+    };
+    guardarDiccionarioCache(diccionario);
+    return {
+      hourly: entradaCache.hourly,
+      esCache: true,
+      sinConexion: false,
+      timestamp: entradaCache.timestamp,
+    };
+  }
+
+  const peticionExistente = !forzarRed ? peticionesEnCurso.get(claveUbicacion) : undefined;
+  const peticionActiva =
+    peticionExistente ?? iniciarDescargaOpenMeteo(ubicacion, claveUbicacion);
+
+  try {
+    return await esperarPeticionConAbort(peticionActiva, signal);
+  } catch (error: unknown) {
+    if (signal?.aborted || esErrorAbort(error)) {
+      throw new DOMException('Petición cancelada', 'AbortError');
+    }
+
+    if (entradaCache) {
+      return {
+        hourly: entradaCache.hourly,
+        esCache: true,
+        sinConexion: true,
+        timestamp: entradaCache.timestamp,
+      };
+    }
+
+    throw error;
+  }
 }
 
 function evaluarVeredicto(nubesTotal: number, vientoKmh: number): CondicionesMeteo['veredicto'] {
@@ -189,68 +526,24 @@ export async function obtenerCondicionesMeteo(
     return { datos: null, aviso: 'Fecha o coordenadas inválidas.' };
   }
 
-  const claveUbicacion = `${ubicacion.latitud.toFixed(2)},${ubicacion.longitud.toFixed(2)}`;
-  const diccionario = leerDiccionarioCache();
-  const entradaCache = diccionario[claveUbicacion] ?? null;
-
-  const cacheValida =
-    entradaCache !== null && Date.now() - entradaCache.timestamp < CACHE_TTL_MS;
-
-  if (cacheValida) {
-    diccionario[claveUbicacion] = {
-      ...entradaCache,
-      ultimoAcceso: Date.now(),
-    };
-    guardarDiccionarioCache(diccionario);
-    const datos = extraerDesdeHourly(entradaCache.hourly, fecha, ubicacion, true);
-    return {
-      datos,
-      aviso: datos ? null : 'Pronóstico disponible solo hasta 14 días vista.',
-    };
-  }
-
   try {
-    const url = new URL('https://api.open-meteo.com/v1/forecast');
-    url.searchParams.set('latitude', String(ubicacion.latitud));
-    url.searchParams.set('longitude', String(ubicacion.longitud));
-    url.searchParams.set(
-      'hourly',
-      'cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_2m,wind_speed_10m,temperature_2m'
-    );
-    url.searchParams.set('timezone', 'UTC');
-    url.searchParams.set('forecast_days', '14');
+    const resultado = await obtenerPronosticoHorarioOpenMeteo(ubicacion, { signal });
+    const datos = extraerDesdeHourly(resultado.hourly, fecha, ubicacion, resultado.esCache);
 
-    const res = await fetch(url.toString(), { signal });
-    if (!res.ok) throw new Error('Error HTTP Open-Meteo');
-
-    const json: unknown = await res.json();
-    const hourly =
-      typeof json === 'object' && json !== null
-        ? (json as Record<string, unknown>).hourly
-        : null;
-
-    if (!esOpenMeteoHourlyValido(hourly)) {
-      throw new Error('Respuesta meteorológica con formato inesperado');
-    }
-
-    guardarEntradaCache(claveUbicacion, hourly);
-
-    const datos = extraerDesdeHourly(hourly, fecha, ubicacion, false);
-    return {
-      datos,
-      aviso: datos ? null : 'Pronóstico disponible solo hasta 14 días vista.',
-    };
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw error;
-    }
-
-    if (entradaCache) {
-      const datos = extraerDesdeHourly(entradaCache.hourly, fecha, ubicacion, true);
+    if (resultado.sinConexion) {
       return {
         datos,
         aviso: datos ? 'Sin conexión: mostrando datos guardados en caché.' : 'Sin conexión.',
       };
+    }
+
+    return {
+      datos,
+      aviso: datos ? null : 'Pronóstico disponible solo hasta 14 días vista.',
+    };
+  } catch (error: unknown) {
+    if (esErrorAbort(error)) {
+      throw error;
     }
     return { datos: null, aviso: 'No se pudo obtener la previsión meteorológica.' };
   }

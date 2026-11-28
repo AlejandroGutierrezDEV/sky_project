@@ -44,7 +44,6 @@ import { Navbar } from './components/Navbar';
 import { AstronomyGuide } from './components/AstronomyGuide';
 import { StarChartTab } from './components/star-chart/StarChartTab';
 import { Compass3DModal } from './components/Compass3DModal';
-import { CompassWidget } from './components/compass/CompassWidget';
 import { CelestialDetailSheet } from './components/CelestialDetailSheet';
 import {
   HojaImpresionSesion,
@@ -1664,10 +1663,11 @@ export function App() {
           <StarChartTab
             tema={tema}
             claseTarjeta={clasesTarjeta}
-            initialLatitude={ubicacion.latitud}
-            initialLongitude={ubicacion.longitud}
-            initialLocationName={ubicacion.nombre}
-            initialTimezone={coordinates.timezone}
+            ubicacion={{
+              ...ubicacion,
+              timezone: coordinates.timezone,
+            }}
+            fechaSeleccionada={fechaSeleccionada}
           />
         ) : (
           <>
@@ -2015,8 +2015,6 @@ export function App() {
                   tema={tema}
                   claseTarjeta={clasesTarjeta}
                 />
-
-                <CompassWidget tema={tema} claseTarjeta={clasesTarjeta} />
 
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between gap-2 px-1">

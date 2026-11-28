@@ -82,6 +82,10 @@ describe('weatherAlertService', () => {
       })
     ).toBe(false);
 
+    // Arrays desproporcionados (> 400 horas)
+    const hourlyExcedido = crearHourlyBase(401);
+    expect(esRespuestaOpenMeteoValida({ hourly: hourlyExcedido })).toBe(false);
+
     // Payload corrupto
     expect(esRespuestaOpenMeteoValida(null)).toBe(false);
     expect(esRespuestaOpenMeteoValida({})).toBe(false);

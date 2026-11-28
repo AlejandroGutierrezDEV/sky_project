@@ -230,7 +230,14 @@ export function CelestialPreview({
           ) : (
             <g opacity="0.22">
               <ellipse cx="120" cy="96" rx="68" ry="8" fill={secundario} />
-              <ellipse cx="120" cy="116" rx="70" ry="10" fill="#ffffff" opacity="0.55" />
+              <ellipse
+                cx="120"
+                cy="116"
+                rx="70"
+                ry="10"
+                fill={esRojo ? '#ef4444' : '#ffffff'}
+                opacity={esRojo ? '0.45' : '0.55'}
+              />
               <ellipse cx="120" cy="136" rx="68" ry="9" fill={secundario} />
               <ellipse cx="120" cy="154" rx="60" ry="7" fill={secundario} />
             </g>

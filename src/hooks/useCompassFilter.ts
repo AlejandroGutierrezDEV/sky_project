@@ -5,11 +5,13 @@ import {
   type CompassPlanetFilter,
   type CompassPlanetOption,
   type CuerpoCeleste,
+  type ObjetivoBrujula,
   type PlanetId,
   type UseCompassFilterResult,
 } from '../types/astronomy';
 
 export const CLAVE_FILTRO_BRUJULA = 'skyproject_filtro_brujula_v1';
+export const MARGEN_ALINEACION_BRUJULA = 8;
 
 export interface UseCompassFilterParams {
   cuerpos: CuerpoCeleste[];
@@ -119,6 +121,131 @@ export function filtrarPlanetasActivos(
 ): CompassPlanetOption[] {
   if (filtro === 'all') return opciones;
   return opciones.filter((planeta) => planeta.id === filtro);
+}
+
+function diferenciaAngularCorta(destino: number, origen: number): number {
+  return ((((destino - origen) % 360) + 540) % 360) - 180;
+}
+
+export function esObjetivoSeleccionadoSobreHorizonte(
+  objetivo: ObjetivoBrujula | null | undefined
+): objetivo is ObjetivoBrujula {
+  return (
+    objetivo !== null &&
+    objetivo !== undefined &&
+    Number.isFinite(objetivo.altitud) &&
+    objetivo.altitud > 0 &&
+    Number.isFinite(objetivo.acimut)
+  );
+}
+
+export interface ParametrosObjetivosDiscoBrujula {
+  activePlanets: CompassPlanetOption[];
+  cuerpos: CuerpoCeleste[];
+  objetivoSeleccionado?: ObjetivoBrujula | null;
+  selectedFilter: CompassPlanetFilter;
+}
+
+/**
+ * Construye los marcadores del anillo exterior de la Brújula 3D garantizando que
+ * `objetivoSeleccionado` (estrella, Messier, constelación o cuerpo sobre el horizonte)
+ * permanezca siempre visible aunque haya un filtro de planeta activo.
+ */
+export function construirObjetivosDiscoBrujula({
+  activePlanets,
+  cuerpos,
+  objetivoSeleccionado = null,
+  selectedFilter,
+}: ParametrosObjetivosDiscoBrujula): ObjetivoBrujula[] {
+  const lista: ObjetivoBrujula[] = activePlanets.map((planeta) => ({
+    id: planeta.id,
+    nombre: planeta.name,
+    acimut: planeta.azimuthDeg,
+    altitud: planeta.altitudeDeg,
+    color: planeta.accentColor ?? '#e2e8f0',
+    bajoHorizonte: !planeta.isAboveHorizon,
+  }));
+
+  // En vista 'all' añadimos también la Luna si está sobre el horizonte
+  if (selectedFilter === 'all') {
+    for (const cuerpo of cuerpos) {
+      if (cuerpo.tipo === 'luna' && cuerpo.altitud > 0 && Number.isFinite(cuerpo.acimut)) {
+        lista.unshift({
+          id: cuerpo.id,
+          nombre: cuerpo.nombre,
+          acimut: cuerpo.acimut,
+          altitud: cuerpo.altitud,
+          color: cuerpo.color,
+          bajoHorizonte: false,
+        });
+      }
+    }
+  }
+
+  // Prioridad absoluta para el objetivo seleccionado sobre el horizonte (estrella, Messier, etc.)
+  // incluso cuando hay un filtro de planetas activo o no hay planetas visibles.
+  if (esObjetivoSeleccionadoSobreHorizonte(objetivoSeleccionado)) {
+    const idSeleccionado = objetivoSeleccionado.id.toLowerCase();
+    const indiceExistente = lista.findIndex((item) => item.id.toLowerCase() === idSeleccionado);
+    if (indiceExistente !== -1) {
+      const [existente] = lista.splice(indiceExistente, 1);
+      lista.push({ ...existente, bajoHorizonte: false });
+    } else {
+      lista.push({
+        ...objetivoSeleccionado,
+        acimut: normalizarAzimut(objetivoSeleccionado.acimut),
+        altitud: acotarAltitud(objetivoSeleccionado.altitud),
+        bajoHorizonte: false,
+      });
+    }
+  }
+
+  return lista;
+}
+
+/**
+ * Busca el objetivo alineado bajo la línea de fe dentro del margen de ±8°,
+ * dando prioridad a `objetivoSeleccionado` cuando también está alineado.
+ */
+export function buscarObjetivoAlineado(
+  objetivosEnDisco: ObjetivoBrujula[],
+  rumboGrados: number,
+  selectedFilter: CompassPlanetFilter,
+  objetivoSeleccionado?: ObjetivoBrujula | null,
+  margenGrados: number = MARGEN_ALINEACION_BRUJULA
+): ObjetivoBrujula | null {
+  if (!Number.isFinite(rumboGrados)) return null;
+
+  const idPrioritario = esObjetivoSeleccionadoSobreHorizonte(objetivoSeleccionado)
+    ? objetivoSeleccionado.id.toLowerCase()
+    : null;
+
+  let candidato: ObjetivoBrujula | null = null;
+  let mejorDiferencia = Number.POSITIVE_INFINITY;
+  let candidatoEsPrioritario = false;
+
+  for (const objetivo of objetivosEnDisco) {
+    if (selectedFilter === 'all' && objetivo.bajoHorizonte) continue;
+    const dif = Math.abs(diferenciaAngularCorta(objetivo.acimut, rumboGrados));
+    if (dif > margenGrados) continue;
+
+    const esPrioritario =
+      idPrioritario !== null && objetivo.id.toLowerCase() === idPrioritario;
+
+    if (esPrioritario && !candidatoEsPrioritario) {
+      candidato = objetivo;
+      mejorDiferencia = dif;
+      candidatoEsPrioritario = true;
+      continue;
+    }
+
+    if (esPrioritario === candidatoEsPrioritario && dif < mejorDiferencia) {
+      candidato = objetivo;
+      mejorDiferencia = dif;
+    }
+  }
+
+  return candidato;
 }
 
 export function useCompassFilter({
