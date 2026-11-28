@@ -1,42 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import {
-  CONSTELLATIONS,
-  DEFAULT_STAR_CHART_LOCATION,
-  STAR_CATALOG,
-} from '../../data/starCatalog';
+import { CONSTELACIONES_IAU } from '../../data/constelacionesIAU';
+import { CATALOGO_ESTRELLAS } from '../../data/estrellasMag4';
+import { DEFAULT_STAR_CHART_LOCATION } from '../../hooks/useStarChart';
 import type { ProjectedStar, SpectralClass, StarChartObserver } from '../../types/starChart';
 import {
+  ALTITUD_MINIMA_ESTEREOGRAFICA,
+  adaptarEstrellasParaCarta,
   equatorialToHorizontal,
   findNearestStar,
   getLocalSiderealTimeDeg,
   getSpectralColor,
   isValidStarChartObserver,
   projectStereographic,
+  recortarSegmentoAlHorizonte,
   toJulianDate,
 } from '../skyProjection';
 
-describe('Catálogo compacto de estrellas y constelaciones', () => {
-  it('contiene entradas válidas con IDs únicos y rangos ecuatoriales correctos', () => {
-    expect(STAR_CATALOG.length).toBeGreaterThanOrEqual(50);
-    expect(CONSTELLATIONS.length).toBeGreaterThanOrEqual(12);
+const ESTRELLAS_CARTA = adaptarEstrellasParaCarta(CATALOGO_ESTRELLAS);
+
+describe('Adaptación de catálogos SSOT para la Carta Astronómica', () => {
+  it('adapta CATALOGO_ESTRELLAS y consume las 88 constelaciones IAU sin catálogos paralelos', () => {
+    expect(ESTRELLAS_CARTA.length).toBeGreaterThanOrEqual(400);
+    expect(CONSTELACIONES_IAU).toHaveLength(88);
 
     const ids = new Set<string>();
-    for (const star of STAR_CATALOG) {
+    for (const star of ESTRELLAS_CARTA) {
       expect(ids.has(star.id)).toBe(false);
       ids.add(star.id);
       expect(star.raHours).toBeGreaterThanOrEqual(0);
       expect(star.raHours).toBeLessThan(24);
       expect(star.decDeg).toBeGreaterThanOrEqual(-90);
       expect(star.decDeg).toBeLessThanOrEqual(90);
-      expect(star.constellation).toMatch(/^[A-Z]{3}$/);
-    }
-
-    for (const constellation of CONSTELLATIONS) {
-      expect(constellation.segments.length).toBeGreaterThan(0);
-      for (const [fromId, toId] of constellation.segments) {
-        expect(ids.has(fromId)).toBe(true);
-        expect(ids.has(toId)).toBe(true);
-      }
     }
   });
 });
@@ -60,7 +54,7 @@ describe('Motor de proyección celeste (skyProjection)', () => {
   });
 
   it('ubica a Polaris cerca del Norte a ~40° de altitud desde Madrid', () => {
-    const polaris = STAR_CATALOG.find((s) => s.id === 'polaris');
+    const polaris = ESTRELLAS_CARTA.find((s) => s.id === 'Alp UMi');
     expect(polaris).toBeDefined();
 
     const observer: StarChartObserver = {
@@ -90,7 +84,7 @@ describe('Motor de proyección celeste (skyProjection)', () => {
           ...baseObserver,
           date: new Date(baseObserver.date.getTime() + hourOffset * 3_600_000),
         };
-        for (const star of STAR_CATALOG) {
+        for (const star of ESTRELLAS_CARTA) {
           const { altitudeDeg, azimuthDeg } = equatorialToHorizontal(
             star.raHours,
             star.decDeg,
@@ -112,13 +106,13 @@ describe('Motor de proyección celeste (skyProjection)', () => {
       longitude: -58.3816,
       date: new Date('2026-05-15T02:00:00Z'),
     };
-    const acrux = STAR_CATALOG.find((s) => s.id === 'acrux')!;
-    const polaris = STAR_CATALOG.find((s) => s.id === 'polaris')!;
+    const acrux = ESTRELLAS_CARTA.find((s) => s.id === 'Alp1 Cru')!;
+    const polaris = ESTRELLAS_CARTA.find((s) => s.id === 'Alp UMi')!;
     expect(equatorialToHorizontal(acrux.raHours, acrux.decDeg, buenosAires).altitudeDeg).toBeGreaterThan(0);
     expect(equatorialToHorizontal(polaris.raHours, polaris.decDeg, buenosAires).altitudeDeg).toBeLessThan(0);
   });
 
-  it('proyecta con orientación celeste correcta: Norte arriba, Este izquierda, Sur abajo y Oeste derecha', () => {
+  it('proyecta con orientación celeste correcta y protege contra la singularidad del nadir (alt <= -85°)', () => {
     const cx = 250;
     const cy = 250;
     const r = 200;
@@ -143,16 +137,48 @@ describe('Motor de proyección celeste (skyProjection)', () => {
     expect(west.x).toBeCloseTo(cx + r, 5);
     expect(west.y).toBeCloseTo(cy, 5);
 
-    // Estabilidad incluso cerca del nadir (-90°)
-    const nadir = projectStereographic(-90, 45, cx, cy, r);
-    expect(Number.isFinite(nadir.x)).toBe(true);
-    expect(Number.isFinite(nadir.y)).toBe(true);
+    // Estabilidad acotada incluso en -85° y -90° (sin división por cero ni estiramiento infinito)
+    const limiteNadir = projectStereographic(ALTITUD_MINIMA_ESTEREOGRAFICA, 45, cx, cy, r);
+    const nadirExacto = projectStereographic(-90, 45, cx, cy, r);
+    expect(Number.isFinite(nadirExacto.x)).toBe(true);
+    expect(Number.isFinite(nadirExacto.y)).toBe(true);
+    expect(nadirExacto.x).toBeCloseTo(limiteNadir.x, 5);
+    expect(nadirExacto.y).toBeCloseTo(limiteNadir.y, 5);
+  });
+
+  it('recorta segmentos de constelación que cruzan el horizonte por interpolación lineal en alt = 0°', () => {
+    // Cruce normal cruzando el meridiano 0°/360° (350° -> 10°)
+    const cruzadoNorte = recortarSegmentoAlHorizonte(
+      { altitud: 10, acimut: 350 },
+      { altitud: -10, acimut: 10 }
+    );
+    expect(cruzadoNorte).not.toBeNull();
+    expect(cruzadoNorte?.desde).toEqual({ altitud: 10, acimut: 350 });
+    expect(cruzadoNorte?.hasta.altitud).toBe(0);
+    expect(cruzadoNorte?.hasta.acimut).toBeCloseTo(0, 5);
+
+    // Extremo inicial bajo el horizonte y final sobre el horizonte
+    const inverso = recortarSegmentoAlHorizonte(
+      { altitud: -5, acimut: 90 },
+      { altitud: 15, acimut: 110 }
+    );
+    expect(inverso?.desde.altitud).toBe(0);
+    expect(inverso?.desde.acimut).toBeCloseTo(95, 5);
+    expect(inverso?.hasta).toEqual({ altitud: 15, acimut: 110 });
+
+    // Segmento completamente bajo el horizonte se descarta
+    expect(
+      recortarSegmentoAlHorizonte(
+        { altitud: -5, acimut: 90 },
+        { altitud: -20, acimut: 110 }
+      )
+    ).toBeNull();
   });
 
   it('encuentra la estrella visible más cercana respetando hitRadius y visibilidad', () => {
     const mockStars: ProjectedStar[] = [
       {
-        star: STAR_CATALOG[0],
+        star: ESTRELLAS_CARTA[0],
         horizontal: { altitudeDeg: 45, azimuthDeg: 180 },
         x: 100,
         y: 100,
@@ -160,7 +186,7 @@ describe('Motor de proyección celeste (skyProjection)', () => {
         visible: true,
       },
       {
-        star: STAR_CATALOG[1],
+        star: ESTRELLAS_CARTA[1],
         horizontal: { altitudeDeg: 45, azimuthDeg: 182 },
         x: 108,
         y: 100,
@@ -168,7 +194,7 @@ describe('Motor de proyección celeste (skyProjection)', () => {
         visible: true,
       },
       {
-        star: STAR_CATALOG[2],
+        star: ESTRELLAS_CARTA[2],
         horizontal: { altitudeDeg: -10, azimuthDeg: 180 },
         x: 102,
         y: 100,
@@ -177,8 +203,8 @@ describe('Motor de proyección celeste (skyProjection)', () => {
       },
     ];
 
-    expect(findNearestStar(101, 100, mockStars, 14)?.star.id).toBe(STAR_CATALOG[0].id);
-    expect(findNearestStar(107, 100, mockStars, 14)?.star.id).toBe(STAR_CATALOG[1].id);
+    expect(findNearestStar(101, 100, mockStars, 14)?.star.id).toBe(ESTRELLAS_CARTA[0].id);
+    expect(findNearestStar(107, 100, mockStars, 14)?.star.id).toBe(ESTRELLAS_CARTA[1].id);
     expect(findNearestStar(200, 200, mockStars, 14)).toBeNull();
   });
 

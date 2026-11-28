@@ -50,19 +50,31 @@ describe('Integridad de catálogos offline', () => {
       expect(Number.isFinite(obj.magnitud)).toBe(true);
       expect(codigosIAU.has(obj.constelacionIAU)).toBe(true);
     }
+    const m4 = CATALOGO_MESSIER.find((m) => m.id === 'M4');
+    const m99 = CATALOGO_MESSIER.find((m) => m.id === 'M99');
+    const m101 = CATALOGO_MESSIER.find((m) => m.id === 'M101');
+    expect(m4?.nombreComun).toBe('Cúmulo Globular en Escorpio');
+    expect(m4?.nombreComun).not.toContain('Ojo de Gato');
+    expect(m99?.nombreComun).toBe('Galaxia del Molinete de Coma');
+    expect(m101?.nombreComun).toBe('Galaxia del Molinete');
+    expect(m99?.nombreComun).not.toBe(m101?.nombreComun);
   });
 
-  it('contiene un catálogo completo de estrellas hasta magnitud 4.0 cubriendo ambos hemisferios', () => {
+  it('contiene un catálogo completo sin duplicadas (< 0.05°), sin capado artificial a 4.00 y con coordenadas saneadas', () => {
     expect(CATALOGO_ESTRELLAS.length).toBeGreaterThanOrEqual(400);
 
     const ids = new Set<string>();
     let boreales = 0;
     let australes = 0;
+    let estrellasMag4 = 0;
+    let capadasA4Exacto = 0;
 
     for (const est of CATALOGO_ESTRELLAS) {
       expect(ids.has(est.id)).toBe(false);
       ids.add(est.id);
-      expect(est.magnitud).toBeLessThanOrEqual(4.0);
+      expect(est.magnitud).toBeLessThanOrEqual(5.0);
+      if (est.magnitud <= 4.0) estrellasMag4 += 1;
+      if (est.magnitud === 4.0) capadasA4Exacto += 1;
       expect(est.raHoras).toBeGreaterThanOrEqual(0);
       expect(est.raHoras).toBeLessThan(24);
       expect(est.decGrados).toBeGreaterThanOrEqual(-90);
@@ -71,8 +83,55 @@ describe('Integridad de catálogos offline', () => {
       else australes += 1;
     }
 
+    expect(estrellasMag4).toBeGreaterThanOrEqual(400);
+    expect(capadasA4Exacto).toBe(0);
     expect(boreales).toBeGreaterThanOrEqual(150);
     expect(australes).toBeGreaterThanOrEqual(150);
+
+    // Las 5 entradas duplicadas eliminadas no deben reaparecer
+    for (const idDuplicado of ['1 Ori', '7 Lac', 'PP Car', 'h UMa', 'v Cen']) {
+      expect(ids.has(idDuplicado)).toBe(false);
+    }
+
+    // Ningún par de estrellas debe tener separación angular < 0.05°
+    for (let i = 0; i < CATALOGO_ESTRELLAS.length; i++) {
+      for (let j = i + 1; j < CATALOGO_ESTRELLAS.length; j++) {
+        const a = CATALOGO_ESTRELLAS[i];
+        const b = CATALOGO_ESTRELLAS[j];
+        const sep = distanciaAngularEsfericaGrados(
+          a.raHoras,
+          a.decGrados,
+          b.raHoras,
+          b.decGrados
+        );
+        expect(sep).toBeGreaterThanOrEqual(0.05);
+      }
+    }
+
+    // Coordenadas saneadas de Kap Phe y Bet Cam
+    const kapPhe = CATALOGO_ESTRELLAS.find((e) => e.id === 'Kap Phe');
+    const gamPhe = CATALOGO_ESTRELLAS.find((e) => e.id === 'Gam Phe');
+    expect(kapPhe).toBeDefined();
+    expect(gamPhe).toBeDefined();
+    expect(kapPhe?.raHoras).toBeCloseTo(0.437, 2);
+    expect(kapPhe?.decGrados).toBeCloseTo(-43.68, 1);
+    expect(
+      distanciaAngularEsfericaGrados(
+        kapPhe!.raHoras,
+        kapPhe!.decGrados,
+        gamPhe!.raHoras,
+        gamPhe!.decGrados
+      )
+    ).toBeGreaterThan(5);
+
+    const betCam = CATALOGO_ESTRELLAS.find((e) => e.id === 'Bet Cam');
+    const alpCam = CATALOGO_ESTRELLAS.find((e) => e.id === 'Alp Cam');
+    expect(betCam).toBeDefined();
+    expect(alpCam).toBeDefined();
+    expect(betCam?.raHoras).toBeCloseTo(5.057, 2);
+    expect(betCam?.decGrados).toBeCloseTo(60.44, 1);
+    expect(betCam?.magnitud).toBeCloseTo(4.03, 2);
+    expect(betCam?.raHoras).not.toBeCloseTo(alpCam!.raHoras, 2);
 
     const estrellasClave = [
       'Polaris',
@@ -129,5 +188,23 @@ describe('Integridad de catálogos offline', () => {
     expect(obtenerNombreConstelacionIAU('ORI')).toBe('Orión');
     expect(obtenerNombreConstelacionIAU('CRU')).toBe('Cruz del Sur');
     expect(obtenerNombreConstelacionIAU('XXX')).toBe('XXX');
+
+    // Verificar que el Cuadrado de Pegaso (PEG) no contiene diagonales internas erróneas
+    const pegaso = CONSTELACIONES_IAU.find((c) => c.codigo === 'PEG');
+    expect(pegaso).toBeDefined();
+    const coincidePunto = (p: readonly [number, number], ra: number, dec: number) =>
+      Math.abs(p[0] - ra) < 0.05 && Math.abs(p[1] - dec) < 0.2;
+    const tieneDiagonalScheatAlgenib = pegaso!.segmentos.some(
+      ([a, b]) =>
+        (coincidePunto(a, 23.063, 28.08) && coincidePunto(b, 0.221, 15.18)) ||
+        (coincidePunto(b, 23.063, 28.08) && coincidePunto(a, 0.221, 15.18))
+    );
+    const tieneDiagonalMarkabAlpheratz = pegaso!.segmentos.some(
+      ([a, b]) =>
+        (coincidePunto(a, 23.079, 15.21) && coincidePunto(b, 0.14, 29.09)) ||
+        (coincidePunto(b, 23.079, 15.21) && coincidePunto(a, 0.14, 29.09))
+    );
+    expect(tieneDiagonalScheatAlgenib).toBe(false);
+    expect(tieneDiagonalMarkabAlpheratz).toBe(false);
   });
 });

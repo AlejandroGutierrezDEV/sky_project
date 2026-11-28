@@ -38,6 +38,7 @@ import { obtenerNombreConstelacionIAU } from '../data/constelacionesIAU';
 import type { EntradaObjetivoSesion } from '../hooks/usePlanificadorSesion';
 import { obtenerPaletaCeleste } from '../theme/celestialPalettes';
 import { formatearDec, formatearRA } from '../utils/exportarSesion';
+import { recortarSegmentoAlHorizonte } from '../utils/skyProjection';
 
 interface SkyMapProps {
   cuerpos: CuerpoCeleste[];
@@ -53,6 +54,7 @@ interface SkyMapProps {
   mostrarConstelaciones: boolean;
   mostrarEstrellas: boolean;
   mostrarMessier: boolean;
+  soloPorEncimaHorizonte?: boolean;
   astroSeleccionado: AstroSeleccionado | null;
   focusedBodyId?: string | null;
   focusedBodyName?: string;
@@ -149,15 +151,20 @@ function buscarPosicionAstroVisible(
   cuerpos: CuerpoCeleste[],
   estrellas: EstrellaCalculada[],
   messier: MessierCalculado[],
-  constelaciones: ConstelacionCalculada[]
+  constelaciones: ConstelacionCalculada[],
+  soloPorEncimaHorizonte: boolean
 ): { altitud: number; acimut: number } | null {
   if (astro.categoria === 'cuerpo') {
     const cuerpo = cuerpos.find((c) => c.id === astro.id);
-    return cuerpo && cuerpo.altitud > 0 ? { altitud: cuerpo.altitud, acimut: cuerpo.acimut } : null;
+    if (!cuerpo) return null;
+    return !soloPorEncimaHorizonte || cuerpo.altitud > 0
+      ? { altitud: cuerpo.altitud, acimut: cuerpo.acimut }
+      : null;
   }
   if (astro.categoria === 'estrella') {
     const estrella = estrellas.find((e) => e.id === astro.id);
-    return estrella && estrella.altitud >= 0
+    if (!estrella) return null;
+    return !soloPorEncimaHorizonte || estrella.altitud >= 0
       ? { altitud: estrella.altitud, acimut: estrella.acimut }
       : null;
   }
@@ -165,17 +172,18 @@ function buscarPosicionAstroVisible(
     const constelacion = constelaciones.find((c) => c.codigo === astro.id);
     if (!constelacion) return null;
     const tieneVisible = constelacion.segmentos.some(
-      (s) => s.desde.altitud >= 0 && s.hasta.altitud >= 0
+      (s) => s.desde.altitud > 0 || s.hasta.altitud > 0 || (s.desde.altitud >= 0 && s.hasta.altitud >= 0)
     );
-    return tieneVisible || constelacion.centroAltitud >= 0
+    return !soloPorEncimaHorizonte || tieneVisible || constelacion.centroAltitud >= 0
       ? {
-          altitud: Math.max(0, constelacion.centroAltitud),
+          altitud: soloPorEncimaHorizonte ? Math.max(0, constelacion.centroAltitud) : constelacion.centroAltitud,
           acimut: constelacion.centroAcimut,
         }
       : null;
   }
   const objMessier = messier.find((m) => m.id === astro.id);
-  return objMessier && objMessier.altitud >= 0
+  if (!objMessier) return null;
+  return !soloPorEncimaHorizonte || objMessier.altitud >= 0
     ? { altitud: objMessier.altitud, acimut: objMessier.acimut }
     : null;
 }
@@ -303,9 +311,11 @@ function proyectar2D(
   acimut: number,
   cx: number,
   cy: number,
-  radio: number
+  radio: number,
+  incluirBajoHorizonte = false
 ): PuntoProyectado {
-  const r = radio * ((90 - altitud) / 90);
+  const divisor = incluirBajoHorizonte ? 180 : 90;
+  const r = radio * ((90 - altitud) / divisor);
   const rad = (acimut * Math.PI) / 180;
   return {
     x: cx - r * Math.sin(rad),
@@ -356,7 +366,8 @@ function dibujarBaseMapa2D(
   cy: number,
   radio: number,
   paleta: CelestialThemePalette,
-  tema: TemaVisual
+  tema: TemaVisual,
+  incluirBajoHorizonte = false
 ) {
   ctx.fillStyle = paleta.background;
   ctx.fillRect(0, 0, size, size);
@@ -377,16 +388,27 @@ function dibujarBaseMapa2D(
   ctx.arc(cx, cy, radio, 0, Math.PI * 2);
   ctx.fillStyle = grad;
   ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = paleta.horizonLine;
+  ctx.lineWidth = incluirBajoHorizonte ? 1.2 : 2;
+  ctx.strokeStyle = incluirBajoHorizonte ? paleta.gridPrimary : paleta.horizonLine;
   ctx.stroke();
+
+  if (incluirBajoHorizonte) {
+    // Línea sólida del horizonte real (altitud = 0°) a mitad de radio en vista de esfera completa
+    ctx.beginPath();
+    ctx.arc(cx, cy, radio * 0.5, 0, Math.PI * 2);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = paleta.horizonLine;
+    ctx.stroke();
+  }
 
   ctx.strokeStyle = paleta.gridPrimary;
   ctx.lineWidth = tema === 'claro' ? 1.1 : 1;
   ctx.setLineDash([4, 4]);
 
-  for (const alt of [30, 60]) {
-    const rAnillo = radio * ((90 - alt) / 90);
+  const anillos = incluirBajoHorizonte ? [60, 30, -30, -60] : [30, 60];
+  const divisorAnillos = incluirBajoHorizonte ? 180 : 90;
+  for (const alt of anillos) {
+    const rAnillo = radio * ((90 - alt) / divisorAnillos);
     ctx.beginPath();
     ctx.arc(cx, cy, rAnillo, 0, Math.PI * 2);
     ctx.stroke();
@@ -538,6 +560,7 @@ function dibujarConstelaciones(
   paleta: CelestialThemePalette,
   tema: TemaVisual,
   interactivasConstelacion: ConstelacionInteractiva[],
+  soloPorEncimaHorizonte: boolean,
   destacada = false
 ): EtiquetaPendiente[] {
   const etiquetas: EtiquetaPendiente[] = [];
@@ -558,10 +581,23 @@ function dibujarConstelaciones(
     let conteoPuntos = 0;
 
     for (const segmento of constelacion.segmentos) {
-      if (segmento.desde.altitud < 0 || segmento.hasta.altitud < 0) continue;
-      const p1 = proyectarFn(segmento.desde.altitud, segmento.desde.acimut);
-      const p2 = proyectarFn(segmento.hasta.altitud, segmento.hasta.acimut);
+      let desde = segmento.desde;
+      let hasta = segmento.hasta;
+      let esBajoHorizonte = false;
 
+      if (soloPorEncimaHorizonte) {
+        const recortado = recortarSegmentoAlHorizonte(desde, hasta);
+        if (!recortado) continue;
+        desde = recortado.desde;
+        hasta = recortado.hasta;
+      } else {
+        esBajoHorizonte = desde.altitud < 0 || hasta.altitud < 0;
+      }
+
+      const p1 = proyectarFn(desde.altitud, desde.acimut);
+      const p2 = proyectarFn(hasta.altitud, hasta.acimut);
+
+      ctx.globalAlpha = esBajoHorizonte ? (destacada ? 0.55 : 0.4) : 1;
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
@@ -573,9 +609,11 @@ function dibujarConstelaciones(
       conteoPuntos += 2;
     }
 
+    ctx.globalAlpha = 1;
+
     if (segmentos2D.length > 0) {
       const posCentro =
-        constelacion.centroAltitud >= 0
+        !soloPorEncimaHorizonte || constelacion.centroAltitud >= 0
           ? proyectarFn(constelacion.centroAltitud, constelacion.centroAcimut)
           : { x: sumaX / conteoPuntos, y: sumaY / conteoPuntos };
 
@@ -590,7 +628,7 @@ function dibujarConstelaciones(
         segmentos2D,
       });
 
-      if (destacada || constelacion.centroAltitud >= 5) {
+      if (destacada || (!soloPorEncimaHorizonte || constelacion.centroAltitud >= 5)) {
         etiquetas.push({
           texto: constelacion.nombreEs,
           x: posCentro.x,
@@ -625,6 +663,7 @@ function dibujarEstrellas(
   paleta: CelestialThemePalette,
   tema: TemaVisual,
   interactivos: ObjetoHover[],
+  soloPorEncimaHorizonte: boolean,
   magnitudLimiteVisible?: number
 ): EtiquetaPendiente[] {
   const limiteMagnitud =
@@ -633,7 +672,7 @@ function dibujarEstrellas(
       : Number.POSITIVE_INFINITY;
 
   const visibles = estrellas
-    .filter((est) => est.altitud >= 0 && est.magnitud <= limiteMagnitud)
+    .filter((est) => (!soloPorEncimaHorizonte || est.altitud >= 0) && est.magnitud <= limiteMagnitud)
     .map((est) => ({ pos: proyectarFn(est.altitud, est.acimut), data: est }))
     .sort((a, b) => a.pos.profundidad - b.pos.profundidad);
 
@@ -647,6 +686,12 @@ function dibujarEstrellas(
       tema,
       paleta.starDefault
     );
+    const esBajoHorizonte = data.altitud < 0;
+
+    ctx.save();
+    if (esBajoHorizonte) {
+      ctx.globalAlpha = 0.4;
+    }
 
     // Halo luminoso sutil para estrellas muy brillantes
     if (data.magnitud < 1.5) {
@@ -672,6 +717,7 @@ function dibujarEstrellas(
     ctx.arc(pos.x, pos.y, tamano, 0, Math.PI * 2);
     ctx.fillStyle = colorEstrella;
     ctx.fill();
+    ctx.restore();
 
     if (data.nombre && data.magnitud <= 2.1) {
       candidatasEtiquetas.push({
@@ -763,12 +809,13 @@ function dibujarMessier(
   messier: MessierCalculado[],
   tema: TemaVisual,
   proyectarFn: (alt: number, az: number) => PuntoProyectado,
-  interactivos: ObjetoHover[]
+  interactivos: ObjetoHover[],
+  soloPorEncimaHorizonte: boolean
 ): EtiquetaPendiente[] {
   const colorMessier =
     tema === 'rojo' ? '#dc2626' : tema === 'claro' ? '#047857' : '#34d399';
   const visibles = messier
-    .filter((obj) => obj.altitud >= 0)
+    .filter((obj) => !soloPorEncimaHorizonte || obj.altitud >= 0)
     .sort((a, b) => a.magnitud - b.magnitud);
 
   const etiquetas: EtiquetaPendiente[] = [];
@@ -778,7 +825,12 @@ function dibujarMessier(
     const pos = proyectarFn(obj.altitud, obj.acimut);
     const r = 5.5 * Math.max(0.8, Math.min(1.2, pos.escala));
 
+    ctx.save();
+    if (obj.altitud < 0) {
+      ctx.globalAlpha = 0.42;
+    }
     dibujarSimboloMessier(ctx, obj.tipo, pos.x, pos.y, r, colorMessier);
+    ctx.restore();
 
     if ((mostrarTodosEtiquetados || obj.magnitud <= 8.0) && etiquetas.length < 28) {
       etiquetas.push({
@@ -821,10 +873,11 @@ function dibujarCuerpos(
   tema: TemaVisual,
   paleta: CelestialThemePalette,
   proyectarFn: (alt: number, az: number) => PuntoProyectado,
-  interactivos: ObjetoHover[]
+  interactivos: ObjetoHover[],
+  soloPorEncimaHorizonte: boolean
 ): EtiquetaPendiente[] {
   const visibles = cuerpos
-    .filter((c) => c.altitud > 0)
+    .filter((c) => !soloPorEncimaHorizonte || c.altitud > 0)
     .map((c) => ({ cuerpo: c, pos: proyectarFn(c.altitud, c.acimut) }))
     .sort((a, b) => a.pos.profundidad - b.pos.profundidad);
 
@@ -834,6 +887,11 @@ function dibujarCuerpos(
     const colorCuerpo = tema === 'rojo' ? '#ff2a2a' : cuerpo.color;
     const rBase = cuerpo.tipo === 'luna' ? 7 : 5.5;
     const rCuerpo = rBase * Math.max(0.8, Math.min(1.25, pos.escala));
+
+    ctx.save();
+    if (cuerpo.altitud <= 0) {
+      ctx.globalAlpha = 0.45;
+    }
 
     // Halo exterior
     ctx.beginPath();
@@ -869,6 +927,7 @@ function dibujarCuerpos(
       ctx.strokeStyle = paleta.horizonLine;
       ctx.stroke();
     }
+    ctx.restore();
 
     etiquetas.push({
       texto: cuerpo.nombre,
@@ -949,7 +1008,8 @@ function dibujarTrayectoria(
   trayectoria: PuntoTrayectoria[],
   tema: TemaVisual,
   paleta: CelestialThemePalette,
-  proyectarFn: (alt: number, az: number) => PuntoProyectado
+  proyectarFn: (alt: number, az: number) => PuntoProyectado,
+  soloPorEncimaHorizonte: boolean
 ) {
   if (trayectoria.length === 0) return;
 
@@ -979,7 +1039,7 @@ function dibujarTrayectoria(
 
   for (let i = 0; i < trayectoria.length; i++) {
     const punto = trayectoria[i];
-    if (punto.altitud > 0) {
+    if (!soloPorEncimaHorizonte || punto.altitud > 0) {
       const pos = proyectarFn(punto.altitud, punto.acimut);
       if (!enTrazo) {
         ctx.moveTo(pos.x, pos.y);
@@ -1089,6 +1149,7 @@ export function SkyMap({
   mostrarConstelaciones,
   mostrarEstrellas,
   mostrarMessier,
+  soloPorEncimaHorizonte = true,
   astroSeleccionado,
   focusedBodyId = null,
   focusedBodyName,
@@ -1161,7 +1222,7 @@ export function SkyMap({
   }, [cuerpos, listaEstrellasFoco, listaMessierFoco, listaConstelacionesFoco]);
 
   const avisoBajoHorizonte = useMemo(() => {
-    if (!focusedBodyId) return null;
+    if (!focusedBodyId || !soloPorEncimaHorizonte) return null;
     const cuerpo = cuerpos.find((c) => c.id === focusedBodyId);
     if (cuerpo) {
       return cuerpo.altitud <= 0
@@ -1171,7 +1232,10 @@ export function SkyMap({
     const constelacion = listaConstelacionesFoco.find((c) => c.codigo === focusedBodyId);
     if (constelacion) {
       const tieneSegmentoVisible = constelacion.segmentos.some(
-        (s) => s.desde.altitud >= 0 && s.hasta.altitud >= 0
+        (s) =>
+          s.desde.altitud > 0 ||
+          s.hasta.altitud > 0 ||
+          (s.desde.altitud >= 0 && s.hasta.altitud >= 0)
       );
       return !tieneSegmentoVisible
         ? {
@@ -1204,7 +1268,14 @@ export function SkyMap({
         : null;
     }
     return null;
-  }, [focusedBodyId, cuerpos, listaConstelacionesFoco, listaMessierFoco, listaEstrellasFoco]);
+  }, [
+    focusedBodyId,
+    soloPorEncimaHorizonte,
+    cuerpos,
+    listaConstelacionesFoco,
+    listaMessierFoco,
+    listaEstrellasFoco,
+  ]);
 
   const cancelarAnimacionCamara = useCallback(() => {
     if (animacionCamaraRef.current !== 0) {
@@ -1250,7 +1321,8 @@ export function SkyMap({
       listaCuerpos,
       listaEstrellas,
       listaMessier,
-      listaConstelaciones
+      listaConstelaciones,
+      soloPorEncimaHorizonte
     );
     if (!posicion) return;
 
@@ -1315,7 +1387,7 @@ export function SkyMap({
         animacionCamaraRef.current = 0;
       }
     };
-  }, [astroSeleccionado, modoMapa, contadorFoco]);
+  }, [astroSeleccionado, modoMapa, contadorFoco, soloPorEncimaHorizonte]);
 
   const componerCanvasVisible = useCallback((fasePulso: number) => {
     const canvas = canvasRef.current;
@@ -1393,9 +1465,13 @@ export function SkyMap({
     const radio = size / 2 - 36;
     const paleta = obtenerPaletaCeleste(tema);
 
+    const incluirBajoHorizonte = !soloPorEncimaHorizonte;
+    const limiteMagnitudEstrellas =
+      instrumentoActivo === 'Todos' ? undefined : magnitudLimiteVisible;
+
     const proyectarFn =
       modoMapa === '2D'
-        ? (alt: number, az: number) => proyectar2D(alt, az, cx, cy, radio)
+        ? (alt: number, az: number) => proyectar2D(alt, az, cx, cy, radio, incluirBajoHorizonte)
         : (alt: number, az: number) => proyectar3D(alt, az, cx, cy, size, camara);
 
     ctxBase.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1404,7 +1480,7 @@ export function SkyMap({
     const constelacionesInteractivas: ConstelacionInteractiva[] = [];
 
     if (modoMapa === '2D') {
-      dibujarBaseMapa2D(ctxBase, size, cx, cy, radio, paleta, tema);
+      dibujarBaseMapa2D(ctxBase, size, cx, cy, radio, paleta, tema, incluirBajoHorizonte);
       ctxBase.save();
       ctxBase.beginPath();
       ctxBase.arc(cx, cy, radio, 0, Math.PI * 2);
@@ -1442,6 +1518,7 @@ export function SkyMap({
           paleta,
           tema,
           constelacionesInteractivas,
+          soloPorEncimaHorizonte,
           true
         );
         const estrellasMiembro = obtenerEstrellasDeConstelacion(
@@ -1454,7 +1531,8 @@ export function SkyMap({
           proyectarFn,
           paleta,
           tema,
-          interactivos
+          interactivos,
+          soloPorEncimaHorizonte
         );
         const targetConst = constelacionesInteractivas[0];
         if (targetConst) {
@@ -1472,33 +1550,57 @@ export function SkyMap({
           });
         }
       } else if (cuerpoEnfocado) {
-        dibujarTrayectoria(ctxBase, trayectoria, tema, paleta, proyectarFn);
+        dibujarTrayectoria(
+          ctxBase,
+          trayectoria,
+          tema,
+          paleta,
+          proyectarFn,
+          soloPorEncimaHorizonte
+        );
         etiquetasCuerpos = dibujarCuerpos(
           ctxBase,
           [cuerpoEnfocado],
           tema,
           paleta,
           proyectarFn,
-          interactivos
+          interactivos,
+          soloPorEncimaHorizonte
         );
       } else if (messierEnfocado) {
-        dibujarTrayectoria(ctxBase, trayectoria, tema, paleta, proyectarFn);
+        dibujarTrayectoria(
+          ctxBase,
+          trayectoria,
+          tema,
+          paleta,
+          proyectarFn,
+          soloPorEncimaHorizonte
+        );
         etiquetasMessier = dibujarMessier(
           ctxBase,
           [messierEnfocado],
           tema,
           proyectarFn,
-          interactivos
+          interactivos,
+          soloPorEncimaHorizonte
         );
       } else if (estrellaEnfocada) {
-        dibujarTrayectoria(ctxBase, trayectoria, tema, paleta, proyectarFn);
+        dibujarTrayectoria(
+          ctxBase,
+          trayectoria,
+          tema,
+          paleta,
+          proyectarFn,
+          soloPorEncimaHorizonte
+        );
         etiquetasEstrellas = dibujarEstrellas(
           ctxBase,
           [estrellaEnfocada],
           proyectarFn,
           paleta,
           tema,
-          interactivos
+          interactivos,
+          soloPorEncimaHorizonte
         );
       }
     } else {
@@ -1509,7 +1611,8 @@ export function SkyMap({
             proyectarFn,
             paleta,
             tema,
-            constelacionesInteractivas
+            constelacionesInteractivas,
+            soloPorEncimaHorizonte
           )
         : [];
 
@@ -1521,22 +1624,38 @@ export function SkyMap({
             paleta,
             tema,
             interactivos,
-            magnitudLimiteVisible
+            soloPorEncimaHorizonte,
+            limiteMagnitudEstrellas
           )
         : [];
 
       etiquetasMessier = mostrarMessier
-        ? dibujarMessier(ctxBase, messier, tema, proyectarFn, interactivos)
+        ? dibujarMessier(
+            ctxBase,
+            messier,
+            tema,
+            proyectarFn,
+            interactivos,
+            soloPorEncimaHorizonte
+          )
         : [];
 
-      dibujarTrayectoria(ctxBase, trayectoria, tema, paleta, proyectarFn);
+      dibujarTrayectoria(
+        ctxBase,
+        trayectoria,
+        tema,
+        paleta,
+        proyectarFn,
+        soloPorEncimaHorizonte
+      );
       etiquetasCuerpos = dibujarCuerpos(
         ctxBase,
         cuerpos,
         tema,
         paleta,
         proyectarFn,
-        interactivos
+        interactivos,
+        soloPorEncimaHorizonte
       );
     }
 
@@ -1605,6 +1724,8 @@ export function SkyMap({
     mostrarConstelaciones,
     mostrarEstrellas,
     mostrarMessier,
+    soloPorEncimaHorizonte,
+    instrumentoActivo,
     trayectoria,
     magnitudLimiteVisible,
     astroSeleccionado,

@@ -1,18 +1,36 @@
 import { useCallback, useMemo, useState } from 'react';
-import { DEFAULT_STAR_CHART_LOCATION, STAR_CATALOG } from '../data/starCatalog';
+import { CONSTELACIONES_IAU } from '../data/constelacionesIAU';
+import { CATALOGO_ESTRELLAS } from '../data/estrellasMag4';
 import type {
+  ConstelacionCartaProyectada,
   HorizontalCoordinates,
   ProjectedStar,
+  SegmentoConstelacionProyectado,
   StarCatalogEntry,
   StarChartLayers,
   StarChartObserver,
 } from '../types/starChart';
+import { normalizarZonaHoraria } from '../utils/lunarCalculations';
 import {
+  ALTITUD_MINIMA_ESTEREOGRAFICA,
+  adaptarEstrellasParaCarta,
   clamp,
   equatorialToHorizontal,
   magnitudeToRadius,
   projectStereographic,
+  recortarSegmentoAlHorizonte,
 } from '../utils/skyProjection';
+
+/** Ubicación por defecto segura para la Carta Astronómica (Madrid). */
+export const DEFAULT_STAR_CHART_LOCATION = {
+  name: 'Madrid',
+  latitude: 40.4168,
+  longitude: -3.7038,
+  timezone: 'Europe/Madrid',
+} as const;
+
+const CATALOGO_CARTA_ESTRELLAS: ReadonlyArray<StarCatalogEntry> =
+  adaptarEstrellasParaCarta(CATALOGO_ESTRELLAS);
 
 export const DEFAULT_STAR_CHART_LAYERS: StarChartLayers = {
   showConstellations: true,
@@ -31,6 +49,7 @@ export interface UseStarChartOptions {
   initialLatitude?: number;
   initialLongitude?: number;
   initialLocationName?: string;
+  initialTimezone?: string;
   initialDate?: Date;
   viewportSize?: number;
   padding?: number;
@@ -40,6 +59,7 @@ export interface StarChartLocation {
   name: string;
   latitude: number;
   longitude: number;
+  timezone?: string;
 }
 
 interface HorizontalStarEntry {
@@ -47,12 +67,23 @@ interface HorizontalStarEntry {
   horizontal: HorizontalCoordinates;
 }
 
+interface HorizontalConstellationEntry {
+  codigo: string;
+  nombreEs: string;
+  segmentos: Array<{
+    desde: HorizontalCoordinates;
+    hasta: HorizontalCoordinates;
+  }>;
+}
+
 export interface UseStarChartResult {
   observer: StarChartObserver;
   locationName: string;
+  timezone: string;
   date: Date;
   layers: StarChartLayers;
   projectedStars: ProjectedStar[];
+  projectedConstellations: ConstelacionCartaProyectada[];
   visibleStars: ProjectedStar[];
   visibleCount: number;
   aboveHorizonCount: number;
@@ -101,6 +132,7 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
     initialLatitude = DEFAULT_STAR_CHART_LOCATION.latitude,
     initialLongitude = DEFAULT_STAR_CHART_LOCATION.longitude,
     initialLocationName = DEFAULT_STAR_CHART_LOCATION.name,
+    initialTimezone,
     initialDate,
     viewportSize = DEFAULT_CANVAS_SIZE,
     padding = DEFAULT_CANVAS_PADDING,
@@ -110,6 +142,7 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
     name: initialLocationName.trim() || DEFAULT_STAR_CHART_LOCATION.name,
     latitude: initialLatitude,
     longitude: initialLongitude,
+    timezone: normalizarZonaHoraria(initialTimezone, initialLatitude, initialLongitude),
   }));
 
   const [date, setDateState] = useState<Date>(() =>
@@ -125,6 +158,11 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
     [location.latitude, location.longitude, date]
   );
 
+  const timezone = useMemo(
+    () => normalizarZonaHoraria(location.timezone, location.latitude, location.longitude),
+    [location.timezone, location.latitude, location.longitude]
+  );
+
   const observer = useMemo<StarChartObserver>(
     () => ({
       latitude: location.latitude,
@@ -136,8 +174,7 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
 
   const dateTimestamp = date.getTime();
 
-  // Paso 1 memorizado: conversión astronómica (RA/Dec -> Alt/Az).
-  // Solo se recalcula cuando cambian fecha, latitud o longitud; nunca al hacer hover o cambiar capas.
+  // Paso 1 memorizado: conversión astronómica (RA/Dec -> Alt/Az) desde los catálogos únicos SSOT.
   const horizontalCatalog = useMemo<HorizontalStarEntry[]>(() => {
     if (error !== null) return [];
     const safeObserver: StarChartObserver = {
@@ -145,9 +182,26 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
       longitude: location.longitude,
       date: new Date(dateTimestamp),
     };
-    return STAR_CATALOG.map((star) => ({
+    return CATALOGO_CARTA_ESTRELLAS.map((star) => ({
       star,
       horizontal: equatorialToHorizontal(star.raHours, star.decDeg, safeObserver),
+    }));
+  }, [error, location.latitude, location.longitude, dateTimestamp]);
+
+  const horizontalConstellations = useMemo<HorizontalConstellationEntry[]>(() => {
+    if (error !== null) return [];
+    const safeObserver: StarChartObserver = {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      date: new Date(dateTimestamp),
+    };
+    return CONSTELACIONES_IAU.map((constelacion) => ({
+      codigo: constelacion.codigo,
+      nombreEs: constelacion.nombreEs,
+      segmentos: constelacion.segmentos.map(([desdeJ2000, hastaJ2000]) => ({
+        desde: equatorialToHorizontal(desdeJ2000[0], desdeJ2000[1], safeObserver),
+        hasta: equatorialToHorizontal(hastaJ2000[0], hastaJ2000[1], safeObserver),
+      })),
     }));
   }, [error, location.latitude, location.longitude, dateTimestamp]);
 
@@ -182,6 +236,83 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
       };
     });
   }, [error, horizontalCatalog, viewportSize, padding, layers.maxMagnitude]);
+
+  const projectedConstellations = useMemo<ConstelacionCartaProyectada[]>(() => {
+    if (error !== null || horizontalConstellations.length === 0) return [];
+    const safeSize = Number.isFinite(viewportSize) && viewportSize > 0
+      ? viewportSize
+      : DEFAULT_CANVAS_SIZE;
+    const safePadding = clamp(padding, 16, safeSize * 0.25);
+    const center = safeSize / 2;
+    const diskRadius = Math.max(10, center - safePadding);
+
+    return horizontalConstellations.map((constelacion) => {
+      const segmentosProyectados: SegmentoConstelacionProyectado[] = [];
+      let sumX = 0;
+      let sumY = 0;
+      let puntosContados = 0;
+
+      for (const seg of constelacion.segmentos) {
+        // Protección contra singularidad próxima al nadir (<= -85°) y recorte exacto al horizonte
+        if (
+          seg.desde.altitudeDeg <= ALTITUD_MINIMA_ESTEREOGRAFICA &&
+          seg.hasta.altitudeDeg <= ALTITUD_MINIMA_ESTEREOGRAFICA
+        ) {
+          continue;
+        }
+        const recortado = recortarSegmentoAlHorizonte(
+          { altitud: seg.desde.altitudeDeg, acimut: seg.desde.azimuthDeg },
+          { altitud: seg.hasta.altitudeDeg, acimut: seg.hasta.azimuthDeg }
+        );
+        if (!recortado) continue;
+
+        const p1 = projectStereographic(
+          recortado.desde.altitud,
+          recortado.desde.acimut,
+          center,
+          center,
+          diskRadius
+        );
+        const p2 = projectStereographic(
+          recortado.hasta.altitud,
+          recortado.hasta.acimut,
+          center,
+          center,
+          diskRadius
+        );
+        if (
+          !Number.isFinite(p1.x) ||
+          !Number.isFinite(p1.y) ||
+          !Number.isFinite(p2.x) ||
+          !Number.isFinite(p2.y)
+        ) {
+          continue;
+        }
+
+        segmentosProyectados.push({
+          x1: p1.x,
+          y1: p1.y,
+          x2: p2.x,
+          y2: p2.y,
+          altitudDesde: recortado.desde.altitud,
+          altitudHasta: recortado.hasta.altitud,
+        });
+
+        sumX += p1.x + p2.x;
+        sumY += p1.y + p2.y;
+        puntosContados += 2;
+      }
+
+      return {
+        codigo: constelacion.codigo,
+        nombreEs: constelacion.nombreEs,
+        segmentos: segmentosProyectados,
+        etiquetaX: puntosContados > 0 ? sumX / puntosContados : center,
+        etiquetaY: puntosContados > 0 ? sumY / puntosContados : center,
+        mostrarEtiqueta: segmentosProyectados.length >= 2,
+      };
+    });
+  }, [error, horizontalConstellations, viewportSize, padding]);
 
   const visibleStars = useMemo(
     () =>
@@ -231,6 +362,11 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
       name: nextLocation.name.trim() || 'Ubicación personalizada',
       latitude: nextLocation.latitude,
       longitude: nextLocation.longitude,
+      timezone: normalizarZonaHoraria(
+        nextLocation.timezone,
+        nextLocation.latitude,
+        nextLocation.longitude
+      ),
     });
   }, []);
 
@@ -239,6 +375,7 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
       name: DEFAULT_STAR_CHART_LOCATION.name,
       latitude: DEFAULT_STAR_CHART_LOCATION.latitude,
       longitude: DEFAULT_STAR_CHART_LOCATION.longitude,
+      timezone: DEFAULT_STAR_CHART_LOCATION.timezone,
     });
     setDateState(new Date());
     setLayersState(DEFAULT_STAR_CHART_LAYERS);
@@ -292,9 +429,11 @@ export function useStarChart(options: UseStarChartOptions = {}): UseStarChartRes
   return {
     observer,
     locationName: location.name,
+    timezone,
     date,
     layers,
     projectedStars,
+    projectedConstellations,
     visibleStars,
     visibleCount,
     aboveHorizonCount,

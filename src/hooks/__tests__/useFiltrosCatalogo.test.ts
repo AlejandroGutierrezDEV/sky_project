@@ -183,7 +183,26 @@ describe('useFiltrosCatalogo (funciones puras de filtrado)', () => {
     expect(res.messier.some((m) => m.id === 'M7')).toBe(false);
     expect(res.constelaciones).toHaveLength(1);
     expect(res.constelaciones[0].codigo).toBe('ORI');
-    expect(res.constelaciones[0].segmentos).toHaveLength(1);
+    // Conserva tanto segmentos sobre el horizonte como los que lo cruzan para recorte exacto en alt = 0
+    expect(res.constelaciones[0].segmentos).toHaveLength(2);
+  });
+
+  it('no descarta estrellas ni objetos Messier por magnitud límite de equipo cuando instrumento es Todos', () => {
+    const res = filtrarCatalogos({
+      estrellas: ESTRELLAS_MUESTRA,
+      messier: MESSIER_MUESTRA,
+      constelaciones: CONSTELACIONES_MUESTRA,
+      magnitudLimiteVisible: 2.0,
+      filtros: {
+        tipo: 'Todos',
+        instrumento: 'Todos',
+        soloPorEncimaHorizonte: true,
+      },
+    });
+
+    // Con instrumento 'Todos', Tau Ori (mag 3.59) y M57 (mag 8.8) no deben descartarse por magnitud límite
+    expect(res.estrellas.map((e) => e.id)).toEqual(['Alp CMa', 'Alp Ori', 'Gam Ori', 'Tau Ori']);
+    expect(res.messier.map((m) => m.id)).toEqual(['M45', 'M31', 'M13', 'M1', 'M57']);
   });
 
   it('combina instrumento con magnitudLimiteVisible (Bortle/Luna) y devuelve 0 resultados ante filtros restrictivos', () => {

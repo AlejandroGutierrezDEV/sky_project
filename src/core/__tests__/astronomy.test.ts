@@ -279,6 +279,32 @@ describe('Motor astronómico (skyCalculator)', () => {
       expect(transito.culminacion).toBeInstanceOf(Date);
       expect(transito.alturaMaxima).toBeTypeOf('number');
     });
+
+    it('descarta culminaciones devueltas por SearchHourAngle fuera del día civil (ms >= finMs)', () => {
+      // Simula un tránsito lunar que cae al día civil siguiente (ms >= finMs)
+      const fechaCivil = new Date('2026-06-15T12:00:00Z');
+      const instanteDiaSiguiente = new Date('2026-06-16T00:15:00Z');
+      const spyHourAngle = vi.spyOn(Astronomy, 'SearchHourAngle').mockReturnValue({
+        time: Astronomy.MakeTime(instanteDiaSiguiente),
+        hor: {
+          ra: 0,
+          dec: 0,
+          azimuth: 180,
+          altitude: 52.3,
+        },
+      });
+
+      try {
+        const transito = calcularTransitoCuerpo('Moon', fechaCivil, {
+          ...VALENCIA,
+          timezone: 'UTC',
+        });
+        expect(transito.culminacion).toBeNull();
+        expect(transito.alturaMaxima).toBeNull();
+      } finally {
+        spyHourAngle.mockRestore();
+      }
+    });
   });
 });
 
