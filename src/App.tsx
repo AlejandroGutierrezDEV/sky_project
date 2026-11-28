@@ -42,6 +42,7 @@ import { MoonPhase3D } from './components/MoonPhase3D';
 import { Navbar } from './components/Navbar';
 import { AstronomyGuide } from './components/AstronomyGuide';
 import { Compass3DModal } from './components/Compass3DModal';
+import { CompassWidget } from './components/compass/CompassWidget';
 import { CelestialDetailSheet } from './components/CelestialDetailSheet';
 import {
   HojaImpresionSesion,
@@ -1951,6 +1952,8 @@ export function App() {
                     setFechaStr(formatearFechaParaInput(fechaHora));
                   }}
                 />
+
+                <CompassWidget tema={tema} claseTarjeta={clasesTarjeta} />
 
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between gap-2 px-1">
